@@ -17,11 +17,14 @@ inventory:                    # Phase 0 audit
   noise_frame_rel_threshold: 0.10   # trailing volumes with whole-volume mean < 10% of the run median
   nss_robust_z: 5.0           # leading volumes whose in-mask mean exceeds the median by > 5 robust SD
   nss_max_volumes: 20         # never call more than this many leading volumes non-steady-state
-  dicom_max_files: 20000      # cap on DICOM headers read per subject
-  dicom_search_depth: 2       # DICOMs may sit in per-series subfolders one level below that
+  dicom_max_folders: 10       # NIfTI folder + subfolders searched for DICOMs (series-numbered folder first)
+  dicom_max_headers_per_folder: 400   # random sample of headers read per folder (MB/ME series hold 1e4+ files)
   json_fields:                # always reported, "absent" if missing
     - EchoTime
     - EchoNumber
+    - SeriesNumber
+    - SeriesDescription
+    - ProtocolName
     - ImageType
     - RepetitionTime
     - MagneticFieldStrength
@@ -99,3 +102,5 @@ frontend:                     # Phase 2 (CLAUDE.md section 5.4); listed now so t
   snr_min_sensitivity: 3.0
   sigma_init_snr: 10.0
   mppca_sigma_tolerance: 0.20
+  mask_source: pipeline        # proposed: <run>/brain_mask.nii.gz from mbme_tedana (same voxels as tedana); confirm at Phase 2
+  nonpositive_policy: exclude_echo   # proposed: a voxel-echo with any frame <= 0 (spline undershoot) is unusable; confirm at Phase 2

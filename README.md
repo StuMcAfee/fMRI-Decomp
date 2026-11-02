@@ -12,10 +12,12 @@ The design brief is `CLAUDE.md`; gate results are in `docs/decisions.md`.
 
 ## Phase 0 audit of one subject (LSF)
 
-From the repository root, set the paths (quotes matter: they contain spaces), then submit:
+From the repository root, set the paths (quotes matter: they contain spaces), then submit.
+The raw NIfTI folder and the exact series are read from the run's `result.json` (`input_echo1`);
+set `NIFTI_DIR` only to override that.
 
 ```bash
-export SUBJECT=<ID> NIFTI_DIR="..." RUN_DIR="..." PIPELINE="..."
+export SUBJECT=<ID> RUN_DIR="<mbme_tedana OUT>/<run>" PIPELINE="<path>/mbme_tedana.py"
 bsub < scripts/phase0_one_subject.lsf
 ```
 
