@@ -6,22 +6,25 @@ The design brief is `CLAUDE.md`; gate results are in `docs/decisions.md`.
 ## Install (cluster login node)
 
 ```bash
-~/miniconda3_new/envs/<ENV>/bin/python -m pip install -e ".[dicom,test]"
+~/miniconda3_new/envs/mejoint/bin/python -m pip install --no-deps -e .
+~/miniconda3_new/envs/mejoint/bin/python -m pip install pydicom
 ```
 
-## Phase 0 audit of one subject
+## Phase 0 audit of one subject (LSF)
+
+From the repository root, set the paths (quotes matter: they contain spaces), then submit:
 
 ```bash
-~/miniconda3_new/envs/<ENV>/bin/mejoint inventory \
-    --nifti-dir /path/to/subject/nifti \
-    --run-dir /path/to/mbme_tedana/output/<run> \
-    --subject <ID> --out outputs/phase0/<ID>
+export SUBJECT=<ID> NIFTI_DIR="..." RUN_DIR="..." PIPELINE="..."
+bsub < scripts/phase0_one_subject.lsf
 ```
 
-Writes `inventory.md` (the table), `inventory.json`, `volume_means.tsv`, `config_used.yaml` and `done.json`.
+Writes `outputs/phase0/sub-<ID>/inventory.md` (the table), `inventory.json`, `volume_means.tsv`,
+`config_used.yaml`, `done.json` and the environment record (`env_pip_freeze.txt`, `env_threadpool.json`).
+`outputs/` is never committed.
 
 ## Tests
 
 ```bash
-~/miniconda3_new/envs/<ENV>/bin/python -m pytest -q
+~/miniconda3_new/envs/mejoint/bin/python -m pytest -q
 ```

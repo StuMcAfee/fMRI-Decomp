@@ -1,0 +1,29 @@
+#!/bin/bash
+# Phase 0 audit of one subject on LSF.
+# Set the four variables in your login shell, then submit from the repository root:
+#   export SUBJECT=...  NIFTI_DIR="..."  RUN_DIR="..."  PIPELINE="..."
+#   bsub < scripts/phase0_one_subject.lsf
+# Quoted variables carry paths with spaces safely into the job (-env "all" passes them through).
+#BSUB -J mejoint_phase0
+#BSUB -q standard
+#BSUB -n 1
+#BSUB -R "rusage[mem=4000]"
+#BSUB -env "all"
+#BSUB -o phase0_%J.log
+set -euo pipefail
+
+PY="$HOME/miniconda3_new/envs/mejoint/bin/python"     # always the env's python, by full path
+: "${SUBJECT:?set SUBJECT}" "${NIFTI_DIR:?set NIFTI_DIR}" "${RUN_DIR:?set RUN_DIR}" "${PIPELINE:?set PIPELINE}"
+cd "${LS_SUBCWD:-$PWD}"                                  # repository root (where bsub was run)
+OUT="outputs/phase0/sub-${SUBJECT}"
+mkdir -p "$OUT"
+
+"$PY" -m mejoint.cli inventory \
+    --nifti-dir "$NIFTI_DIR" --run-dir "$RUN_DIR" --pipeline-script "$PIPELINE" \
+    --subject "$SUBJECT" --out "$OUT"
+
+# record the exact environment next to the audit (CLAUDE.md section 12)
+"$PY" -m pip freeze > "$OUT/env_pip_freeze.txt"
+"$PY" -c "import threadpoolctl, json; print(json.dumps(threadpoolctl.threadpool_info(), indent=1))" \
+    > "$OUT/env_threadpool.json" 2>/dev/null || echo "threadpoolctl not available" > "$OUT/env_threadpool.json"
+echo "done: $OUT/inventory.md"

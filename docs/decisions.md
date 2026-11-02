@@ -21,3 +21,12 @@ Open issue raised with the user: Phase 2 test (a) asks for +/-5% of I at mu_min/
 ## Phase 0: audit
 
 Status: tool built (`mejoint inventory`, tests pass on synthetic folders). Gate pending: single-subject table on real data.
+
+### 2026-11-02: facts supplied by the user
+
+- Environment: `~/miniconda3_new/envs/mejoint` (clone of the tedana env: tedana 26.0.3, plus torch 2.6.0+cu124, dipy, pytest, pyyaml). Always called by full path. `~/miniconda3_new/envs/tedana` stays unchanged for the existing analysis.
+- Existing pipeline: `mbme_tedana.py` in `.../CSIMemphis/Analysis/Monitoring Visit/`, outputs in `.../Monitoring Visit/OUT/`.
+- Pilot subject for the audit: P01, run `sub-P01_acq-TIMESTAMP_ser-5`.
+- No physiological recordings (respiration, cardiac) exist. Consequence: no RETROICOR/RVT regressors in Phase 2b; respiratory and cardiac effects must be handled by data-driven means (global arm, spectral checks at 0.25-0.5 Hz and aliased cardiac), and reported as a limitation.
+- No source of tissue or cavity masks exists. They must be derived (decision deferred to before Phase 5; not needed for Phases 1-4).
+- No protocol PDF. CAIPI shift and slice-stack spacing must come from DICOM headers (Siemens ASCCONV) or remain unknown.
