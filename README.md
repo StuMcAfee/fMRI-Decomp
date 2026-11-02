@@ -27,8 +27,20 @@ Writes `outputs/phase0/sub-<ID>/inventory.md` (the table), `inventory.json`, `vo
 `config_used.yaml`, `done.json` and the environment record (`env_pip_freeze.txt`, `env_threadpool.json`).
 `outputs/` is never committed.
 
+## Phase 1 simulator QC figure
+
+```bash
+PYTHONPATH=src ~/miniconda3_new/envs/mejoint/bin/python scripts/plot_simulation.py outputs/phase1/simulation.png
+```
+
 ## Tests
 
 ```bash
 ~/miniconda3_new/envs/mejoint/bin/python -m pytest -q
+```
+
+Rerun the suite under another random seed (checks that tests do not depend on one draw):
+
+```bash
+MEJOINT_TEST_SEED=3 ~/miniconda3_new/envs/mejoint/bin/python -m pytest -q
 ```

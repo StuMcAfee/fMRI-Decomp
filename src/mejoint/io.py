@@ -38,6 +38,24 @@ def config_hash(cfg: dict) -> str:
     return hashlib.sha256(json.dumps(clean, sort_keys=True).encode()).hexdigest()
 
 
+def seed_sequence(cfg: dict, *spawn_key: int) -> np.random.SeedSequence:
+    """Reproducible seeds: SeedSequence(project_seed, spawn_key=(subject, run, stage, restart, ...))."""
+    return np.random.SeedSequence(int(cfg["project_seed"]), spawn_key=tuple(int(k) for k in spawn_key))
+
+
+def merge(base: dict, overrides: dict | None) -> dict:
+    """Copy of `base` with `overrides` applied (nested dicts merged, other values replaced)."""
+    import copy
+
+    out = copy.deepcopy(base)
+    for k, v in (overrides or {}).items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = merge(out[k], v)
+        else:
+            out[k] = copy.deepcopy(v)
+    return out
+
+
 # ---------------------------------------------------------------- hashing / versions
 def file_sha256(path: str | os.PathLike, chunk: int = 1 << 20) -> str:
     h = hashlib.sha256()
