@@ -126,8 +126,9 @@ def main(argv=None):
     ax.set_title(f"Frame-wise residual energy and FD" + (f" (Spearman {rho:.2f})" if rho is not None else ""),
                  fontsize=7, color=INK, loc="left")
 
+    fig.subplots_adjust(top=0.965)
     fig.suptitle(f"Phase 2 front end: {summ['run_id']} ({summ['source']} echoes); {summ['n_voxels']} voxels, "
-                 f"{summ['n_volumes']} volumes", fontsize=8, color=INK2, x=0.01, ha="left", y=0.995)
+                 f"{summ['n_volumes']} volumes", fontsize=8, color=INK2, x=0.01, ha="left", y=0.985)
     out.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out, dpi=110, bbox_inches="tight")
     print(out)

@@ -477,7 +477,7 @@ def render_summary(s: dict) -> str:
     if "mppca_check" in s:
         m = s["mppca_check"]
         L += ["", "## Sigma cross-check: residual vs MP-PCA (raw echoes)", "",
-              "| Echo | MP-PCA sigma | Residual sigma (same voxels) | Ratio | Ratio / simulated bias (1.06) |",
+              "| Echo | MP-PCA sigma | Residual sigma (same voxels) | Ratio | Ratio / simulated bias |",
               "|---|---|---|---|---|"]
         L += [f"| {r['echo']} | {r['mppca_sigma_median']:.3f} | {r['residual_sigma_median_same_voxels']:.3f} | "
               f"{r['ratio_residual_over_mppca']:.3f} | {r['ratio_corrected_for_simulated_bias']:.3f} |" for r in m["per_echo"]]

@@ -157,3 +157,14 @@ User expectation recorded: "very little signal from the fourth echo in most of t
 5. **Non-positive frames** (spline undershoot) make that voxel-echo unusable (`nonpositive_policy: exclude_echo`).
 6. **MP-PCA cross-check** (dipy 1.12.1 `mppca(arr, *, mask, patch_radius, return_sigma)`, verified from source): on raw echoes, 100 volumes, patch radius 2, patch centres on a sparse grid (every 2nd voxel in-plane, every 6th slice; sigma varies smoothly). On simulated data MP-PCA reads 6 % low (ratio 0.94, stable across echoes, sources and g-factor), so the 20 % stop rule is applied to (residual / MP-PCA) / 1.06.
 7. **Posterior fossa** has no anatomical mask; summaries use the inferior third of the brain mask as an approximate posterior-fossa / skull-base level, labelled as such.
+
+### 2026-11-02: Phase 2 synthetic evidence (before real data)
+
+- Tests (a)-(e) plus construction tests: 13 front-end tests; full suite 35 tests in ~28 s; all pass under 8 seeds.
+- (a) pooled whitened-noise covariance within +/-5 % of I for mu_min/sigma >= 5 (band 5-10: diagonal 1.02-1.03); my earlier concern (up to 6 %) applies to single voxels at exactly SNR 5 with long T2*, not to the pooled test as written.
+- (b) pure dR2*: c1 = r = 0 to float32 precision; with noise, corr(c1, b) matches the null.
+- (c) c0 = -k x OC deviation exactly (corr -1.000000000) with a mono-exponential mean; <= -0.9999 with empirical means.
+- (d) sigma brain-median error 0.3 % with a g-factor map; 99.7 % of voxels within 3 SE.
+- (e) residual excess 1.11 at the dynamically dephased skull base vs 1.00 elsewhere; static misfit ~40x; spike frames stand out; including echoes near the floor raises the excess (1.17), snr_min = 5 removes most of it.
+- Full-size synthetic run (52 x 64 x 48, 200 volumes, ~50k brain voxels): front end 16 s, sigma median ratio 0.999; MP-PCA 77 s per echo (sparse centres), reads 2 % low, so `mppca_expected_ratio` = 1.02 (the 6 % on the small grid shows the bias depends on geometry; both are small next to the 20 % stop rule).
+- Real data next: subject 47159, raw echoes (`scripts/phase2_frontend_subject.lsf`).
