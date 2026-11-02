@@ -37,6 +37,13 @@ def main(argv=None) -> int:
     summ.add_argument("--out", required=True, help="folder holding <run>/inventory.json")
     summ.add_argument("--config", help="config YAML (default: configs/default.yaml)")
 
+    fr = sub.add_parser("frontend", help="Phase 2 front end on one mbme_tedana run (maps, channels, summary)")
+    fr.add_argument("--run-dir", required=True, help="mbme_tedana run folder (holds result.json)")
+    fr.add_argument("--source", choices=["raw", "mc"], default="raw", help="raw dcm2niix echoes or motion-corrected")
+    fr.add_argument("--out", required=True, help="output folder")
+    fr.add_argument("--no-mppca", action="store_true", help="skip the MP-PCA sigma cross-check")
+    fr.add_argument("--config", help="config YAML (default: configs/default.yaml)")
+
     args = ap.parse_args(argv)
     if args.cmd == "inventory" and not (args.nifti_dir or args.run_dir):
         ap.error("give --run-dir (preferred) or --nifti-dir")
@@ -58,6 +65,13 @@ def main(argv=None) -> int:
         n_fail = sum(s["status"].startswith("FAILED") for s in status)
         print(f"\nSummary: {args.out}/phase0_summary.md ({n_fail} failed)")
         return 1 if n_fail else 0
+    elif args.cmd == "frontend":
+        from . import frontend
+        summ = frontend.run_subject(args.run_dir, cfg, args.out, source=args.source,
+                                    mppca=False if args.no_mppca else None)
+        print(frontend.render_summary(summ))
+        if "mppca_check" in summ and summ["mppca_check"]["verdict"] != "OK":
+            return 3
     elif args.cmd == "inventory-summary":
         from . import inventory
         inventory.write_summary(args.out, cfg)

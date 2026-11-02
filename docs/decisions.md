@@ -145,3 +145,15 @@ Gate status: evidence shown to the user; awaiting review.
 
 User: the simulation "seems reasonable"; proceed to real-data tests with what appears reasonable from the source materials and simulations, starting with subject P04. Source amplitudes stay at SD 0.5 s^-1 / 0.5 % at the peak voxel.
 User expectation recorded: "very little signal from the fourth echo in most of the brain". Physics (T2* ~45-58 ms leaves ~25-35 % of S0 at 61 ms) suggests usable echo-4 signal in most cortex; the Phase 2 echo-4 SNR and usability maps on real data will settle this.
+
+## Phase 2: front end
+
+### 2026-11-02: implementation choices (where CLAUDE.md section 5 left room)
+
+1. **Log signal demeaned in time.** y = ln S - mean_t ln S (ln of S over its geometric mean) instead of ln(S / arithmetic mean). The two differ by a per-echo constant of about TE^2 var(b)/2, which is not in span{1, TE}: with the arithmetic mean a pure dR2* source left a constant in c1 and r (noise-free max |c1| 6 % of max |c0|); with the geometric mean c1 = r = 0 to float32 precision. Weights still use the arithmetic mean mu.
+2. **sigma_init from the multi-echo residual itself**, not from background (unreliable with sum-of-squares multi-coil data) or MP-PCA (kept as the independent cross-check). Trusted voxels: weakest included echo has mu / sigma_ref > 10, with all usable echoes or, failing that, echoes 1-3 (echo 4 can be near the floor brain-wide). sigma_ref is a heavily smoothed map of the echoes-1-3 estimates; trusting voxels by their own noisy estimate biased sigma low by 3 % in a weak-echo-4 simulation (selection on the estimate). Stops with an error if fewer than 50 voxels are trusted.
+3. **Smooth sigma map** = normalised Gaussian convolution (FWHM 3 voxels) of the trusted estimates. Used for echo usability (so the cut is not decided by each voxel's noisy estimate) and in voxels with df = 0 or mu_min / sigma_smooth < 10; per-voxel sigma elsewhere (`whiten_with: voxel`).
+4. **Residual energy is reported two ways.** Against the per-voxel sigma it is ~1 by construction (sigma comes from the same residual). Against the smooth sigma ("residual excess") a localised violation shows as > 1, because it inflates that voxel's sigma relative to its neighbours. Test (e) uses the excess, plus the static mono-exponential misfit and the frame-wise energy.
+5. **Non-positive frames** (spline undershoot) make that voxel-echo unusable (`nonpositive_policy: exclude_echo`).
+6. **MP-PCA cross-check** (dipy 1.12.1 `mppca(arr, *, mask, patch_radius, return_sigma)`, verified from source): on raw echoes, 100 volumes, patch radius 2, patch centres on a sparse grid (every 2nd voxel in-plane, every 6th slice; sigma varies smoothly). On simulated data MP-PCA reads 6 % low (ratio 0.94, stable across echoes, sources and g-factor), so the 20 % stop rule is applied to (residual / MP-PCA) / 1.06.
+7. **Posterior fossa** has no anatomical mask; summaries use the inferior third of the brain mask as an approximate posterior-fossa / skull-base level, labelled as such.

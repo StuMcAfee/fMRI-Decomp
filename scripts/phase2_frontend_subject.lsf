@@ -1,0 +1,51 @@
+#!/bin/bash
+# Phase 2 front end on one mbme_tedana run: maps, channel cache, summary, QC figure.
+# Interactive session (recommended; arguments, quotes keep spaces):
+#   bash scripts/phase2_frontend_subject.lsf "<RUN_DIR>" [raw|mc]
+# raw (default) = the dcm2niix echoes (sigma and the MP-PCA cross-check must use raw data);
+# mc = motion-corrected echoes (needs a run made with --keep-intermediates).
+#BSUB -J mejoint_phase2
+#BSUB -q standard
+#BSUB -n 4
+#BSUB -R "rusage[mem=4000] span[hosts=1]"
+#BSUB -env "all"
+#BSUB -o phase2_%J.log
+set -euo pipefail
+
+PY="$HOME/miniconda3_new/envs/mejoint/bin/python"     # always the env's python, by full path
+RUN_DIR="${1:-${RUN_DIR:-}}"
+SOURCE="${2:-${SOURCE:-raw}}"
+
+REPO=""
+for cand in "$(dirname "${BASH_SOURCE[0]:-.}")/.." "$PWD" "${LS_SUBCWD:-}"; do
+    if [ -n "$cand" ] && [ -f "$cand/src/mejoint/__init__.py" ]; then REPO="$(cd "$cand" && pwd)"; break; fi
+done
+[ -n "$REPO" ] || { echo "Cannot find the fMRI-Decomp folder (src/mejoint). Run from inside it." >&2; exit 2; }
+cd "$REPO"
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
+NT="${LSB_DJOB_NUMPROC:-4}"                               # worker count from LSF, not os.cpu_count()
+export OMP_NUM_THREADS="$NT" MKL_NUM_THREADS="$NT" OPENBLAS_NUM_THREADS="$NT"
+
+echo "== mejoint phase 2 front end | $(date) | host $(hostname) | job ${LSB_JOBID:-interactive} | threads $NT"
+echo "repo:    $PWD (git $(git rev-parse --short HEAD 2>/dev/null || echo '?'))"
+echo "RUN_DIR: ${RUN_DIR:-<unset>}"
+echo "SOURCE:  $SOURCE"
+fail() { echo "PREFLIGHT FAILED: $*" >&2; exit 2; }
+[ -x "$PY" ] || fail "no python at $PY"
+"$PY" -c "import mejoint, numpy, scipy, nibabel, yaml, matplotlib" || fail "python packages missing (see the import error above)"
+"$PY" -c "import dipy; print('dipy:   ', dipy.__version__)" || echo "dipy:    NOT available: MP-PCA cross-check will fail (rerun with --no-mppca to skip)"
+[ -n "$RUN_DIR" ] && [ -d "$RUN_DIR" ] || fail "first argument must be the run folder"
+[ -f "$RUN_DIR/result.json" ] || fail "no result.json in RUN_DIR"
+echo "== preflight ok"
+
+OUT="outputs/phase2/$(basename "$RUN_DIR")/$SOURCE"
+mkdir -p "$OUT"
+status=0
+/usr/bin/time -v "$PY" -m mejoint.cli frontend --run-dir "$RUN_DIR" --source "$SOURCE" --out "$OUT" 2> "$OUT/time.txt" || status=$?
+grep -E "Elapsed|Maximum resident" "$OUT/time.txt" || true
+if [ -f "$OUT/summary.json" ]; then
+    "$PY" scripts/plot_frontend.py "$OUT" "$OUT/frontend_qc.png" || echo "figure failed (outputs are still valid)"
+fi
+"$PY" -m pip freeze > "$OUT/env_pip_freeze.txt" 2>/dev/null || true
+echo "done: $PWD/$OUT (exit $status; 3 = MP-PCA cross-check outside tolerance: STOP and report)"
+exit $status
