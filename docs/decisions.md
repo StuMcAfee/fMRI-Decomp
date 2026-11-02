@@ -99,3 +99,16 @@ Points for the user:
 - No run kept motion-corrected echoes.
 
 Gate status: summary shown to the user; awaiting review and approval.
+
+### 2026-11-02: Phase 0 gate PASSED (user)
+
+User decisions:
+- Phase 0 passes. No phase, physio, noise frames or non-steady-state volumes in any run, so sections 5.4 and 9 stand as written (sigma from the residual with an MP-PCA cross-check; magnitude-only denoising if ever used).
+- Subject P08 is excluded (pairing failed; ~270 volumes). Recorded in `configs/default.yaml` under `subjects.exclude`.
+- All work stays on the single branch `claude/beautiful-hamilton-141ubf` (replaces one branch per phase in CLAUDE.md section 2).
+- CLAUDE.md sections 2-4 updated with the confirmed facts.
+- Phase encoding: the user was unsure whether left-right was intended. The data are unambiguous (JSON `i`, DICOM `ROW`, 52-line axis = narrower 170 mm FOV), so analysis proceeds with left-right phase encoding as a fact; Phase 2 maps will show distortion and ghosting along that axis.
+
+Open items carried forward:
+- Motion-corrected echoes for P01 (rerun with `--keep-intermediates` into `OUT_keep`) before Phase 2.
+- 5 runs with tedana's "no provisional accept" fallback: their tedana counts are unreliable; relevant for the Phase 5 and 11 count comparisons.

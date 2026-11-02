@@ -23,11 +23,11 @@ Stretch goal: a structured factorization with group-sparse channel maps.
 - **User:** Stu McAfee, PhD (St. Jude, Diagnostic Imaging). He is expert in fMRI physiology and cerebellar/posterior fossa neuroscience.
 - **Python level:** novice to intermediate. Explain code by what it does, not by language mechanics.
 - **Writing:** keep scientific writing concise and defensible. Avoid em dashes in prose written for him.
-- **Git:** work on one feature branch per phase, never directly on `main`. Whenever you create, switch or merge a branch, give the exact commands and one line on why:
+- **Git:** all phases are developed on the single branch `claude/beautiful-hamilton-141ubf` (user decision, 2026-11-02; this replaces one branch per phase). Never commit directly to `main`; merge into `main` only when the user agrees. Whenever you create, switch or merge a branch, give the exact commands and one line on why:
   ```bash
-  git switch -c phase2-frontend                  # new branch for this phase
-  git add -A && git commit -m "..."              # save progress
-  git switch main && git merge phase2-frontend   # only after the gate passes and the user agrees
+  git pull origin claude/beautiful-hamilton-141ubf     # get the latest work on the project branch
+  git add -A && git commit -m "..."                    # save progress
+  git switch main && git merge claude/beautiful-hamilton-141ubf   # only when the user agrees
   ```
 - **Stop and ask, do not guess,** when any of these happens:
   - an acquisition fact (section 4) is unknown and changes the design;
@@ -51,7 +51,9 @@ Stretch goal: a structured factorization with group-sparse channel maps.
   - `rusage[mem=]` is **per core**.
   - Multi-core jobs need `span[hosts=1]`.
   - Inside a job, use `$LSB_DJOB_NUMPROC` for worker counts, not `os.cpu_count()`.
-- **Python:** conda lives in `~/miniconda3_new`. The cluster `python/3.11.0` module, which loads with `fsl/6`, shadows conda's python. Always call the env's python by full path in job scripts.
+- **Python:** conda lives in `~/miniconda3_new`. Project env: `~/miniconda3_new/envs/mejoint` (a clone of the tedana env: tedana 26.0.3, torch 2.6.0+cu124, dipy, pytest, pyyaml); always call `~/miniconda3_new/envs/mejoint/bin/python` by full path. Keep `~/miniconda3_new/envs/tedana` unchanged for the existing analysis. Job scripts use the code in `src/` via `PYTHONPATH` (no pip install).
+- **Interactive sessions** started from Open OnDemand are LSF jobs whose `LS_SUBCWD` is the dashboard folder; scripts must not rely on it to find the repository.
+- **LSF memory:** `rusage[mem=]` is in MB and enforced as a hard limit. Exported variables did not reliably reach jobs; pass paths as arguments or in list files. The cluster `python/3.11.0` module, which loads with `fsl/6`, shadows conda's python. Always call the env's python by full path in job scripts.
 - **FSL:** `fsl/6` does not set `FSLOUTPUTTYPE`; export it in scripts.
 - **GPU:** the driver is CUDA 12.4. Use a cu124 torch build; `torch==2.6.0+cu124` is known to work.
 - **Packages:** install them on the login node.
@@ -62,22 +64,24 @@ Stretch goal: a structured factorization with group-sparse channel maps.
 - Resting-state multiband multi-echo EPI with 4 echoes.
 - **TE = 16.20, 31.22, 46.24, 61.26 ms.**
 - TR ≈ 0.75 s, so Nyquist is 0.667 Hz.
-- Most acquisitions have about 800 volumes in one run. One (subject P08) has only about 267–278 volumes per echo, which is why the existing pipeline already handles unequal volume counts across echoes.
-- 52×64×48 matrix (~3.5 mm voxels), likely 3T.
+- 17 runs (one per subject) were audited in Phase 0. Most have 800 volumes per echo. Echo volume counts differ in 5 runs; the pipeline's data-driven pairing kept 797, 751, 777 and 797 volumes in four of them (run P10 has a 19-volume gap inside the run, so kept volumes are not always consecutive in time). **Subject P08** (267–278 volumes per echo) failed pairing in the pipeline and is **excluded** (user decision, 2026-11-02).
+- 52×64×48 matrix, **3.281 × 3.281 × 3.3 mm** voxels (no slice gap). 3T Siemens MAGNETOM Prisma, syngo MR XA60, CMRR `cmrr_mbep2d_bold`. DICOMs are enhanced (XA) multi-frame files.
+- **MB 6** (derived from SliceTiming: 48 slices, 8 distinct times; `MultibandAccelerationFactor` is absent from the JSON). Slices acquired together are 8 slices (26.4 mm) apart. GRAPPA 2, partial Fourier 7/8, effective echo spacing 0.31 ms, total readout 15.8 ms.
+- **Phase encoding is left-right** (`PhaseEncodingDirection` = i, DICOM `ROW`; the 52-line axis has the narrower 170 mm FOV). Distortion, ghosting and any CAIPI shift run left-right.
+- HeadNeck_20 coil, elements HE1-4;NE1,2 (HE1-4 only, without neck elements, in P12, P06, P09 and P08); sum-of-squares coil combination, so low-SNR magnitude noise is noncentral-χ.
 - Participants are children and young adults, including patients after posterior fossa tumor surgery (resection cavities, hemosiderin, clips).
 
-**Unknown facts, to establish in Phase 0 and report:**
-- Whether phase was saved (dcm2niix `_ph` files, or `ImageType` containing `P`).
-- Noise frames at the end of the run. Use a detection rule such as trailing volumes with mean signal below 10% of the median.
-- Physiological recordings: whether they exist, their format and location.
-- Non-steady-state volumes.
-- From the JSON sidecars: MB factor, in-plane acceleration, partial Fourier, phase-encode direction, and coil combination if recorded.
-- Slice-stack spacing and CAIPI shift, needed for the MB alias test; they may need the user or the protocol PDF.
-- Where native-space tissue masks (grey matter, CSF/ventricles, large vessels/sinuses) and patient cavity/peri-cavity masks will come from. **Ask the user.**
+**Established in Phase 0 (all 17 runs; details in `docs/decisions.md`):**
+- Phase: **not saved**.
+- Noise frames: **none**. Non-steady-state volumes: **none** (first-volume / median signal ratio about 1.00).
+- Physiological recordings: **none recorded** (user). No RETROICOR/RVT; respiratory and cardiac effects must be handled from the data and reported as a limitation.
+- Sequence fields: see the acquisition bullets above.
+- Slice-stack spacing: 8 slices (26.4 mm). **CAIPI shift unknown** (no protocol PDF; not found in the DICOM sample).
+- Tissue masks (grey matter, CSF/ventricles, vessels/sinuses) and cavity/peri-cavity masks: **no source exists** (user). They must be derived before Phase 5.
 
 DICOM headers sit in the NIfTI folder or one level deeper.
 
-**Existing pipeline: `mbme_tedana.py`.** Ask the user for its path and output folder. What it does:
+**Existing pipeline: `mbme_tedana.py`** at `/research_jude/rgs01_jude/dept/DI/tir/vision_lab/stu/CSIMemphis/Analysis/Monitoring Visit/mbme_tedana.py`, outputs in `.../Monitoring Visit/OUT/` (paths contain a space; always quote them). What it does:
 - Finds the echoes from an echo-1 list.
 - Pairs volumes across echoes when the echo counts differ, and writes `volumes_used.tsv`.
 - Motion-corrects: mcflirt on echo 1, then one `flirt -applyxfm` resampling with the same transforms on every echo (spline interpolation by default; read it from `result.json` parameters). Motion parameters are written to `<run>/motion/mcflirt.par`.
@@ -85,6 +89,10 @@ DICOM headers sit in the NIfTI folder or one level deeper.
 - Has a `--focal` option for focal kappa/rho.
 - Keeps the motion-corrected echoes only with `--keep-intermediates`, at `<run>/work/echo-k_desc-mc_bold.nii.gz`.
 - Writes tedana outputs to `<run>/tedana/`.
+- The existing runs used the script's defaults `--ica-method robustica --n-robust-runs 30 --tedpca aic --tree tedana_orig --seed 42 --interp spline` (robustica, not tedana's own fastica default).
+- TEs were passed with `--echo-times`: the script cannot read TEs from these enhanced DICOMs (JSON agrees).
+- No run kept its motion-corrected echoes. A rerun of P01 with `--keep-intermediates` into `.../Monitoring Visit/OUT_keep/` provides them.
+- 5 of the 16 completed runs hit tedana's "no provisional accept" fallback and report 0 "Likely BOLD" components (P12, P04, P10, P03, P07).
 
 **Reuse it for preprocessing and as the tedana baseline. Do not reimplement volume pairing or motion correction.** Run tedana by full path from the pinned environment, and confirm flag spellings with `tedana --help`. The 26.0.3 source uses `--ica-method` and `--n-robust-runs`; some docs show underscores.
 
