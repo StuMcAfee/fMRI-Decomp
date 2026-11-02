@@ -8,6 +8,14 @@ acquisition:
   te_tolerance_ms: 0.05                  # a JSON TE further than this from te_ms is flagged
   expected_matrix: [52, 64, 48]
   tr_s: 0.75
+  voxel_mm: [3.281, 3.281, 3.3]          # confirmed in Phase 0 (all runs)
+  mb_factor: 6                           # derived from SliceTiming (not in the JSON)
+  slice_stack_separation: 8              # slices acquired together are 8 apart (48 / 6)
+  phase_encoding: i                      # left-right; CAIPI shift unknown
+
+subjects:
+  exclude:                               # user decision 2026-11-02
+    "51497": "267-278 volumes per echo; volume pairing failed in mbme_tedana"
 
 inventory:                    # Phase 0 audit
   search_depth: 1             # NIfTI/DICOM may sit in the NIfTI folder or one level deeper
