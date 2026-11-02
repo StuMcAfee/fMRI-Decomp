@@ -111,7 +111,7 @@ frontend:                     # Phase 2 (CLAUDE.md section 5.4); listed now so t
   sigma_init_snr: 10.0        # trusted voxels for sigma_init: weakest included echo (all usable, else echoes 1-3) above this
   sigma_init_min_voxels: 50   # stop with an error if fewer trusted voxels exist
   mppca_sigma_tolerance: 0.20
-  mask_source: pipeline        # proposed: <run>/brain_mask.nii.gz from mbme_tedana (same voxels as tedana); confirm at Phase 2
+  mask_source: pipeline        # pipeline = <run>/brain_mask.nii.gz (same voxels as tedana); pipeline_filled = enclosed holes filled (compute_epi_mask drops the deep brain); user to decide
   nonpositive_policy: exclude_echo   # proposed: a voxel-echo with any frame <= 0 (spline undershoot) is unusable; confirm at Phase 2
   signal_form: log            # log-ratio ln(S / mean S) (CLAUDE.md 5.1); "linear" = S / mean S - 1 (tests only)
   sigma_smooth_fwhm_vox: 3.0  # smooth sigma map (normalised convolution of trusted voxels)

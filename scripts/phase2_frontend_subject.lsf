@@ -1,7 +1,7 @@
 #!/bin/bash
 # Phase 2 front end on one mbme_tedana run: maps, channel cache, summary, QC figure.
 # Interactive session (recommended; arguments, quotes keep spaces):
-#   bash scripts/phase2_frontend_subject.lsf "<RUN_DIR>" [raw|mc]
+#   bash scripts/phase2_frontend_subject.lsf "<RUN_DIR>" [raw|mc] [pipeline|pipeline_filled]
 # raw (default) = the dcm2niix echoes (sigma and the MP-PCA cross-check must use raw data);
 # mc = motion-corrected echoes (needs a run made with --keep-intermediates).
 #BSUB -J mejoint_phase2
@@ -15,6 +15,7 @@ set -euo pipefail
 PY="$HOME/miniconda3_new/envs/mejoint/bin/python"     # always the env's python, by full path
 RUN_DIR="${1:-${RUN_DIR:-}}"
 SOURCE="${2:-${SOURCE:-raw}}"
+MASK="${3:-pipeline}"
 
 REPO=""
 for cand in "$(dirname "${BASH_SOURCE[0]:-.}")/.." "$PWD" "${LS_SUBCWD:-}"; do
@@ -30,6 +31,7 @@ echo "== mejoint phase 2 front end | $(date) | host $(hostname) | job ${LSB_JOBI
 echo "repo:    $PWD (git $(git rev-parse --short HEAD 2>/dev/null || echo '?'))"
 echo "RUN_DIR: ${RUN_DIR:-<unset>}"
 echo "SOURCE:  $SOURCE"
+echo "MASK:    $MASK"
 fail() { echo "PREFLIGHT FAILED: $*" >&2; exit 2; }
 [ -x "$PY" ] || fail "no python at $PY"
 "$PY" -c "import mejoint, numpy, scipy, nibabel, yaml, matplotlib" || fail "python packages missing (see the import error above)"
@@ -39,9 +41,10 @@ fail() { echo "PREFLIGHT FAILED: $*" >&2; exit 2; }
 echo "== preflight ok"
 
 OUT="outputs/phase2/$(basename "$RUN_DIR")/$SOURCE"
+if [ "$MASK" != "pipeline" ]; then OUT="${OUT}_${MASK}"; fi
 mkdir -p "$OUT"
 status=0
-/usr/bin/time -v "$PY" -m mejoint.cli frontend --run-dir "$RUN_DIR" --source "$SOURCE" --out "$OUT" 2> "$OUT/time.txt" || status=$?
+/usr/bin/time -v "$PY" -m mejoint.cli frontend --run-dir "$RUN_DIR" --source "$SOURCE" --mask "$MASK" --out "$OUT" 2> "$OUT/time.txt" || status=$?
 grep -E "Elapsed|Maximum resident" "$OUT/time.txt" || true
 if [ -f "$OUT/summary.json" ]; then
     "$PY" scripts/plot_frontend.py "$OUT" "$OUT/frontend_qc.png" || echo "figure failed (outputs are still valid)"
