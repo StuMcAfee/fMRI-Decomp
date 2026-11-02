@@ -16,8 +16,9 @@ def main(argv=None) -> int:
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     inv = sub.add_parser("inventory", help="Phase 0 audit of one subject")
-    inv.add_argument("--nifti-dir", required=True, help="folder with the raw echo NIfTIs + JSON sidecars")
-    inv.add_argument("--run-dir", help="mbme_tedana output folder for this run (optional)")
+    inv.add_argument("--nifti-dir", help="folder with the raw echo NIfTIs + JSON sidecars "
+                     "(default: the folder of input_echo1 in the run's result.json)")
+    inv.add_argument("--run-dir", help="mbme_tedana output folder for this run (the folder holding result.json)")
     inv.add_argument("--physio-dir", action="append", default=[], help="extra folder to search for physio logs")
     inv.add_argument("--pipeline-script", help="path to mbme_tedana.py (its settings are reported)")
     inv.add_argument("--subject", help="subject label for the report")
@@ -26,6 +27,8 @@ def main(argv=None) -> int:
     inv.add_argument("--no-data", action="store_true", help="skip loading voxel data (no noise-frame/NSS check)")
 
     args = ap.parse_args(argv)
+    if args.cmd == "inventory" and not (args.nifti_dir or args.run_dir):
+        ap.error("give --run-dir (preferred) or --nifti-dir")
     cfg = io.load_config(args.config)
 
     if args.cmd == "inventory":

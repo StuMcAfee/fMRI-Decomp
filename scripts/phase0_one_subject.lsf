@@ -1,7 +1,7 @@
 #!/bin/bash
 # Phase 0 audit of one subject on LSF.
 # Set the four variables in your login shell, then submit from the repository root:
-#   export SUBJECT=...  NIFTI_DIR="..."  RUN_DIR="..."  PIPELINE="..."
+#   export SUBJECT=...  RUN_DIR="..."  PIPELINE="..."   [NIFTI_DIR="..." only to override result.json]
 #   bsub < scripts/phase0_one_subject.lsf
 # Quoted variables carry paths with spaces safely into the job (-env "all" passes them through).
 #BSUB -J mejoint_phase0
@@ -13,13 +13,15 @@
 set -euo pipefail
 
 PY="$HOME/miniconda3_new/envs/mejoint/bin/python"     # always the env's python, by full path
-: "${SUBJECT:?set SUBJECT}" "${NIFTI_DIR:?set NIFTI_DIR}" "${RUN_DIR:?set RUN_DIR}" "${PIPELINE:?set PIPELINE}"
+: "${SUBJECT:?set SUBJECT}" "${RUN_DIR:?set RUN_DIR}" "${PIPELINE:?set PIPELINE}"
+NIFTI_ARG=()
+if [ -n "${NIFTI_DIR:-}" ]; then NIFTI_ARG=(--nifti-dir "$NIFTI_DIR"); fi
 cd "${LS_SUBCWD:-$PWD}"                                  # repository root (where bsub was run)
 OUT="outputs/phase0/sub-${SUBJECT}"
 mkdir -p "$OUT"
 
 "$PY" -m mejoint.cli inventory \
-    --nifti-dir "$NIFTI_DIR" --run-dir "$RUN_DIR" --pipeline-script "$PIPELINE" \
+    ${NIFTI_ARG[@]+"${NIFTI_ARG[@]}"} --run-dir "$RUN_DIR" --pipeline-script "$PIPELINE" \
     --subject "$SUBJECT" --out "$OUT"
 
 # record the exact environment next to the audit (CLAUDE.md section 12)
