@@ -250,6 +250,8 @@ def make_run_folder(sim, root, run_id="sub-90001_acq-REDACTED_ser-5"):
     T = sim.n_volumes
     (rd / "volumes_used.tsv").write_text("echo1\techo2\techo3\techo4\n" + "".join(f"{i}\t{i}\t{i}\t{i}\n" for i in range(T)))
     np.savetxt(rd / "motion" / "framewise_displacement.txt", np.abs(np.random.default_rng(0).normal(0, 0.1, T)))
+    par = np.cumsum(np.random.default_rng(1).normal(0, 0.01, (T, 6)), axis=0) * np.array([0.01] * 3 + [1] * 3)
+    np.savetxt(rd / "motion" / "mcflirt.par", par)
     nib.save(nib.Nifti1Image(sim.mask.astype(np.uint8), np.diag([*sim.voxel_mm, 1.0])), str(rd / "brain_mask.nii.gz"))
     (rd / "result.json").write_text(json.dumps({"status": "ok", "run_id": run_id, "input_echo1": str(paths["echoes"][0]),
                                                 "echo_times_ms": sim.te_ms.tolist()}))
@@ -284,3 +286,54 @@ def test_excluded_subject_is_refused(cfg, tmp_path):
     rd = make_run_folder(sim, tmp_path, run_id="sub-P08_acq-TIMESTAMP_ser-4")
     with pytest.raises(ValueError, match="excluded"):
         frontend.run_subject(rd, cfg, tmp_path / "fe")
+
+
+
+def test_static_shape_separates_curvature_and_alternation(cfg):
+    te = np.array(cfg["acquisition"]["te_ms"])
+    base = np.log(1000) - te / 50.0
+    use = np.ones((3, 4), bool)
+    alt = (-1.0) ** np.arange(4)
+    biexp = np.log(0.7 * np.exp(-te / 30) + 0.3 * np.exp(-te / 150)) + np.log(1000)
+    mu = np.exp(np.stack([base, base + 0.02 * alt, biexp]))
+    curv, alt_c = frontend.static_shape(mu, te, use)
+    assert abs(curv[0]) < 1e-9 and abs(alt_c[0]) < 1e-9              # mono-exponential: nothing
+    assert alt_c[1] > 0.005 and abs(alt_c[1]) > 5 * abs(curv[1])      # odd/even pattern lands in 'alternating'
+    assert curv[2] > 0.005 and abs(curv[2]) > 3 * abs(alt_c[2])        # two-compartment decay is convex
+
+
+def test_drift_quiet_window_and_mask_holes():
+    import nibabel as nib
+    T = 300
+    par = np.zeros((T, 6))
+    par[:100, 3] = np.linspace(2.0, 0.0, 100)                          # drifting start, still afterwards
+    d = frontend.drift_mm(par)
+    assert d[0] > d[150] and d[150] == 0
+    assert frontend.quiet_window(par, 100) >= 100
+    m = np.zeros((12, 12, 8), bool)
+    m[2:10, 2:10, 1:7] = True
+    m[5:7, 5:7, 3:5] = False                                           # an enclosed hole of 8 voxels
+    h = frontend.mask_holes(m, np.eye(4))
+    assert h["holes_3d"].sum() == 8 and h["holes_axial"].sum() == 8
+    assert nib.aff2axcodes(np.eye(4)) == ("R", "A", "S")
+
+
+@pytest.mark.parametrize("scale", [None, [1.0, 0.8, 0.65, 0.55]])
+def test_background_noise_detects_per_echo_scaling(cfg, tmp_path, record_property, scale):
+    """Air outside the head is pure noise: its level per echo must stay equal when the echoes share one
+    thermal sigma, and must recover deliberately applied per-echo scale factors."""
+    sim = sim_with(cfg, 12, grid=[30, 30, 14], n_volumes=60)
+    note(sim, record_property, f" (per-echo scaling {scale})")
+    if scale is not None:
+        sim.data *= np.asarray(scale, np.float32)[None, None, None, :, None]
+    rd = make_run_folder(sim, tmp_path)
+    c2 = io.merge(cfg, {"frontend": {"mppca": {"enabled": False}}})
+    summ = frontend.run_subject(rd, c2, tmp_path / "fe", source="raw")
+    ratios = [b["sd_ratio_to_echo1"] for b in summ["background_noise"]]
+    record_property("background_sd_ratios", ratios)
+    expect = np.ones(4) if scale is None else np.asarray(scale)
+    assert np.allclose(ratios, expect, atol=0.05)
+    assert summ["background_noise"][0]["n_voxels"] >= 50
+    assert "drift_mm_p50_p90_max" in summ and "static_curvature_p10_50_90" in summ
+    md = (tmp_path / "fe" / "summary.md").read_text()
+    assert "Noise in air outside the head" in md and "Shape of the static decay" in md

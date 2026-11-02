@@ -219,3 +219,20 @@ def save_map(values: np.ndarray, mask3d: np.ndarray, ref_img, path, fill=np.nan)
     tmp = path.with_name(f".{path.name}.tmp.nii.gz")
     nib.save(img, str(tmp))
     os.replace(tmp, path)
+
+
+def save_volume(vol: np.ndarray, ref_img, path) -> None:
+    """Write a full-grid 3D/4D array as float32 NIfTI on the reference grid (atomic)."""
+    import nibabel as nib
+
+    vol = np.asarray(vol, dtype=np.float32)
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    hdr = ref_img.header.copy()
+    hdr.set_data_dtype(np.float32)
+    hdr.set_slope_inter(None, None)
+    img = nib.Nifti1Image(vol, ref_img.affine, hdr)
+    img.header.set_data_shape(vol.shape)
+    tmp = path.with_name(f".{path.name}.tmp.nii.gz")
+    nib.save(img, str(tmp))
+    os.replace(tmp, path)

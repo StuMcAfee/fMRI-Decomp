@@ -168,3 +168,21 @@ User expectation recorded: "very little signal from the fourth echo in most of t
 - (e) residual excess 1.11 at the dynamically dephased skull base vs 1.00 elsewhere; static misfit ~40x; spike frames stand out; including echoes near the floor raises the excess (1.17), snr_min = 5 removes most of it.
 - Full-size synthetic run (52 x 64 x 48, 200 volumes, ~50k brain voxels): front end 16 s, sigma median ratio 0.999; MP-PCA 77 s per echo (sparse centres), reads 2 % low, so `mppca_expected_ratio` = 1.02 (the 6 % on the small grid shows the bias depends on geometry; both are small next to the 20 % stop rule).
 - Real data next: subject P04, raw echoes (`scripts/phase2_frontend_subject.lsf`).
+
+### 2026-11-02: STOP: sigma cross-check fails on P04 (raw echoes)
+
+First real-data front end (sub-P04_acq-TIMESTAMP_ser-5, raw echoes, 30866 mask voxels, 800 volumes):
+- Echo 4 usable in 87 % of voxels (median echo-4 SNR 14.7); inferior third 52 % (median 5.4). T2* median 51 ms (40 ms inferior third).
+- **MP-PCA sigma falls with echo time: 348, 263, 217, 187** (echo 4 / echo 1 = 0.54), while the residual-based sigma (which assumes one sigma for all echoes) is 323, matching echo 1 only. Deviation up to 70 %; the 20 % rule of CLAUDE.md 5.4 is exceeded, so work stopped and the user was told.
+- Static mono-exponential misfit median 0.036 log units brain-wide (0.051 inferior third), against 0.001 in simulation.
+- Frame-wise residual energy drifts (about 1.4 at the start, 1.0 mid-run, rising with spikes at the end); Spearman with FD only 0.08.
+- The pipeline brain mask has a large central hole (deep brain excluded, so also excluded from the existing tedana run). nilearn `compute_epi_mask` (read from source, 0.14.1; cluster version not checked) thresholds intensity, keeps the largest component, erodes/dilates, and never fills holes.
+
+Hypotheses and the diagnostics added to decide between them (same command, rerun):
+1. per-echo image scaling (would lower noise and signal together; argued against by T2* 51 ms, since a scaling this large would shorten apparent T2* to ~30 ms);
+2. MP-PCA counting non-thermal, signal-proportional fluctuations (head drift on raw data) as noise;
+3. genuinely echo-dependent thermal noise.
+Diagnostics: noise in air outside the head per echo (ratios valid for any coil count; tested: flat with equal sigma, recovers applied per-echo scale factors); MP-PCA repeated on the 100 frames with least head drift; mean signal per echo next to MP-PCA sigma; static decay split into curvature and odd/even-echo alternation; residual split into r0 / r1; residual energy vs head drift from the median position; unmasked echo-1 image with the mask outline; mask-hole count.
+In simulation (equal sigma) all of these are flat: MP-PCA 8.08-8.13 across echoes, background SD ratios 1.00, curvature and alternation ~0.
+
+Consequence if the thermal sigma truly differs between echoes: CLAUDE.md 5.3 (equal sigma) no longer holds; whitening needs per-echo sigma_e, c0 is no longer exactly the OC signal, and the sigma-free residual estimator needs replacing. That would be a design change for the user to decide.
