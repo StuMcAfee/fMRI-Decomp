@@ -245,3 +245,74 @@ def test_cli_runs(tmp_path):
     assert (tmp_path / "o" / "inventory.md").exists()
     with pytest.raises(SystemExit):
         main(["inventory", "--out", str(tmp_path / "o2")])
+
+
+def test_enhanced_dicom_nested_te_and_protocol(tmp_path, cfg):
+    """Siemens XA (enhanced) DICOM: TE and protocol text sit inside nested sequences."""
+    pytest.importorskip("pydicom")
+    from pydicom.dataset import Dataset, FileDataset, FileMetaDataset
+    from pydicom.uid import ExplicitVRLittleEndian, generate_uid
+
+    nd, rd = make_subject(tmp_path, decoy=False, dicoms=False, phase=False)
+    meta = FileMetaDataset()
+    meta.MediaStorageSOPClassUID = "1.2.840.10008.5.1.4.1.1.4.1"
+    meta.MediaStorageSOPInstanceUID = generate_uid()
+    meta.TransferSyntaxUID = ExplicitVRLittleEndian
+    ascconv = ("### ASCCONV BEGIN @Checksum=x ###\nsSliceAcceleration.lMultiBandFactor\t = 6\n"
+               "sKSpace.ucPhasePartialFourier\t = 0x4\nsGroupArray.asGroup[0].dDistFact = 0.2\n### ASCCONV END ###")
+    for e, te in enumerate(TE_MS, start=1):
+        path = nd / f"MR{e:04d}"
+        ds = FileDataset(str(path), {}, file_meta=meta, preamble=b"\0" * 128)
+        ds.SOPClassUID = meta.MediaStorageSOPClassUID
+        ds.SeriesNumber, ds.SeriesDescription = 5, "TRAN RESTING STATE"
+        ds.ImageType = ["ORIGINAL", "PRIMARY", "FMRI", "NONE"]
+        echo = Dataset()
+        echo.EffectiveEchoTime = te
+        item = Dataset()
+        item.MREchoSequence = [echo]
+        blk = item.private_block(0x0021, "SIEMENS MR SDS 01", create=True)
+        blk.add_new(0x19, "OB", ascconv.encode())
+        ds.SharedFunctionalGroupsSequence = [item]
+        try:
+            ds.save_as(str(path), enforce_file_format=True)
+        except TypeError:
+            ds.save_as(str(path), write_like_original=False)
+
+    inv = inventory.inventory_subject(None, cfg, run_dir=rd)
+    groups = inv["dicom"]["series"]
+    assert {g["sop_class"] for g in groups} == {"1.2.840.10008.5.1.4.1.1.4.1"}
+    assert sorted(t for g in groups for t in g["tes_seen_ms"]) == TE_MS
+    assert any("lMultiBandFactor" in ln for g in groups for ln in g["ascconv"])
+    md = inventory.render_markdown(inv, cfg)
+    assert "enhanced MR" in md and "sSliceAcceleration.lMultiBandFactor" in md
+
+
+def test_inventory_all_and_summary(tmp_path, cfg):
+    import shutil
+
+    out_pipe = tmp_path / "OUT"
+    out_pipe.mkdir()
+    _, rd_a = make_subject(tmp_path / "a", decoy=False, dicoms=False, phase=False, n_noise=0, n_nss=0)
+    _, rd_b = make_subject(tmp_path / "b", decoy=False, dicoms=False, phase=False, n_noise=0, n_nss=0,
+                           series=7, te=[15.0, 31.22, 46.24, 61.26])
+    _, rd_c = make_subject(tmp_path / "c", decoy=False, dicoms=False, phase=False, n_noise=0, n_nss=0, series=9)
+    for rd in (rd_a, rd_b, rd_c):
+        shutil.move(str(rd), out_pipe / rd.name)
+    (out_pipe / "not_a_run").mkdir()                       # ignored: no result.json
+    broken = out_pipe / "sub-0_acq-0_ser-1"
+    broken.mkdir()
+    (broken / "result.json").write_text(json.dumps({"status": "failed"}))   # no input_echo1: audit fails
+
+    logs = []
+    status = inventory.inventory_all(out_pipe, cfg, tmp_path / "audit", log=logs.append)
+    assert [s["status"] for s in status] == ["FAILED: ValueError: --nifti-dir not given and result.json has no input_echo1",
+                                             "ok", "ok", "ok"]
+    md = (tmp_path / "audit" / "phase0_summary.md").read_text()
+    assert "3 run(s) audited; 1 with flags" in md
+    assert "TE mismatch; te_json_ms differs" in md            # run b differs from the modal TE
+    assert "Failed audits" in md and "sub-0_acq-0_ser-1" in md
+    assert (tmp_path / "audit" / "phase0_summary.tsv").exists()
+    assert (tmp_path / "audit" / "sub-0_acq-0_ser-1" / "error.txt").exists()
+
+    status2 = inventory.inventory_all(out_pipe, cfg, tmp_path / "audit", log=logs.append)
+    assert [s["status"] for s in status2][1:] == ["skipped (already done with this config)"] * 3
