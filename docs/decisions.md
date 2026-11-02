@@ -55,3 +55,9 @@ Implications (proposed, to confirm at the phase named):
 4. **Phase 2 MP-PCA check on raw echoes:** select raw volumes with `volumes_used.tsv` so raw and motion-corrected series match.
 5. **Phase 2b:** FD must be recomputed from `mcflirt.par` with respiratory filtering; the stored FD is unfiltered.
 6. **If the audit finds trailing noise frames,** they went through mcflirt and tedana in the existing analysis.
+
+### 2026-11-02: LSF facts confirmed on the first Phase 0 job
+
+- `rusage[mem=4000]` is read as MB and enforced as a hard limit (bhist: MEMLIMIT 3.9 G).
+- `#BSUB -o` paths are relative to the submission folder; the job's working directory is the submission folder.
+- Exported variables did not all reach the job (SUBJECT arrived, RUN_DIR did not). Cause not established: either the multi-line `export` broke when pasted, or LSF dropped values containing spaces. Job scripts therefore take values as arguments; batch jobs (Phase 6) will read paths from a subject list file, not from environment variables.

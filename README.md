@@ -20,7 +20,7 @@ set `NIFTI_DIR` only to override that.
 
 ```bash
 export SUBJECT=<ID> RUN_DIR="<mbme_tedana OUT>/<run>" PIPELINE="<path>/mbme_tedana.py"
-bsub < scripts/phase0_one_subject.lsf      # or, in an interactive session: bash scripts/phase0_one_subject.lsf
+bash scripts/phase0_one_subject.lsf <ID> "<RUN_DIR>" "<PIPELINE>"   # interactive session, values as arguments
 ```
 
 Writes `outputs/phase0/sub-<ID>/inventory.md` (the table), `inventory.json`, `volume_means.tsv`,
