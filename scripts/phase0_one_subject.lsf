@@ -1,9 +1,10 @@
 #!/bin/bash
 # Phase 0 audit of one subject on LSF.
-# Set the four variables in your login shell, then submit from the repository root:
+# Set the variables in your login shell, then submit from the repository root:
 #   export SUBJECT=...  RUN_DIR="..."  PIPELINE="..."   [NIFTI_DIR="..." only to override result.json]
 #   bsub < scripts/phase0_one_subject.lsf
-# Quoted variables carry paths with spaces safely into the job (-env "all" passes them through).
+# It also runs directly in an interactive session (the #BSUB lines are then ignored):
+#   bash scripts/phase0_one_subject.lsf
 #BSUB -J mejoint_phase0
 #BSUB -q standard
 #BSUB -n 1
@@ -13,19 +14,43 @@
 set -euo pipefail
 
 PY="$HOME/miniconda3_new/envs/mejoint/bin/python"     # always the env's python, by full path
-: "${SUBJECT:?set SUBJECT}" "${RUN_DIR:?set RUN_DIR}" "${PIPELINE:?set PIPELINE}"
-NIFTI_ARG=()
-if [ -n "${NIFTI_DIR:-}" ]; then NIFTI_ARG=(--nifti-dir "$NIFTI_DIR"); fi
 cd "${LS_SUBCWD:-$PWD}"                                  # repository root (where bsub was run)
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"  # use the code in this folder; no pip install needed
+
+# ---- preflight: print everything needed to diagnose a failure, stop with a clear message
+echo "== mejoint phase 0 | $(date) | host $(hostname) | job ${LSB_JOBID:-interactive}"
+echo "repo:      $PWD (git $(git rev-parse --short HEAD 2>/dev/null || echo '?'))"
+echo "python:    $PY"
+echo "SUBJECT:   ${SUBJECT:-<unset>}"
+echo "RUN_DIR:   ${RUN_DIR:-<unset>}"
+echo "PIPELINE:  ${PIPELINE:-<unset>}"
+echo "NIFTI_DIR: ${NIFTI_DIR:-<unset: taken from result.json>}"
+fail() { echo "PREFLIGHT FAILED: $*" >&2; exit 2; }
+[ -x "$PY" ] || fail "no python at $PY"
+"$PY" -c "import sys; print('version:  ', sys.version.split()[0])"
+"$PY" -c "import mejoint, numpy, scipy, nibabel, yaml; print('mejoint:  ', mejoint.__file__)" \
+    || fail "python packages missing (see the import error above)"
+"$PY" -c "import pydicom" 2>/dev/null && echo "pydicom:   yes" || echo "pydicom:   NO (DICOM headers will not be read)"
+[ -n "${SUBJECT:-}" ] || fail "SUBJECT not set (run the export command in the same shell before bsub)"
+[ -n "${RUN_DIR:-}" ] || fail "RUN_DIR not set (run the export command in the same shell before bsub)"
+[ -d "$RUN_DIR" ] || fail "RUN_DIR is not a folder: $RUN_DIR"
+[ -f "$RUN_DIR/result.json" ] || fail "no result.json in RUN_DIR"
+[ -z "${PIPELINE:-}" ] || [ -f "$PIPELINE" ] || fail "PIPELINE is not a file: $PIPELINE"
+echo "== preflight ok"
+
 OUT="outputs/phase0/sub-${SUBJECT}"
 mkdir -p "$OUT"
+NIFTI_ARG=()
+if [ -n "${NIFTI_DIR:-}" ]; then NIFTI_ARG=(--nifti-dir "$NIFTI_DIR"); fi
+PIPE_ARG=()
+if [ -n "${PIPELINE:-}" ]; then PIPE_ARG=(--pipeline-script "$PIPELINE"); fi
 
 "$PY" -m mejoint.cli inventory \
-    ${NIFTI_ARG[@]+"${NIFTI_ARG[@]}"} --run-dir "$RUN_DIR" --pipeline-script "$PIPELINE" \
+    ${NIFTI_ARG[@]+"${NIFTI_ARG[@]}"} --run-dir "$RUN_DIR" ${PIPE_ARG[@]+"${PIPE_ARG[@]}"} \
     --subject "$SUBJECT" --out "$OUT"
 
 # record the exact environment next to the audit (CLAUDE.md section 12)
-"$PY" -m pip freeze > "$OUT/env_pip_freeze.txt"
+"$PY" -m pip freeze > "$OUT/env_pip_freeze.txt" 2>/dev/null || true
 "$PY" -c "import threadpoolctl, json; print(json.dumps(threadpoolctl.threadpool_info(), indent=1))" \
     > "$OUT/env_threadpool.json" 2>/dev/null || echo "threadpoolctl not available" > "$OUT/env_threadpool.json"
-echo "done: $OUT/inventory.md"
+echo "done: $PWD/$OUT/inventory.md"
