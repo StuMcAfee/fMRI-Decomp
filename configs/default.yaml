@@ -1,0 +1,84 @@
+# Every tunable for mejoint lives here. A copy (and its hash) is written into every output folder.
+# Values marked "from CLAUDE.md" are the brief's defaults; change them here, never in code.
+
+project_seed: 20261102        # root of all SeedSequence-derived seeds (CLAUDE.md section 12)
+
+acquisition:
+  te_ms: [16.20, 31.22, 46.24, 61.26]   # from CLAUDE.md section 4; Phase 0 confirms against JSON
+  te_tolerance_ms: 0.05                  # a JSON TE further than this from te_ms is flagged
+  expected_matrix: [52, 64, 48]
+  tr_s: 0.75
+
+inventory:                    # Phase 0 audit
+  search_depth: 1             # NIfTI/DICOM may sit in the NIfTI folder or one level deeper
+  nifti_patterns: ["*.nii", "*.nii.gz"]
+  min_volumes_bold: 10        # files with fewer volumes are treated as non-BOLD (e.g. SBRef)
+  mask_fraction_of_p98: 0.2   # crude in-brain mask for volume means: temporal mean > 0.2 x 98th percentile
+  noise_frame_rel_threshold: 0.10   # trailing volumes with whole-volume mean < 10% of the run median
+  nss_robust_z: 5.0           # leading volumes whose in-mask mean exceeds the median by > 5 robust SD
+  nss_max_volumes: 20         # never call more than this many leading volumes non-steady-state
+  dicom_max_files: 20000      # cap on DICOM headers read per subject
+  dicom_search_depth: 2       # DICOMs may sit in per-series subfolders one level below that
+  json_fields:                # always reported, "absent" if missing
+    - EchoTime
+    - EchoNumber
+    - ImageType
+    - RepetitionTime
+    - MagneticFieldStrength
+    - Manufacturer
+    - ManufacturersModelName
+    - SoftwareVersions
+    - SequenceName
+    - PulseSequenceDetails
+    - MultibandAccelerationFactor
+    - ParallelReductionFactorInPlane
+    - ParallelAcquisitionTechnique
+    - PartialFourier
+    - PhaseEncodingDirection
+    - PhaseEncodingAxis
+    - InPlanePhaseEncodingDirectionDICOM
+    - EffectiveEchoSpacing
+    - TotalReadoutTime
+    - BandwidthPerPixelPhaseEncode
+    - PixelBandwidth
+    - SliceThickness
+    - SpacingBetweenSlices
+    - FlipAngle
+    - CoilCombinationMethod
+    - ReceiveCoilName
+    - ReceiveCoilActiveElements
+    - CoilString
+    - NumberOfVolumesDiscardedByScanner
+    - NumberOfVolumesDiscardedByUser
+    - ImageComments
+  json_key_substrings: [Coil, Physio, Discard, Dummy, Multiband, MultiBand, Accel, Caipi, CAIPI, Shift]
+  physio_patterns:            # case-insensitive filename patterns searched for physiological logs
+    - "*physio*"
+    - "*.puls"
+    - "*.resp"
+    - "*.ecg"
+    - "*.ext"
+    - "*_puls*.log"
+    - "*_resp*.log"
+    - "*_ecg*.log"
+    - "*_info.log"
+    - "*.acq"
+  ascconv_keywords:          # Siemens protocol (ASCCONV) lines reported raw, for the user to interpret
+    - MultiBand
+    - SliceAccel
+    - FOVShift
+    - Caipi
+    - sPat
+    - PartialFourier
+    - CoilCombine
+    - lRepetitions
+    - sSliceArray.lSize
+    - dThickness
+    - sWipMemBlock
+    - ucReconstructionMode
+
+frontend:                     # Phase 2 (CLAUDE.md section 5.4); listed now so they are fixed in advance
+  snr_min: 5.0
+  snr_min_sensitivity: 3.0
+  sigma_init_snr: 10.0
+  mppca_sigma_tolerance: 0.20
