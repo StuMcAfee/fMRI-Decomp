@@ -350,9 +350,28 @@ def test_filled_mask_option(cfg, tmp_path, record_property):
     holed[10:14, 10:14, 5:9] = False                                   # a central hole, as compute_epi_mask leaves
     nib.save(nib.Nifti1Image(holed.astype(np.uint8), np.diag([*sim.voxel_mm, 1.0])), str(rd / "brain_mask.nii.gz"))
     c2 = io.merge(cfg, {"frontend": {"mppca": {"enabled": False}}})
-    a = frontend.run_subject(rd, c2, tmp_path / "a")
+    a = frontend.run_subject(rd, c2, tmp_path / "a", mask_source="pipeline")
     b = frontend.run_subject(rd, c2, tmp_path / "b", mask_source="pipeline_filled")
     assert a["n_voxels"] == holed.sum() and b["n_voxels"] == sim.mask.sum()
     assert a["mask_holes"]["fill3d_voxels"] == 64 and b["n_voxels_pipeline_mask"] == holed.sum()
     used = np.asarray(nib.load(str(tmp_path / "b" / "analysis_mask.nii.gz")).dataobj) > 0
     assert np.array_equal(used, sim.mask)
+
+
+
+def test_auto_mask_and_echo1_only_mode(cfg, tmp_path, record_property):
+    """The analysis mask built from the echoes matches the simulated brain, and the front end runs from the
+    raw echo files alone (no mbme_tedana / tedana outputs)."""
+    sim = sim_with(cfg, 14, grid=[30, 30, 16], n_volumes=40)
+    note(sim, record_property)
+    paths = sim.to_nifti(tmp_path / "nifti")
+    c2 = io.merge(cfg, {"frontend": {"mppca": {"enabled": False}}})
+    summ = frontend.run_subject(None, c2, tmp_path / "fe", echo1=paths["echoes"][0])
+    import nibabel as nib
+    from mejoint import mask as maskmod
+    used = np.asarray(nib.load(str(tmp_path / "fe" / "analysis_mask.nii.gz")).dataobj) > 0
+    assert maskmod.dice(used, sim.mask) > 0.95
+    assert summ["mask"]["source"] == "auto" and summ["te_ms"] == pytest.approx(cfg["acquisition"]["te_ms"])
+    assert "drift_mm_p50_p90_max" not in summ                         # no motion parameters without the pipeline
+    with pytest.raises(ValueError, match="exactly one"):
+        frontend.run_subject(None, c2, tmp_path / "x")

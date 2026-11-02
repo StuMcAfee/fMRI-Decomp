@@ -192,3 +192,17 @@ Consequence if the thermal sigma truly differs between echoes: CLAUDE.md 5.3 (eq
 User: 47159 has no large shunt or cavity; the central hole is "a regrettable tendency of the tedana workflow that's common across participants" (mbme_tedana builds the mask with nilearn `compute_epi_mask` on motion-corrected echo 1; it thresholds intensity and never fills holes).
 Consequence: the existing tedana runs, and any analysis on the pipeline mask, omit deep grey matter, ventricles and periventricular tissue in many subjects.
 Added: `frontend.mask_source` / `--mask` / third job-script argument: `pipeline` (default, same voxels as tedana) or `pipeline_filled` (enclosed holes filled in 3D and slice-wise). The summary reports both voxel counts and the hole size. Decision on the analysis mask pending (user).
+
+### 2026-11-02: analysis mask built from the input echoes; independence from tedana (user)
+
+User: "our analysis should always use a filled mask, or ideally should be able to run independently without tedana intermediates or outputs. It should have a way of creating a mask from the input data that is robust."
+
+Implemented (`src/mejoint/mask.py`, config `mask:`; `frontend.mask_source: auto` is now the default):
+1. head vs air: echo-1 temporal mean > 4 x the air level (median of the 3-voxel image border, i.e. the noise floor), largest component, holes filled;
+2. coil-shading correction: divide by a 40 mm FWHM smoothed copy inside the head;
+3. brain vs scalp: corrected intensity > 0.45, one erosion, largest component, regrow;
+4. fill every enclosed hole in 3D and slice-wise, one closing.
+Tests (`tests/test_mask.py`): on a synthetic head with centre-dark shading (centre 0.25-0.6 x edge), T1-dark ventricles, a skull gap and a scalp, Dice > 0.93-0.95 with the true brain, ventricles always included, < 5 % of the scalp; a whole-image Otsu threshold (the compute_epi_mask approach) loses most of the ventricles on the same phantom. On simulated runs the mask matches the simulated brain (Dice > 0.95).
+Not yet validated on real data: the 47159 run with the new default will show both outlines (analysis orange, pipeline blue dashed). Real heads have orbits, sinuses, neck and a resection cavity in some patients; the thresholds may need tuning after inspection across subjects.
+
+Independence: the front end runs from the raw echo files alone (`mejoint frontend --echo1 <..._e1.nii.gz>`; TEs from the JSON sidecars; equal echo volume counts required). Still from mbme_tedana: volume pairing (5 of 17 runs) and motion correction (needed from Phase 3/4 on). Open decision: proposed to import mbme_tedana's own pairing and motion-correction functions as a library (a mejoint `preprocess` stage that runs them without tedana), rather than reimplementing them (CLAUDE.md section 4).

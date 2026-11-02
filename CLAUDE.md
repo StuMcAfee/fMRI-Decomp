@@ -79,6 +79,10 @@ Stretch goal: a structured factorization with group-sparse channel maps.
 - Slice-stack spacing: 8 slices (26.4 mm). **CAIPI shift unknown** (no protocol PDF; not found in the DICOM sample).
 - Tissue masks (grey matter, CSF/ventricles, vessels/sinuses) and cavity/peri-cavity masks: **no source exists** (user). They must be derived before Phase 5.
 
+**Analysis mask and independence (user decisions, 2026-11-02):**
+- The analysis always uses its own hole-filled brain mask, built from the input echoes by `mask.py` (head vs air from the measured noise level, coil-shading correction, brain vs scalp, every enclosed hole filled). mbme_tedana's `brain_mask.nii.gz` (nilearn `compute_epi_mask`, which never fills holes) drops the deep brain in many participants; use it only to restrict comparisons with tedana to the voxels tedana saw.
+- The analysis should run without tedana intermediates or outputs. The front end already runs from the raw echo files alone (`--echo1`, equal echo volume counts). Volume pairing and motion correction still come from mbme_tedana; how to remove that dependence is an open decision (see `docs/decisions.md`).
+
 DICOM headers sit in the NIfTI folder or one level deeper.
 
 **Existing pipeline: `mbme_tedana.py`** at `/research_jude/rgs01_jude/dept/DI/tir/vision_lab/stu/CSIMemphis/Analysis/Monitoring Visit/mbme_tedana.py`, outputs in `.../Monitoring Visit/OUT/` (paths contain a space; always quote them). What it does:
@@ -186,6 +190,7 @@ src/mejoint/
   io.py          # nibabel dataobj -> float32 masked (V x T); NIfTI/TSV/JSON writers; provenance
   inventory.py   # Phase 0 audit
   simulate.py    # ground-truth multi-echo simulator (Phase 1)
+  mask.py        # robust brain mask from the input echoes (noise-referenced, shading-corrected, holes filled)
   frontend.py    # mu/T2* fit, sigma (5.4), echo usability, df map, log-ratio, QR whitening -> c0, c1, r
   nuisance.py    # one projector applied to y (log-ratio, all echoes) and to r (Phase 2b)
   rank.py        # spectra, thermal and temporal nulls, shrinkage (Phase 3)

@@ -33,6 +33,15 @@ Writes `outputs/phase0/sub-<ID>/inventory.md` (the table), `inventory.json`, `vo
 PYTHONPATH=src ~/miniconda3_new/envs/mejoint/bin/python scripts/plot_simulation.py outputs/phase1/simulation.png
 ```
 
+## Phase 2 front end on one run
+
+```bash
+bash scripts/phase2_frontend_subject.lsf "<mbme_tedana OUT>/<run>" raw            # with the pipeline's pairing and motion files
+bash scripts/phase2_frontend_subject.lsf "<raw folder>/<..._e1.nii.gz>"            # from the raw echoes alone
+```
+
+The analysis mask is built from the echoes (`src/mejoint/mask.py`); outputs go to `outputs/phase2/<run>/<source>/`.
+
 ## Tests
 
 ```bash
