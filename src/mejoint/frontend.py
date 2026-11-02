@@ -276,16 +276,77 @@ def run(S: np.ndarray, te_ms, cfg: dict, mask3d: np.ndarray | None = None, form:
         resid_excess = resid_energy * (sigma / sig_smooth) ** 2
     with _quiet():
         frame_energy = np.nanmean(e_frame, axis=0)                     # (T,) brain mean per frame
+        # residual split: r0 ~ curvature-like, r1 ~ odd/even-echo (alternating) pattern; vs smooth sigma
+        scale = (sigma / sig_smooth) ** 2
+        resid_excess_r0 = np.where(df >= 1, np.nanmean(rc[:, 0] ** 2, axis=1) * scale, np.nan)
+        resid_excess_r1 = np.where(df >= 2, np.nanmean(rc[:, 1] ** 2, axis=1) * scale, np.nan)
+    static_curv, static_alt = static_shape(mu, te_ms, use)
 
     return {"mu": mu, "use": use, "n_use": n_use, "df": df, "nonpositive": nonpos, "snr": snr,
             "sigma": sigma, "sigma_voxel": sig_vox, "sigma_smooth": sig_smooth, "sigma_init": sig0,
             "sigma_low_snr": low, "trusted": trusted, "s0": s0, "t2s_ms": t2, "muhat": muhat,
-            "static_misfit": static_misfit, "resid_energy": resid_energy, "resid_excess": resid_excess,
+            "static_misfit": static_misfit, "static_logres": lr, "static_curvature": static_curv,
+            "static_alternating": static_alt, "resid_excess_r0": resid_excess_r0, "resid_excess_r1": resid_excess_r1,
+            "resid_energy": resid_energy, "resid_excess": resid_excess,
             "frame_energy": frame_energy, "c": c, "r": r, "R": R, "form": form}
 
 
+def static_shape(mu: np.ndarray, te_ms, use: np.ndarray):
+    """Shape of the static log-decay outside span{1, TE} (4-echo voxels; NaN otherwise).
+
+    curvature: component along the TE^2 direction (orthogonalised to 1 and TE), oriented so that a
+    convex log-decay (e.g. partial-volume mixing of two T2* values) is POSITIVE.
+    alternating: component along the odd/even-echo pattern after removing 1, TE and TE^2 (an
+    echo-specific readout artifact). Both in log units (unit-norm basis vectors)."""
+    te = np.asarray(te_ms, float)
+    Q, _ = np.linalg.qr(design(te))                                   # [1-TE.., 1, TE^2, alt] spans
+    q_curv, q_alt = Q[:, 2], Q[:, 3]
+    if q_curv[0] + q_curv[-1] < 0:                                    # convex = positive at both ends
+        q_curv = -q_curv
+    if q_alt[0] < 0:                                                  # alternating: + on echo 1
+        q_alt = -q_alt
+    full = use.all(axis=1)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        lm = np.log(mu)
+    curv = np.where(full, lm @ q_curv, np.nan)
+    alt = np.where(full, lm @ q_alt, np.nan)
+    return curv, alt
+
+
+def drift_mm(par: np.ndarray) -> np.ndarray:
+    """Per-frame distance (mm) of head position from the run's median position, from mcflirt .par
+    (rotations x, y, z in rad scaled by a 50 mm radius; translations in mm). Unlike FD (frame-to-frame
+    change), this sees slow drift."""
+    d = np.column_stack([par[:, :3] * 50.0, par[:, 3:6]])
+    return np.abs(d - np.median(d, axis=0)).sum(axis=1)
+
+
+def quiet_window(par: np.ndarray, n: int) -> int:
+    """Start of the n consecutive frames whose positions stay closest to their own median."""
+    d = np.column_stack([par[:, :3] * 50.0, par[:, 3:6]])
+    T = d.shape[0]
+    if T <= n:
+        return 0
+    costs = [np.abs(d[s:s + n] - np.median(d[s:s + n], axis=0)).sum(1).mean() for s in range(0, T - n + 1, 10)]
+    return int(10 * np.argmin(costs))
+
+
+def mask_holes(mask3d: np.ndarray, affine) -> dict:
+    """Voxels enclosed by the brain mask but not in it: 3D hole filling and slice-wise (axial) filling."""
+    import nibabel as nib
+
+    filled3 = ndimage.binary_fill_holes(mask3d)
+    ax = next(i for i, c in enumerate(nib.aff2axcodes(affine)) if c in ("S", "I"))
+    filled2 = np.zeros_like(mask3d)
+    for z in range(mask3d.shape[ax]):
+        sl = [slice(None)] * 3
+        sl[ax] = z
+        filled2[tuple(sl)] = ndimage.binary_fill_holes(mask3d[tuple(sl)])
+    return {"holes_3d": filled3 & ~mask3d, "holes_axial": filled2 & ~mask3d}
+
+
 # ======================================================================= MP-PCA cross-check
-def mppca_sigma(data4d: np.ndarray, mask3d: np.ndarray, cfg: dict) -> np.ndarray:
+def mppca_sigma(data4d: np.ndarray, mask3d: np.ndarray, cfg: dict, start: int = 0) -> np.ndarray:
     """dipy MP-PCA noise SD (3D, NaN outside sampled voxels) for one echo of RAW (not motion-
     corrected) data. Patch centres on a sparse grid (every `inplane_step`-th voxel in-plane, every
     `slice_step`-th slice) for speed; each patch still uses all its neighbours. dipy API checked in 1.12.1: mppca(arr, *, mask, patch_radius, return_sigma)."""
@@ -294,7 +355,7 @@ def mppca_sigma(data4d: np.ndarray, mask3d: np.ndarray, cfg: dict) -> np.ndarray
     from dipy.denoise.localpca import mppca
 
     M = cfg["frontend"]["mppca"]
-    d = data4d[..., : int(M["n_volumes"])].astype(np.float64)
+    d = data4d[..., start: start + int(M["n_volumes"])].astype(np.float64)
     centres = np.zeros_like(mask3d)
     st, ip = int(M["slice_step"]), int(M.get("inplane_step", 1))
     centres[::ip, ::ip, ::st] = mask3d[::ip, ::ip, ::st]            # sparse centres: sigma varies smoothly
@@ -336,7 +397,8 @@ def resolve_run(run_dir, cfg: dict, source: str = "raw") -> dict:
     if missing:
         raise FileNotFoundError(f"missing echo files: {missing}")
     fdp = run_dir / "motion" / "framewise_displacement.txt"
-    return {"run_dir": str(run_dir), "run_id": run_id, "subject": subject, "source": source,
+    parp = run_dir / "motion" / "mcflirt.par"
+    return {"par": np.loadtxt(parp, ndmin=2) if parp.exists() else None,"run_dir": str(run_dir), "run_id": run_id, "subject": subject, "source": source,
             "echo_files": [str(f) for f in files], "volumes": volumes, "te_ms": [float(t) for t in te],
             "mask": str(run_dir / "brain_mask.nii.gz"), "fd": np.loadtxt(fdp) if fdp.exists() else None}
 
@@ -373,11 +435,26 @@ def run_subject(run_dir, cfg: dict, out_dir, source: str = "raw", mppca: bool | 
     do_mp = cfg["frontend"]["mppca"]["enabled"] if mppca is None else mppca
     if do_mp and source != "raw":
         do_mp = False                                   # CLAUDE.md 5.4: MP-PCA check on raw echoes only
-    mp = {}
+    mp, mpq, bg, extra = {}, {}, {}, {}
+    B = cfg["frontend"].get("background", {"dilate_vox": 4, "rel_threshold": 0.02})
+    nmp = int(cfg["frontend"]["mppca"]["n_volumes"])
+    q_start = quiet_window(info["par"], nmp) if info["par"] is not None else None
 
     def hook(k, d4):
+        if k == 0:                                     # unmasked echo-1 mean and the air (background) mask
+            m1 = d4.mean(axis=3)
+            extra["mean_echo1"] = m1
+            far = ~ndimage.binary_dilation(mask3d, iterations=int(B["dilate_vox"]))
+            extra["background"] = far & (m1 < float(B["rel_threshold"]) * np.median(m1[mask3d]))
+        b = extra["background"]
+        if b.sum() >= 50:                              # air: pure noise; its level per echo tracks thermal sigma
+            bd = d4[b]
+            bg[k] = {"mean": float(np.median(bd.mean(1))), "sd": float(np.median(bd.std(1, ddof=1))),
+                     "n_voxels": int(b.sum())}
         if do_mp:
             mp[k] = mppca_sigma(d4, mask3d, cfg)
+            if q_start is not None and cfg["frontend"]["mppca"].get("quiet_window", True):
+                mpq[k] = mppca_sigma(d4, mask3d, cfg, start=q_start)
 
     S = io.load_masked_echoes(info["echo_files"], mask3d, info["volumes"], hook)
     te = np.asarray(info["te_ms"])
@@ -396,6 +473,12 @@ def run_subject(run_dir, cfg: dict, out_dir, source: str = "raw", mppca: bool | 
     save("df", fe["df"].astype(float))
     save("sigma_ratio_voxel_smooth", fe["sigma_voxel"] / fe["sigma_smooth"])
     save("R", fe["R"].reshape(V, 4)[:, [0, 1, 3]])                    # R00, R01, R11
+    for k in ("static_curvature", "static_alternating", "resid_excess_r0", "resid_excess_r1", "static_logres"):
+        save(k, fe[k])
+    io.save_volume(extra["mean_echo1"], ref, out_dir / "mean_echo1_unmasked.nii.gz")
+    io.save_volume(extra["background"].astype(np.float32), ref, out_dir / "background_mask.nii.gz")
+    holes = mask_holes(mask3d, ref.affine)
+    io.save_volume(holes["holes_axial"].astype(np.float32), ref, out_dir / "mask_holes_axial.nii.gz")
     if mp:
         mpv = np.stack([mp[k][mask3d] for k in range(E)], axis=1)
         save("mppca_sigma", mpv)
@@ -404,8 +487,10 @@ def run_subject(run_dir, cfg: dict, out_dir, source: str = "raw", mppca: bool | 
     for name, arr in (("c0", fe["c"][:, 0]), ("c1", fe["c"][:, 1]), ("r0", fe["r"][:, 0]), ("r1", fe["r"][:, 1])):
         np.save(out_dir / f"{name}.npy", arr)
     np.save(out_dir / "R.npy", fe["R"])
+    drift = drift_mm(info["par"]) if info["par"] is not None and len(info["par"]) == T else None
     io.write_tsv(out_dir / "frames.tsv", {"frame": list(range(T)), "residual_energy": list(fe["frame_energy"]),
-                                         "fd_mm": list(info["fd"]) if info["fd"] is not None and len(info["fd"]) == T else ["n/a"] * T})
+                                         "fd_mm": list(info["fd"]) if info["fd"] is not None and len(info["fd"]) == T else ["n/a"] * T,
+                                         "drift_mm": list(drift) if drift is not None else ["n/a"] * T})
 
     # ---- summary
     inf = inferior_third(mask3d, ref.affine)[mask3d]
@@ -431,22 +516,50 @@ def run_subject(run_dir, cfg: dict, out_dir, source: str = "raw", mppca: bool | 
         "static_misfit_median_inferior": float(np.nanmedian(fe["static_misfit"][inf])),
         "nonpositive_voxels_per_echo": [int(v) for v in fe["nonpositive"].sum(0)],
     }
+    from scipy.stats import spearmanr
     if info["fd"] is not None and len(info["fd"]) == T:
-        from scipy.stats import spearmanr
         summ["frame_energy_vs_fd_spearman"] = round(float(spearmanr(fe["frame_energy"], info["fd"])[0]), 4)
+    if drift is not None:
+        summ["frame_energy_vs_drift_spearman"] = round(float(spearmanr(fe["frame_energy"], drift)[0]), 4)
+        summ["drift_mm_p50_p90_max"] = [round(float(v), 3) for v in np.percentile(drift, [50, 90, 100])]
+    # static decay shape and residual split
+    lres = fe["static_logres"]
+    summ["static_logres_median_per_echo"] = [round(float(v), 4) for v in np.nanmedian(lres, axis=0)]
+    summ["static_logres_median_per_echo_inferior"] = [round(float(v), 4) for v in np.nanmedian(lres[inf], axis=0)]
+    summ["static_curvature_p10_50_90"] = pct(fe["static_curvature"])
+    summ["static_alternating_p10_50_90"] = pct(fe["static_alternating"])
+    summ["resid_excess_r0_median"] = float(np.nanmedian(fe["resid_excess_r0"]))
+    summ["resid_excess_r1_median"] = float(np.nanmedian(fe["resid_excess_r1"]))
+    # mask holes and background noise
+    summ["mask_holes"] = {"axial_fill_voxels": int(holes["holes_axial"].sum()), "fill3d_voxels": int(holes["holes_3d"].sum()),
+                          "axial_fill_fraction_of_mask": round(float(holes["holes_axial"].sum() / mask3d.sum()), 4)}
+    if bg:
+        b1 = bg[0]
+        summ["background_noise"] = [{"echo": k + 1, "median_mean": round(bg[k]["mean"], 3), "median_temporal_sd": round(bg[k]["sd"], 3),
+                                     "mean_ratio_to_echo1": round(bg[k]["mean"] / b1["mean"], 4),
+                                     "sd_ratio_to_echo1": round(bg[k]["sd"] / b1["sd"], 4), "n_voxels": bg[k]["n_voxels"]}
+                                    for k in sorted(bg)]
     if mp:
         exp = float(cfg["frontend"]["mppca_expected_ratio"])
         rows = []
         for k in range(E):
             sel = np.isfinite(mp[k][mask3d])
             ratio = float(np.nanmedian(fe["sigma"][sel]) / np.nanmedian(mp[k][mask3d][sel]))
-            rows.append({"echo": k + 1, "mppca_sigma_median": float(np.nanmedian(mp[k][mask3d][sel])),
+            row_q = {}
+            if k in mpq:
+                selq = np.isfinite(mpq[k][mask3d])
+                row_q = {"mppca_sigma_median_quiet": float(np.nanmedian(mpq[k][mask3d][selq])),
+                         "ratio_residual_over_mppca_quiet": round(float(np.nanmedian(fe["sigma"][selq]) /
+                                                                         np.nanmedian(mpq[k][mask3d][selq])), 4)}
+            rows.append({"echo": k + 1, **row_q, "mu_median_same_voxels": float(np.nanmedian(fe["mu"][sel, k])),
+                         "mppca_sigma_median": float(np.nanmedian(mp[k][mask3d][sel])),
                          "residual_sigma_median_same_voxels": float(np.nanmedian(fe["sigma"][sel])),
                          "ratio_residual_over_mppca": round(ratio, 4),
                          "ratio_corrected_for_simulated_bias": round(ratio / exp, 4)})
         worst = max(abs(r["ratio_corrected_for_simulated_bias"] - 1) for r in rows)
         tol = float(cfg["frontend"]["mppca_sigma_tolerance"])
         summ["mppca_check"] = {"per_echo": rows, "max_abs_deviation": round(worst, 4), "tolerance": tol,
+                               "quiet_window_start": q_start, "n_volumes": nmp,
                                "verdict": "OK" if worst <= tol else "STOP: residual and MP-PCA sigma differ by more than the tolerance"}
     io.write_json(out_dir / "summary.json", summ)
     io.write_text(out_dir / "summary.md", render_summary(summ))
@@ -474,12 +587,35 @@ def render_summary(s: dict) -> str:
          f"- Voxels with any frame <= 0, per echo: {s['nonpositive_voxels_per_echo']}"]
     if "frame_energy_vs_fd_spearman" in s:
         L.append(f"- Frame-wise residual energy vs FD (Spearman): {s['frame_energy_vs_fd_spearman']}")
+    if "frame_energy_vs_drift_spearman" in s:
+        L.append(f"- Frame-wise residual energy vs head drift from median position (Spearman): "
+                 f"{s['frame_energy_vs_drift_spearman']}; drift p50/p90/max {s['drift_mm_p50_p90_max']} mm")
+    if "mask_holes" in s:
+        h = s["mask_holes"]
+        L.append(f"- Brain-mask holes: {h['axial_fill_voxels']} voxels enclosed slice-wise but outside the mask "
+                 f"({100 * h['axial_fill_fraction_of_mask']:.1f} % of the mask); {h['fill3d_voxels']} enclosed in 3D")
+    if "static_logres_median_per_echo" in s:
+        L += ["", "## Shape of the static decay (log units; mean signal vs mono-exponential fit)", "",
+              f"- Median ln(mu / fit) per echo, whole brain: {s['static_logres_median_per_echo']}; inferior third: "
+              f"{s['static_logres_median_per_echo_inferior']}",
+              f"- Curvature (positive = convex, e.g. partial-volume mixing) p10/50/90: {s['static_curvature_p10_50_90']}",
+              f"- Odd/even-echo alternation p10/50/90: {s['static_alternating_p10_50_90']}",
+              f"- Dynamic residual vs smooth sigma, median: curvature-like r0 {s['resid_excess_r0_median']:.3f}, "
+              f"alternating-like r1 {s['resid_excess_r1_median']:.3f}"]
+    if "background_noise" in s:
+        L += ["", "## Noise in air outside the head, per echo (pure noise: ratios track thermal sigma)", "",
+              "| Echo | Median mean | Median temporal SD | Mean / echo 1 | SD / echo 1 | Voxels |", "|---|---|---|---|---|---|"]
+        L += [f"| {b['echo']} | {b['median_mean']:.2f} | {b['median_temporal_sd']:.2f} | {b['mean_ratio_to_echo1']:.3f} | "
+              f"{b['sd_ratio_to_echo1']:.3f} | {b['n_voxels']} |" for b in s["background_noise"]]
     if "mppca_check" in s:
         m = s["mppca_check"]
         L += ["", "## Sigma cross-check: residual vs MP-PCA (raw echoes)", "",
-              "| Echo | MP-PCA sigma | Residual sigma (same voxels) | Ratio | Ratio / simulated bias |",
-              "|---|---|---|---|---|"]
-        L += [f"| {r['echo']} | {r['mppca_sigma_median']:.3f} | {r['residual_sigma_median_same_voxels']:.3f} | "
-              f"{r['ratio_residual_over_mppca']:.3f} | {r['ratio_corrected_for_simulated_bias']:.3f} |" for r in m["per_echo"]]
+              f"MP-PCA on frames 0-{m.get('n_volumes', 100) - 1} and on the quietest window (start frame {m.get('quiet_window_start')}).", "",
+              "| Echo | Mean signal | MP-PCA sigma | MP-PCA sigma (quiet) | Residual sigma | Ratio | Ratio (quiet) | Ratio / simulated bias |",
+              "|---|---|---|---|---|---|---|---|"]
+        f = lambda v: "n/a" if v is None else f"{v:.3f}"
+        L += [f"| {r['echo']} | {f(r.get('mu_median_same_voxels'))} | {r['mppca_sigma_median']:.3f} | {f(r.get('mppca_sigma_median_quiet'))} | "
+              f"{r['residual_sigma_median_same_voxels']:.3f} | {r['ratio_residual_over_mppca']:.3f} | "
+              f"{f(r.get('ratio_residual_over_mppca_quiet'))} | {r['ratio_corrected_for_simulated_bias']:.3f} |" for r in m["per_echo"]]
         L += ["", f"Verdict (tolerance {100 * m['tolerance']:.0f} %): **{m['verdict']}**"]
     return "\n".join(L) + "\n"
