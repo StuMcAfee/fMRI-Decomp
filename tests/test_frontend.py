@@ -337,3 +337,22 @@ def test_background_noise_detects_per_echo_scaling(cfg, tmp_path, record_propert
     assert "drift_mm_p50_p90_max" in summ and "static_curvature_p10_50_90" in summ
     md = (tmp_path / "fe" / "summary.md").read_text()
     assert "Noise in air outside the head" in md and "Shape of the static decay" in md
+
+
+
+def test_filled_mask_option(cfg, tmp_path, record_property):
+    """mask_source = pipeline_filled adds the enclosed holes of the pipeline mask (compute_epi_mask never fills them)."""
+    import nibabel as nib
+    sim = sim_with(cfg, 13, grid=[24, 24, 14], n_volumes=40, **CLEAN)
+    note(sim, record_property)
+    rd = make_run_folder(sim, tmp_path)
+    holed = sim.mask.copy()
+    holed[10:14, 10:14, 5:9] = False                                   # a central hole, as compute_epi_mask leaves
+    nib.save(nib.Nifti1Image(holed.astype(np.uint8), np.diag([*sim.voxel_mm, 1.0])), str(rd / "brain_mask.nii.gz"))
+    c2 = io.merge(cfg, {"frontend": {"mppca": {"enabled": False}}})
+    a = frontend.run_subject(rd, c2, tmp_path / "a")
+    b = frontend.run_subject(rd, c2, tmp_path / "b", mask_source="pipeline_filled")
+    assert a["n_voxels"] == holed.sum() and b["n_voxels"] == sim.mask.sum()
+    assert a["mask_holes"]["fill3d_voxels"] == 64 and b["n_voxels_pipeline_mask"] == holed.sum()
+    used = np.asarray(nib.load(str(tmp_path / "b" / "analysis_mask.nii.gz")).dataobj) > 0
+    assert np.array_equal(used, sim.mask)

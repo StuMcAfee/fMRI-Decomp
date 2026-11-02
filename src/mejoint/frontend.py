@@ -417,7 +417,8 @@ def inferior_third(mask3d: np.ndarray, affine) -> np.ndarray:
     return mask3d & ((idx <= cut) if codes[ax] == "S" else (idx >= cut))
 
 
-def run_subject(run_dir, cfg: dict, out_dir, source: str = "raw", mppca: bool | None = None) -> dict:
+def run_subject(run_dir, cfg: dict, out_dir, source: str = "raw", mppca: bool | None = None,
+                mask_source: str | None = None) -> dict:
     """Front end on one real run: maps (NIfTI), channel cache (.npy), summary, provenance."""
     import json
     from pathlib import Path
@@ -430,8 +431,18 @@ def run_subject(run_dir, cfg: dict, out_dir, source: str = "raw", mppca: bool | 
     out_dir.mkdir(parents=True, exist_ok=True)
     info = resolve_run(run_dir, cfg, source)
     mimg = nib.load(info["mask"])
-    mask3d = np.asarray(mimg.dataobj) > 0
+    pipe_mask = np.asarray(mimg.dataobj) > 0
     ref = nib.load(info["echo_files"][0])
+    # analysis mask: the pipeline's (same voxels as tedana) or the pipeline's with enclosed holes filled
+    # (nilearn compute_epi_mask never fills holes and routinely drops the deep brain; user, 2026-11-02)
+    mask_source = mask_source or cfg["frontend"].get("mask_source", "pipeline")
+    holes = mask_holes(pipe_mask, ref.affine)
+    if mask_source == "pipeline":
+        mask3d = pipe_mask
+    elif mask_source == "pipeline_filled":
+        mask3d = pipe_mask | holes["holes_3d"] | holes["holes_axial"]
+    else:
+        raise ValueError("mask_source must be 'pipeline' or 'pipeline_filled'")
     do_mp = cfg["frontend"]["mppca"]["enabled"] if mppca is None else mppca
     if do_mp and source != "raw":
         do_mp = False                                   # CLAUDE.md 5.4: MP-PCA check on raw echoes only
@@ -477,7 +488,7 @@ def run_subject(run_dir, cfg: dict, out_dir, source: str = "raw", mppca: bool | 
         save(k, fe[k])
     io.save_volume(extra["mean_echo1"], ref, out_dir / "mean_echo1_unmasked.nii.gz")
     io.save_volume(extra["background"].astype(np.float32), ref, out_dir / "background_mask.nii.gz")
-    holes = mask_holes(mask3d, ref.affine)
+    io.save_volume(mask3d.astype(np.float32), ref, out_dir / "analysis_mask.nii.gz")
     io.save_volume(holes["holes_axial"].astype(np.float32), ref, out_dir / "mask_holes_axial.nii.gz")
     if mp:
         mpv = np.stack([mp[k][mask3d] for k in range(E)], axis=1)
@@ -496,7 +507,8 @@ def run_subject(run_dir, cfg: dict, out_dir, source: str = "raw", mppca: bool | 
     inf = inferior_third(mask3d, ref.affine)[mask3d]
     pct = lambda x, q=(10, 50, 90): [round(float(v), 4) for v in np.nanpercentile(x, q)]
     summ = {
-        "run_id": info["run_id"], "source": source, "n_voxels": int(V), "n_volumes": int(T), "te_ms": info["te_ms"],
+        "run_id": info["run_id"], "source": source, "mask_source": mask_source, "n_voxels": int(V),
+        "n_voxels_pipeline_mask": int(pipe_mask.sum()), "n_volumes": int(T), "te_ms": info["te_ms"],
         "inferior_third_note": "approximate posterior-fossa / skull-base level (inferior third of the brain mask)",
         "n_voxels_inferior_third": int(inf.sum()),
         "usable_fraction_per_echo": [round(float(v), 4) for v in fe["use"].mean(0)],
@@ -532,7 +544,7 @@ def run_subject(run_dir, cfg: dict, out_dir, source: str = "raw", mppca: bool | 
     summ["resid_excess_r1_median"] = float(np.nanmedian(fe["resid_excess_r1"]))
     # mask holes and background noise
     summ["mask_holes"] = {"axial_fill_voxels": int(holes["holes_axial"].sum()), "fill3d_voxels": int(holes["holes_3d"].sum()),
-                          "axial_fill_fraction_of_mask": round(float(holes["holes_axial"].sum() / mask3d.sum()), 4)}
+                          "axial_fill_fraction_of_mask": round(float(holes["holes_axial"].sum() / pipe_mask.sum()), 4)}
     if bg:
         b1 = bg[0]
         summ["background_noise"] = [{"echo": k + 1, "median_mean": round(bg[k]["mean"], 3), "median_temporal_sd": round(bg[k]["sd"], 3),
@@ -571,8 +583,9 @@ def run_subject(run_dir, cfg: dict, out_dir, source: str = "raw", mppca: bool | 
 
 
 def render_summary(s: dict) -> str:
-    L = [f"# Front end: {s['run_id']} ({s['source']} echoes)", "",
-         f"{s['n_voxels']} brain voxels, {s['n_volumes']} volumes, TE {s['te_ms']} ms. "
+    L = [f"# Front end: {s['run_id']} ({s['source']} echoes, mask: {s.get('mask_source', 'pipeline')})", "",
+         f"{s['n_voxels']} brain voxels (pipeline mask {s.get('n_voxels_pipeline_mask', s['n_voxels'])}), "
+         f"{s['n_volumes']} volumes, TE {s['te_ms']} ms. "
          f"'Inferior third' = {s['inferior_third_note']} ({s['n_voxels_inferior_third']} voxels).", "",
          "| Quantity | Whole brain | Inferior third |", "|---|---|---|",
          f"| Usable fraction per echo | {s['usable_fraction_per_echo']} | {s['usable_fraction_per_echo_inferior']} |",
@@ -592,7 +605,7 @@ def render_summary(s: dict) -> str:
                  f"{s['frame_energy_vs_drift_spearman']}; drift p50/p90/max {s['drift_mm_p50_p90_max']} mm")
     if "mask_holes" in s:
         h = s["mask_holes"]
-        L.append(f"- Brain-mask holes: {h['axial_fill_voxels']} voxels enclosed slice-wise but outside the mask "
+        L.append(f"- Pipeline-mask holes: {h['axial_fill_voxels']} voxels enclosed slice-wise but outside the mask "
                  f"({100 * h['axial_fill_fraction_of_mask']:.1f} % of the mask); {h['fill3d_voxels']} enclosed in 3D")
     if "static_logres_median_per_echo" in s:
         L += ["", "## Shape of the static decay (log units; mean signal vs mono-exponential fit)", "",
