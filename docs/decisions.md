@@ -140,3 +140,8 @@ Gate: full suite 22 tests in 7.5 s on 4 CPUs (limit 2 min). QC figure: `docs/fig
 Not simulated yet (added when a later phase needs them): rigid-body motion with resampling (interpolation-correlated noise), MB slice leakage, cardiac aliasing, gaps in the acquisition timeline.
 
 Gate status: evidence shown to the user; awaiting review.
+
+### 2026-11-02: Phase 1 gate PASSED (user)
+
+User: the simulation "seems reasonable"; proceed to real-data tests with what appears reasonable from the source materials and simulations, starting with subject P04. Source amplitudes stay at SD 0.5 s^-1 / 0.5 % at the peak voxel.
+User expectation recorded: "very little signal from the fourth echo in most of the brain". Physics (T2* ~45-58 ms leaves ~25-35 % of S0 at 61 ms) suggests usable echo-4 signal in most cortex; the Phase 2 echo-4 SNR and usability maps on real data will settle this.
