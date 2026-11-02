@@ -3,10 +3,12 @@
 Physics-constrained joint decomposition of multi-echo fMRI into components with a dS0 map and a dR2* map.
 The design brief is `CLAUDE.md`; gate results are in `docs/decisions.md`.
 
-## Install (cluster login node)
+## Install
+
+Nothing to install: the job scripts and tests use the code in `src/` directly with the
+`mejoint` env's python (`~/miniconda3_new/envs/mejoint/bin/python`). Optional, for DICOM headers:
 
 ```bash
-~/miniconda3_new/envs/mejoint/bin/python -m pip install --no-deps -e .
 ~/miniconda3_new/envs/mejoint/bin/python -m pip install pydicom
 ```
 
@@ -18,7 +20,7 @@ set `NIFTI_DIR` only to override that.
 
 ```bash
 export SUBJECT=<ID> RUN_DIR="<mbme_tedana OUT>/<run>" PIPELINE="<path>/mbme_tedana.py"
-bsub < scripts/phase0_one_subject.lsf
+bsub < scripts/phase0_one_subject.lsf      # or, in an interactive session: bash scripts/phase0_one_subject.lsf
 ```
 
 Writes `outputs/phase0/sub-<ID>/inventory.md` (the table), `inventory.json`, `volume_means.tsv`,
