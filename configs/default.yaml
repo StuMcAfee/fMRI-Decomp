@@ -77,6 +77,23 @@ inventory:                    # Phase 0 audit
     - sWipMemBlock
     - ucReconstructionMode
 
+  pipeline_keywords:          # lines of mbme_tedana.py reported verbatim (settings we must not guess)
+    - interp
+    - flirt
+    - tedana
+    - tedpca
+    - ica-method
+    - ica_method
+    - robust
+    - seed
+    - fittype
+    - mask
+    - keep-intermediates
+    - focal
+    - argparse
+    - add_argument
+  pipeline_max_lines: 120
+
 frontend:                     # Phase 2 (CLAUDE.md section 5.4); listed now so they are fixed in advance
   snr_min: 5.0
   snr_min_sensitivity: 3.0

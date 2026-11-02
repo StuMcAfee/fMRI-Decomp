@@ -133,3 +133,20 @@ def test_cli_runs(tmp_path):
     nd, rd = make_subject(tmp_path)
     assert main(["inventory", "--nifti-dir", str(nd), "--run-dir", str(rd), "--out", str(tmp_path / "o")]) == 0
     assert (tmp_path / "o" / "inventory.md").exists()
+
+
+def test_pipeline_script_and_spaces_in_paths(tmp_path, cfg):
+    root = tmp_path / "Monitoring Visit"
+    nd, rd = make_subject(root)
+    script = root / "mbme_tedana.py"
+    script.write_text("import argparse\n# comment about flirt is skipped\n"
+                      "p.add_argument('--interp', default='spline')\n"
+                      "cmd = ['tedana', '--tedpca', 'aic', '--seed', '42']\nx = 1\n")
+    inv = inventory.inventory_subject(nd, cfg, run_dir=rd, pipeline_script=script)
+    ps = inv["pipeline_script"]
+    assert ps["exists"] and ps["n_matches"] == 3
+    assert [n for n, _ in ps["matches"]] == [1, 3, 4]
+    md = inventory.render_markdown(inv, cfg)
+    assert "--tedpca" in md and "comment about flirt" not in md
+    missing = inventory.pipeline_script_check(root / "nope.py", cfg)
+    assert missing == {"path": str(root / "nope.py"), "exists": False}

@@ -19,6 +19,7 @@ def main(argv=None) -> int:
     inv.add_argument("--nifti-dir", required=True, help="folder with the raw echo NIfTIs + JSON sidecars")
     inv.add_argument("--run-dir", help="mbme_tedana output folder for this run (optional)")
     inv.add_argument("--physio-dir", action="append", default=[], help="extra folder to search for physio logs")
+    inv.add_argument("--pipeline-script", help="path to mbme_tedana.py (its settings are reported)")
     inv.add_argument("--subject", help="subject label for the report")
     inv.add_argument("--out", required=True, help="output folder for the audit")
     inv.add_argument("--config", help="config YAML (default: configs/default.yaml)")
@@ -31,7 +32,8 @@ def main(argv=None) -> int:
         from . import inventory
         res = inventory.inventory_subject(args.nifti_dir, cfg, run_dir=args.run_dir,
                                           physio_dirs=args.physio_dir, subject=args.subject,
-                                          load_data=not args.no_data)
+                                          load_data=not args.no_data,
+                                          pipeline_script=args.pipeline_script)
         inventory.write_outputs(res, cfg, args.out)
         print(inventory.render_markdown(res, cfg))
         print(f"\nWritten to {args.out}")

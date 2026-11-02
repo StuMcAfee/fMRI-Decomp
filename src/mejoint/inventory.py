@@ -348,8 +348,8 @@ def run_dir_check(run_dir: Path | None) -> dict | None:
     else:
         out["volumes_used"] = None
 
-    par = run_dir / "motion" / "mcflirt.par"
-    if par.exists():
+    par = _first(run_dir, "motion/mcflirt.par", "mcflirt.par")
+    if par is not None:
         m = np.loadtxt(par, ndmin=2)
         out["mcflirt_par"] = {"n_rows": int(m.shape[0]), "n_cols": int(m.shape[1])}
     else:
@@ -366,8 +366,9 @@ def run_dir_check(run_dir: Path | None) -> dict | None:
 
     out["masks"] = [str(p) for p in sorted(run_dir.rglob("*mask*.nii*"))][:20]
 
-    rj = run_dir / "result.json"
-    if rj.exists():
+    rj = _first(run_dir, "result.json", "result.json")
+    out["result_json_path"] = str(rj) if rj else None
+    if rj is not None:
         res = _read_json(rj)
         out["result_json_keys"] = list(res.keys()) if isinstance(res, dict) else None
         out["result_json_interp"] = _find_keys(res, "interp")
@@ -398,6 +399,30 @@ def run_dir_check(run_dir: Path | None) -> dict | None:
     return out
 
 
+def _first(root: Path, expected: str, name: str):
+    """The file at its expected place, else the first file with that name anywhere under root."""
+    p = root / expected
+    if p.is_file():
+        return p
+    hits = sorted(root.rglob(name))
+    return hits[0] if hits else None
+
+
+def pipeline_script_check(path, cfg: dict) -> dict | None:
+    """Hash of mbme_tedana.py and its lines that set interpolation, tedana flags, masks, seeds."""
+    if path is None:
+        return None
+    path = Path(path)
+    if not path.is_file():
+        return {"path": str(path), "exists": False}
+    kws = [k.lower() for k in cfg["inventory"]["pipeline_keywords"]]
+    lines = path.read_text(errors="replace").splitlines()
+    hits = [(i + 1, ln.rstrip()) for i, ln in enumerate(lines)
+            if any(k in ln.lower() for k in kws) and not ln.strip().startswith("#")]
+    return {"path": str(path), "exists": True, "sha256": io.file_sha256(path), "n_lines": len(lines),
+            "matches": hits[: cfg["inventory"]["pipeline_max_lines"]], "n_matches": len(hits)}
+
+
 def _find_keys(obj, substring, prefix=""):
     """All (dotted key, value) pairs whose key contains `substring`, at any nesting depth."""
     hits = {}
@@ -415,7 +440,7 @@ def _find_keys(obj, substring, prefix=""):
 
 # ======================================================================= one subject
 def inventory_subject(nifti_dir, cfg: dict, run_dir=None, physio_dirs=(), subject=None,
-                      load_data: bool = True) -> dict:
+                      load_data: bool = True, pipeline_script=None) -> dict:
     nifti_dir = Path(nifti_dir)
     files = find_nifti_files(nifti_dir, cfg)
     key, echoes, others = pick_rest_series(files, cfg)
@@ -453,6 +478,7 @@ def inventory_subject(nifti_dir, cfg: dict, run_dir=None, physio_dirs=(), subjec
     inv["physio_files"] = physio_search([nifti_dir, *(Path(p) for p in physio_dirs),
                                          Path(run_dir) if run_dir else None], cfg)
     inv["run"] = run_dir_check(Path(run_dir) if run_dir else None)
+    inv["pipeline_script"] = pipeline_script_check(pipeline_script, cfg)
     return inv
 
 
@@ -591,6 +617,12 @@ def render_markdown(inv: dict, cfg: dict) -> str:
         for e in vol["per_echo"]:
             lines.append(f"| {e.get('echo')} | {e.get('n_volumes')} | {e.get('n_trailing_noise_frames')} | "
                          f"{e.get('n_nonsteady_leading')} | {[round(z, 1) for z in e.get('first5_robust_z', [])]} |")
+    ps = inv.get("pipeline_script")
+    if ps and ps.get("exists"):
+        lines += ["", f"## mbme_tedana.py settings (raw lines; {ps['n_matches']} matches, sha256 {ps['sha256'][:12]})", "", "```"]
+        lines += [f"{n:5d}: {ln}" for n, ln in ps["matches"]] + ["```"]
+    elif ps:
+        lines += ["", f"mbme_tedana.py NOT FOUND at `{ps['path']}`"]
     asc = [(s["series_description"], s["ascconv"]) for s in inv["dicom"]["series"] if isinstance(s.get("ascconv"), list) and s["ascconv"]]
     if asc:
         lines += ["", "## Siemens protocol lines (raw, unverified interpretation)", ""]
@@ -613,4 +645,6 @@ def write_outputs(inv: dict, cfg: dict, out_dir) -> None:
     io.write_config_copy(cfg, out_dir)
     inputs = {f"echo{f['echo']}_json": f["sidecar"] for f in inv["echo_files"] if f.get("sidecar")}
     inputs.update({f"echo{f['echo']}_nifti": f["path"] for f in inv["echo_files"]})
+    if inv.get("pipeline_script") and inv["pipeline_script"].get("exists"):
+        inputs["mbme_tedana_py"] = inv["pipeline_script"]["path"]
     io.write_json(out_dir / "done.json", {"stage": "inventory", **io.provenance(cfg, inputs)})
