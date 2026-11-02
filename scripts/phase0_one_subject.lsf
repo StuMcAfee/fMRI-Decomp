@@ -3,8 +3,8 @@
 # Set the variables in your login shell, then submit from the repository root:
 #   export SUBJECT=...  RUN_DIR="..."  PIPELINE="..."   [NIFTI_DIR="..." only to override result.json]
 #   bsub < scripts/phase0_one_subject.lsf
-# It also runs directly in an interactive session (the #BSUB lines are then ignored):
-#   bash scripts/phase0_one_subject.lsf
+# Simplest, in an interactive session (the #BSUB lines are then ignored), values as arguments:
+#   bash scripts/phase0_one_subject.lsf <SUBJECT> "<RUN_DIR>" "<PIPELINE>" ["<NIFTI_DIR>"]
 #BSUB -J mejoint_phase0
 #BSUB -q standard
 #BSUB -n 1
@@ -14,6 +14,11 @@
 set -euo pipefail
 
 PY="$HOME/miniconda3_new/envs/mejoint/bin/python"     # always the env's python, by full path
+# positional arguments, when given, replace the exported variables
+if [ $# -ge 1 ]; then SUBJECT="$1"; fi
+if [ $# -ge 2 ]; then RUN_DIR="$2"; fi
+if [ $# -ge 3 ]; then PIPELINE="$3"; fi
+if [ $# -ge 4 ]; then NIFTI_DIR="$4"; fi
 cd "${LS_SUBCWD:-$PWD}"                                  # repository root (where bsub was run)
 export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"  # use the code in this folder; no pip install needed
 
