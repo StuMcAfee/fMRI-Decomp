@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mejoint"
+version = "0.0.1"
+description = "Physics-constrained joint decomposition of multi-echo fMRI into dS0 and dR2* maps"
+requires-python = ">=3.9"
+# Exact versions are pinned in a lockfile once the cluster conda env is chosen (CLAUDE.md section 12).
+dependencies = ["numpy", "scipy", "nibabel", "pyyaml"]
+
+[project.optional-dependencies]
+dicom = ["pydicom"]
+test = ["pytest"]
+
+[project.scripts]
+mejoint = "mejoint.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "slow: long-running synthetic tests",
+    "realdata: needs real subject data on the cluster",
+]

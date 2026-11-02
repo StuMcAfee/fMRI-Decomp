@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+build/
+dist/
+# outputs and data never go into git
+outputs/
+*.nii
+*.nii.gz
