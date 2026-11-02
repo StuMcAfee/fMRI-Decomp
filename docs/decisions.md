@@ -85,3 +85,17 @@ Pipeline run: robustica (30 runs), `--tedpca aic`, seed 42, spline; 22 component
 Missing: motion-corrected echoes were not kept (`work/` absent). Needed from Phase 2 on. Proposed: rerun this one run with `--keep-intermediates` into a separate output folder (also a reproducibility check of the count of 8).
 
 Gate status: single-subject table shown. Pending: all-runs audit and user review.
+
+### 2026-11-02: Phase 0 all-runs audit (17 runs in mbme_tedana OUT)
+
+Identical in all 17 runs: TE 16.2 / 31.22 / 46.24 / 61.26 ms, matrix 52 x 64 x 48, voxels 3.281 x 3.281 x 3.3 mm, TR 0.75 s, Prisma XA60, CMRR mbep2d_bold, MB 6 (from SliceTiming), GRAPPA 2, partial Fourier 0.875, phase-encode `i` (left-right), sum-of-squares coil combination, tedana 26.0.3 with the same parameters (robustica 30, aic, seed 42, spline).
+
+No run has phase images, physio files, trailing noise frames or non-steady-state volumes: none of the Phase 0 "ask how to proceed" conditions applies.
+
+Points for the user:
+- Coil elements differ from "HE1-4;NE1,2" in 4 runs (P12, P06, P09, P08); values to be read from the summary. Fewer neck elements would lower posterior-fossa SNR and change the g-factor there.
+- Unequal echo volume counts in 5 of 17 runs (not only P08): P12, P14, P10, P05, P08. Pairing kept 797, 751, 777 and 797 volumes; P08 (271/278/267/277) failed in the pipeline. Where pairing drops volumes inside a run, the kept volumes are not consecutive in time; filtering, FD and phase-randomised nulls must use the acquisition timeline from `volumes_used.tsv`. The summary now reports these gaps.
+- 5 of the 16 completed runs have 0 "Likely BOLD" components (P12, P04, P10, P03, P07). The summary now flags tedana's QC fallback (no provisional accept), which mbme_tedana records.
+- No run kept motion-corrected echoes.
+
+Gate status: summary shown to the user; awaiting review and approval.

@@ -38,7 +38,7 @@ RESULT_FIELDS = ("status", "input_echo1", "run_id", "tedana_version", "parameter
                  "n_vols_dropped_pairing", "tr_s", "voxel_size_mm", "first_volume_signal_ratio",
                  "mean_fd_mm", "max_fd_mm", "n_vols_fd_gt_0p5mm", "mask_voxels",
                  "n_components_total", "n_likely_bold", "n_accepted_total", "n_rejected",
-                 "varex_likely_bold_pct", "qc_no_provisional_accept_fallback", "focal_status")
+                 "varex_likely_bold_pct", "qc_no_provisional_accept_fallback", "focal_status", "error")
 
 
 # ======================================================================= file discovery
@@ -989,7 +989,32 @@ def summary_row(inv: dict) -> dict:
         "n_likely_bold": res.get("n_likely_bold"),
         "mc_echoes_kept": len(r.get("mc_echoes") or []),
         "mc_mask_voxels_nonpositive": [m.get("n_mask_voxels_any_nonpositive") for m in mcc] or None,
+        "tedana_qc_fallback": res.get("qc_no_provisional_accept_fallback"),
+        "pipeline_error": res.get("error"),
+        **timeline_gaps(r.get("run_dir")),
     }
+
+
+def timeline_gaps(run_dir) -> dict:
+    """Gaps in the acquisition timeline of the volumes tedana used (echo-1 indices in
+    volumes_used.tsv). Pairing unequal echoes can drop volumes in the middle of a run, so the
+    kept volumes are not always consecutive; filtering and phase randomisation must know this."""
+    out = {"n_timeline_gaps": None, "max_gap_vols": None, "n_vols_missing_inside": None}
+    if not run_dir:
+        return out
+    vu = Path(run_dir) / "volumes_used.tsv"
+    if not vu.exists():
+        return out
+    try:
+        idx = np.loadtxt(vu, skiprows=1, ndmin=2)[:, 0].astype(int)
+    except Exception:
+        return out
+    if idx.size < 2:
+        return out
+    d = np.diff(np.sort(idx))
+    gaps = d[d > 1] - 1
+    return {"n_timeline_gaps": int(gaps.size), "max_gap_vols": int(gaps.max()) if gaps.size else 0,
+            "n_vols_missing_inside": int(gaps.sum())}
 
 
 def _flags(row: dict, modal: dict) -> list[str]:
@@ -1010,9 +1035,16 @@ def _flags(row: dict, modal: dict) -> list[str]:
         f.append("physio files")
     if row["pipeline_status"] != "ok":
         f.append(f"pipeline status {row['pipeline_status']}")
+    if row.get("tedana_qc_fallback"):
+        f.append("tedana QC fallback (no provisional accept)")
+    if row.get("n_timeline_gaps"):
+        f.append(f"timeline gaps: {row['n_timeline_gaps']} (max {row['max_gap_vols']} vols, "
+                 f"{row['n_vols_missing_inside']} missing inside run)")
+    if row.get("pipeline_error"):
+        f.append(f"pipeline error: {str(row['pipeline_error'])[:160]}")
     for k in SUMMARY_CONSTANT:
         if modal.get(k) is not None and json.dumps(row[k], default=str) != modal[k]:
-            f.append(f"{k} differs")
+            f.append(f"{k} differs: {json.dumps(row[k], default=str)}")
     return f
 
 

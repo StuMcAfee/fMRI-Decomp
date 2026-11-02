@@ -296,6 +296,9 @@ def test_inventory_all_and_summary(tmp_path, cfg):
     _, rd_b = make_subject(tmp_path / "b", decoy=False, dicoms=False, phase=False, n_noise=0, n_nss=0,
                            series=7, te=[15.0, 31.22, 46.24, 61.26])
     _, rd_c = make_subject(tmp_path / "c", decoy=False, dicoms=False, phase=False, n_noise=0, n_nss=0, series=9)
+    # run c: pairing dropped volumes 10-14 in the middle of the run (a gap in the timeline)
+    keep = [i for i in range(40) if not 10 <= i <= 14]
+    (rd_c / "volumes_used.tsv").write_text("echo1\techo2\techo3\techo4\n" + "".join(f"{i}\t{i}\t{i}\t{i}\n" for i in keep))
     for rd in (rd_a, rd_b, rd_c):
         shutil.move(str(rd), out_pipe / rd.name)
     (out_pipe / "not_a_run").mkdir()                       # ignored: no result.json
@@ -308,7 +311,8 @@ def test_inventory_all_and_summary(tmp_path, cfg):
     assert [s["status"] for s in status] == ["FAILED: ValueError: --nifti-dir not given and result.json has no input_echo1",
                                              "ok", "ok", "ok"]
     md = (tmp_path / "audit" / "phase0_summary.md").read_text()
-    assert "3 run(s) audited; 1 with flags" in md
+    assert "3 run(s) audited; 2 with flags" in md
+    assert "timeline gaps: 1 (max 5 vols, 5 missing inside run)" in md
     assert "TE mismatch; te_json_ms differs" in md            # run b differs from the modal TE
     assert "Failed audits" in md and "sub-0_acq-0_ser-1" in md
     assert (tmp_path / "audit" / "phase0_summary.tsv").exists()
