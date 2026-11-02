@@ -19,7 +19,14 @@ if [ $# -ge 1 ]; then SUBJECT="$1"; fi
 if [ $# -ge 2 ]; then RUN_DIR="$2"; fi
 if [ $# -ge 3 ]; then PIPELINE="$3"; fi
 if [ $# -ge 4 ]; then NIFTI_DIR="$4"; fi
-cd "${LS_SUBCWD:-$PWD}"                                  # repository root (where bsub was run)
+# repository root: the folder holding src/mejoint. Tried in order: next to this script (bash run),
+# the current folder (bsub starts the job where it was submitted), LSF's submission folder.
+REPO=""
+for cand in "$(dirname "${BASH_SOURCE[0]:-.}")/.." "$PWD" "${LS_SUBCWD:-}"; do
+    if [ -n "$cand" ] && [ -f "$cand/src/mejoint/__init__.py" ]; then REPO="$(cd "$cand" && pwd)"; break; fi
+done
+[ -n "$REPO" ] || { echo "Cannot find the fMRI-Decomp folder (src/mejoint). Run from inside it." >&2; exit 2; }
+cd "$REPO"
 export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"  # use the code in this folder; no pip install needed
 
 # ---- preflight: print everything needed to diagnose a failure, stop with a clear message
