@@ -118,7 +118,7 @@ frontend:                     # Phase 2 (CLAUDE.md section 5.4); listed now so t
   whiten_with: voxel          # voxel = per-voxel sigma, smooth map in low-SNR / df = 0 voxels; or "smooth"
   chunk_voxels: 5000          # voxels per block (memory)
   mppca: {enabled: true, patch_radius: 2, n_volumes: 100, slice_step: 6, inplane_step: 2}   # sigma cross-check on RAW echoes (dipy); patch centres on a sparse grid
-  mppca_expected_ratio: 1.06  # residual sigma / MP-PCA sigma on simulated data (MP-PCA reads ~6 % low)
+  mppca_expected_ratio: 1.02  # residual / MP-PCA sigma in a full-size simulation (MP-PCA read 2 % low; 6 % on a small grid)
 
 simulate:                     # Phase 1 ground-truth simulator; tests override pieces of this
   grid: [24, 24, 14]          # small grid for tests (the real matrix is 52 x 64 x 48)
