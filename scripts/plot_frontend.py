@@ -70,11 +70,13 @@ def main(argv=None):
     zcuts = [int(round(zlo + f * (zhi - zlo))) for f in fracs]
     xmid = int(round(np.mean(np.where(brain.any(axis=(1, 2)))[0])))
 
+    pm = load(folder, "pipeline_mask")
+    pipe = (pm > 0.5) if pm is not None else None
     rows = []
     snr = load(folder, "snr")
     m1 = load(folder, "mean_echo1_unmasked")
     if m1 is not None:
-        rows.append(("Echo-1 mean, UNMASKED (line = brain mask)", m1, GRAY,
+        rows.append(("Echo-1 mean, UNMASKED\n(orange = analysis mask,\nblue dashed = pipeline mask)", m1, GRAY,
                      {"vmin": 0, "vmax": np.nanpercentile(m1[brain], 99), "unmasked": True}, "a.u."))
     rows.append(("Mean signal, echo 1", mu[..., 0], GRAY, {"vmin": 0, "vmax": np.nanpercentile(mu[..., 0][brain], 99)}, "a.u."))
     rows.append(("Mean signal, echo 4", mu[..., 3], GRAY, {"vmin": 0, "vmax": np.nanpercentile(mu[..., 3][brain], 99)}, "a.u."))
@@ -127,7 +129,10 @@ def main(argv=None):
             im = ax.imshow(img, origin="lower", cmap=cmap, interpolation="nearest", **kw)
             if unmasked:
                 bm = brain[:, :, zcuts[j]].T if j < len(zcuts) else brain[xmid, :, :].T
-                ax.contour(bm.astype(float), levels=[0.5], colors="#eb6834", linewidths=0.6)
+                ax.contour(bm.astype(float), levels=[0.5], colors="#eb6834", linewidths=0.7)
+                if pipe is not None:
+                    pm = pipe[:, :, zcuts[j]].T if j < len(zcuts) else pipe[xmid, :, :].T
+                    ax.contour(pm.astype(float), levels=[0.5], colors="#3987e5", linewidths=0.6, linestyles="dashed")
             if i == 0:
                 lab = f"axial z={zcuts[j]}" + (" (PF level)" if j < 2 else "") if j < len(zcuts) else f"sagittal x={xmid}"
                 ax.set_title(lab, fontsize=7, color=INK2)

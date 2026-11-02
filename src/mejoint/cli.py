@@ -38,12 +38,14 @@ def main(argv=None) -> int:
     summ.add_argument("--config", help="config YAML (default: configs/default.yaml)")
 
     fr = sub.add_parser("frontend", help="Phase 2 front end on one mbme_tedana run (maps, channels, summary)")
-    fr.add_argument("--run-dir", required=True, help="mbme_tedana run folder (holds result.json)")
+    g = fr.add_mutually_exclusive_group(required=True)
+    g.add_argument("--run-dir", help="mbme_tedana run folder (holds result.json, volumes_used.tsv, motion)")
+    g.add_argument("--echo1", help="raw echo-1 NIfTI alone (no pipeline outputs; equal echo volume counts)")
     fr.add_argument("--source", choices=["raw", "mc"], default="raw", help="raw dcm2niix echoes or motion-corrected")
     fr.add_argument("--out", required=True, help="output folder")
     fr.add_argument("--no-mppca", action="store_true", help="skip the MP-PCA sigma cross-check")
-    fr.add_argument("--mask", choices=["pipeline", "pipeline_filled"], default=None,
-                    help="analysis mask: mbme_tedana's brain_mask (default, same voxels as tedana) or with enclosed holes filled")
+    fr.add_argument("--mask", choices=["auto", "pipeline", "pipeline_filled"], default=None,
+                    help="analysis mask: auto = built from the echoes (default); pipeline(_filled) = mbme_tedana's, for comparison")
     fr.add_argument("--config", help="config YAML (default: configs/default.yaml)")
 
     args = ap.parse_args(argv)
@@ -70,7 +72,7 @@ def main(argv=None) -> int:
     elif args.cmd == "frontend":
         from . import frontend
         summ = frontend.run_subject(args.run_dir, cfg, args.out, source=args.source,
-                                    mppca=False if args.no_mppca else None, mask_source=args.mask)
+                                    mppca=False if args.no_mppca else None, mask_source=args.mask, echo1=args.echo1)
         print(frontend.render_summary(summ))
         if "mppca_check" in summ and summ["mppca_check"]["verdict"] != "OK":
             return 3

@@ -1,7 +1,9 @@
 #!/bin/bash
 # Phase 2 front end on one mbme_tedana run: maps, channel cache, summary, QC figure.
 # Interactive session (recommended; arguments, quotes keep spaces):
-#   bash scripts/phase2_frontend_subject.lsf "<RUN_DIR>" [raw|mc] [pipeline|pipeline_filled]
+#   bash scripts/phase2_frontend_subject.lsf "<RUN_DIR>" [raw|mc] [auto|pipeline|pipeline_filled]
+#   bash scripts/phase2_frontend_subject.lsf "<raw ..._e1.nii.gz>"     (no pipeline outputs needed)
+# The analysis mask is built from the echoes ("auto", default); pipeline masks are for comparison only.
 # raw (default) = the dcm2niix echoes (sigma and the MP-PCA cross-check must use raw data);
 # mc = motion-corrected echoes (needs a run made with --keep-intermediates).
 #BSUB -J mejoint_phase2
@@ -15,7 +17,7 @@ set -euo pipefail
 PY="$HOME/miniconda3_new/envs/mejoint/bin/python"     # always the env's python, by full path
 RUN_DIR="${1:-${RUN_DIR:-}}"
 SOURCE="${2:-${SOURCE:-raw}}"
-MASK="${3:-pipeline}"
+MASK="${3:-auto}"
 
 REPO=""
 for cand in "$(dirname "${BASH_SOURCE[0]:-.}")/.." "$PWD" "${LS_SUBCWD:-}"; do
@@ -36,15 +38,20 @@ fail() { echo "PREFLIGHT FAILED: $*" >&2; exit 2; }
 [ -x "$PY" ] || fail "no python at $PY"
 "$PY" -c "import mejoint, numpy, scipy, nibabel, yaml, matplotlib" || fail "python packages missing (see the import error above)"
 "$PY" -c "import dipy; print('dipy:   ', dipy.__version__)" || echo "dipy:    NOT available: MP-PCA cross-check will fail (rerun with --no-mppca to skip)"
-[ -n "$RUN_DIR" ] && [ -d "$RUN_DIR" ] || fail "first argument must be the run folder"
-[ -f "$RUN_DIR/result.json" ] || fail "no result.json in RUN_DIR"
+[ -n "$RUN_DIR" ] || fail "first argument must be a run folder or a raw echo-1 file"
+if [ -f "$RUN_DIR" ]; then
+    INPUT=(--echo1 "$RUN_DIR"); NAME="$(basename "$RUN_DIR" | sed -E 's/_e1\.nii(\.gz)?$//')"
+else
+    [ -f "$RUN_DIR/result.json" ] || fail "no result.json in $RUN_DIR"
+    INPUT=(--run-dir "$RUN_DIR"); NAME="$(basename "$RUN_DIR")"
+fi
 echo "== preflight ok"
 
-OUT="outputs/phase2/$(basename "$RUN_DIR")/$SOURCE"
-if [ "$MASK" != "pipeline" ]; then OUT="${OUT}_${MASK}"; fi
+OUT="outputs/phase2/$NAME/$SOURCE"
+if [ "$MASK" != "auto" ]; then OUT="${OUT}_${MASK}"; fi
 mkdir -p "$OUT"
 status=0
-/usr/bin/time -v "$PY" -m mejoint.cli frontend --run-dir "$RUN_DIR" --source "$SOURCE" --mask "$MASK" --out "$OUT" 2> "$OUT/time.txt" || status=$?
+/usr/bin/time -v "$PY" -m mejoint.cli frontend "${INPUT[@]}" --source "$SOURCE" --mask "$MASK" --out "$OUT" 2> "$OUT/time.txt" || status=$?
 grep -E "Elapsed|Maximum resident" "$OUT/time.txt" || true
 if [ -f "$OUT/summary.json" ]; then
     "$PY" scripts/plot_frontend.py "$OUT" "$OUT/frontend_qc.png" || echo "figure failed (outputs are still valid)"
