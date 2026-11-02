@@ -376,8 +376,9 @@ def dicom_scan(nifti_dir: Path, cfg: dict, series: int | None = None) -> dict:
                        str(ds.get("EchoNumbers", "")))
             except Exception:
                 continue
-            g = groups.setdefault(key, {"count": 0, "path": p, "ds": ds, "folder": str(folder)})
+            g = groups.setdefault(key, {"count": 0, "path": p, "ds": ds, "folder": str(folder), "tes": set()})
             g["count"] += 1
+            g["tes"].update(_dicom_tes(ds))       # union over the sample: enhanced files carry one echo each
         out["folders_scanned"].append({"folder": str(folder), "n_files": len(files), "n_dicom_in_sample": n_dcm})
         if series is not None and any(k[0] == series for k in groups):
             break
@@ -388,7 +389,8 @@ def dicom_scan(nifti_dir: Path, cfg: dict, series: int | None = None) -> dict:
             "series_number": snum, "series_description": sdesc, "image_type": list(itype),
             "echo_numbers": echo, "n_headers_read": g["count"], "folder": g["folder"],
             "example": str(g["path"]), "sop_class": str(ds.get("SOPClassUID", "")),
-            "EchoTime_ms": _f(ds.get("EchoTime")), "SliceThickness": _f(ds.get("SliceThickness")),
+            "EchoTime_ms": _f(ds.get("EchoTime")), "tes_seen_ms": sorted(g["tes"]),
+            "SliceThickness": _f(ds.get("SliceThickness")),
             "SpacingBetweenSlices": _f(ds.get("SpacingBetweenSlices")),
             "ImageComments": str(ds.get("ImageComments", "")) or None,
             "PATModeText_0051_1011": _private(ds, 0x0051, 0x1011),
@@ -416,8 +418,8 @@ def _private(ds, group, elem):
 
 
 def _ascconv_text(ds) -> str | None:
-    """Siemens protocol text: CSA series header (classic DICOM), else private tag (0021,1019)
-    (enhanced/XA DICOM; location unverified on your data)."""
+    """Siemens protocol text. Classic DICOM: CSA series header. Enhanced (XA) DICOM: the text sits in
+    a private element, possibly nested inside functional-group sequences, so search every element."""
     try:
         import warnings
 
@@ -433,15 +435,33 @@ def _ascconv_text(ds) -> str | None:
     except Exception:
         pass
     try:
-        el = ds.get((0x0021, 0x1019))
-        if el is not None:
+        for el in ds.iterall():
             v = el.value
-            t = v.decode("latin-1", errors="replace") if isinstance(v, bytes) else str(v)
-            if "ASCCONV" in t:
-                return t
+            if isinstance(v, (bytes, bytearray)):
+                if b"ASCCONV BEGIN" in v:
+                    return bytes(v).decode("latin-1", errors="replace")
+            elif isinstance(v, str) and "ASCCONV BEGIN" in v:
+                return v
     except Exception:
         pass
     return None
+
+
+def _dicom_tes(ds) -> list[float]:
+    """All echo times in one header: EchoTime (classic) and EffectiveEchoTime (enhanced, nested)."""
+    tes = set()
+    try:
+        for el in ds.iterall():
+            if el.tag in (0x00180081, 0x00189082) and el.value not in (None, ""):
+                vals = list(el.value) if el.VM > 1 else [el.value]
+                for v in vals:
+                    try:
+                        tes.add(round(float(v), 3))
+                    except (TypeError, ValueError):
+                        pass
+    except Exception:
+        pass
+    return sorted(tes)
 
 
 def _ascconv_lines(ds, keywords) -> list[str] | str:
@@ -679,6 +699,13 @@ def build_table(inv: dict, cfg: dict) -> list[tuple[str, str, str, str]]:
     if ef:
         add("TE (ms), JSON", inv["te_json_ms"], "JSON EchoTime",
             "confirmed" if inv["te_match"] else f"MISMATCH vs {inv['te_expected_ms']}")
+        snum = inv.get("series_number")
+        dtes = sorted({t for g in inv["dicom"]["series"] if g["series_number"] == snum and not g.get("is_phase")
+                       for t in g.get("tes_seen_ms", [])})
+        exp, tol = inv["te_expected_ms"], cfg["acquisition"]["te_tolerance_ms"]
+        dmatch = len(dtes) == len(exp) and all(abs(a - b) <= tol for a, b in zip(dtes, exp))
+        add("TE (ms), DICOM sample", dtes or "not read", "DICOM EchoTime / EffectiveEchoTime",
+            "confirmed" if dmatch else ("not read" if not dtes else "CHECK (sample may miss echoes)"))
         add("Volumes per echo (raw)", [f.get("n_volumes") for f in ef], "header",
             "equal" if len({f.get('n_volumes') for f in ef}) == 1 else "UNEQUAL (pairing needed)")
         add("Matrix", _uniq([tuple(f.get("shape", ())[:3]) for f in ef]), "header",
@@ -830,11 +857,13 @@ def render_markdown(inv: dict, cfg: dict) -> str:
                          f"{e.get('n_nonsteady_leading')} | {[round(z, 1) for z in e.get('first5_robust_z', [])]} |")
     d = inv["dicom"]
     if d["series"]:
-        lines += ["", "## DICOM header groups (sample)", "", "| Series | Description | ImageType | Echo | TE (ms) | Headers read |",
-                  "|---|---|---|---|---|---|"]
+        lines += ["", "## DICOM header groups (sample)", "",
+                  "| Series | Description | ImageType | SOP class | Echo | TEs seen in sample (ms) | Headers read |",
+                  "|---|---|---|---|---|---|---|"]
         for s in d["series"][:30]:
-            lines.append(f"| {s['series_number']} | {s['series_description']} | {'/'.join(s['image_type'])} | "
-                         f"{s['echo_numbers']} | {s['EchoTime_ms']} | {s['n_headers_read']} |")
+            sop = {"1.2.840.10008.5.1.4.1.1.4.1": "enhanced MR", "1.2.840.10008.5.1.4.1.1.4": "MR"}.get(s["sop_class"], s["sop_class"])
+            lines.append(f"| {s['series_number']} | {s['series_description']} | {'/'.join(s['image_type'])} | {sop} | "
+                         f"{s['echo_numbers']} | {s.get('tes_seen_ms')} | {s['n_headers_read']} |")
     asc = [(s["series_description"], s["ascconv"]) for s in d["series"]
            if isinstance(s.get("ascconv"), list) and s["ascconv"] and s["series_number"] == inv.get("series_number")]
     asc = asc or [(s["series_description"], s["ascconv"]) for s in d["series"] if isinstance(s.get("ascconv"), list) and s["ascconv"]]
@@ -870,3 +899,172 @@ def write_outputs(inv: dict, cfg: dict, out_dir) -> None:
     if inv.get("pipeline_script") and inv["pipeline_script"].get("exists"):
         inputs["mbme_tedana_py"] = inv["pipeline_script"]["path"]
     io.write_json(out_dir / "done.json", {"stage": "inventory", **io.provenance(cfg, inputs)})
+
+
+# ======================================================================= all subjects
+def inventory_all(pipeline_out, cfg: dict, out_root, pipeline_script=None, load_data: bool = True,
+                  log=print) -> list[dict]:
+    """Audit every mbme_tedana run folder (any folder of `pipeline_out` holding result.json).
+
+    A run is skipped when its done.json was written with the same config. A failing run is
+    recorded in <out>/<run>/error.txt and the loop continues. Writes the cross-subject summary.
+    """
+    import traceback
+
+    out_root = Path(out_root)
+    runs = sorted(p.parent for p in Path(pipeline_out).glob("*/result.json"))
+    log(f"{len(runs)} run folder(s) with result.json under {pipeline_out}")
+    chash = io.config_hash(cfg)
+    status = []
+    for i, rd in enumerate(runs, start=1):
+        od = out_root / rd.name
+        done = od / "done.json"
+        if done.exists() and _read_json(done).get("config_sha256") == chash:
+            status.append({"run": rd.name, "status": "skipped (already done with this config)"})
+            log(f"[{i}/{len(runs)}] {rd.name}: skipped (done)")
+            continue
+        try:
+            inv = inventory_subject(None, cfg, run_dir=rd, subject=rd.name, load_data=load_data,
+                                    pipeline_script=pipeline_script)
+            write_outputs(inv, cfg, od)
+            if (od / "error.txt").exists():
+                (od / "error.txt").unlink()
+            status.append({"run": rd.name, "status": "ok"})
+            log(f"[{i}/{len(runs)}] {rd.name}: ok")
+        except Exception as exc:
+            io.write_text(od / "error.txt", traceback.format_exc())
+            status.append({"run": rd.name, "status": f"FAILED: {type(exc).__name__}: {exc}"})
+            log(f"[{i}/{len(runs)}] {rd.name}: FAILED ({type(exc).__name__}: {exc})")
+    write_summary(out_root, cfg, status)
+    return status
+
+
+SUMMARY_CONSTANT = ("te_json_ms", "matrix", "voxel_mm", "tr_s", "software", "sequence", "mb_slicetiming",
+                    "grappa", "partial_fourier", "pe_dir", "coil_combination", "coil_elements",
+                    "tedana_params", "tedana_version")
+
+
+def summary_row(inv: dict) -> dict:
+    """One row of cross-subject facts from one inventory.json."""
+    ef = inv.get("echo_files", [])
+    F = (inv.get("sidecar") or {}).get("fields", {})
+    u = lambda k: _uniq(F.get(k, []))
+    r = inv.get("run") or {}
+    res = r.get("result") or {}
+    vol = (inv.get("volumes") or {}).get("per_echo", [])
+    mcc = inv.get("mc_checks") or []
+    params = res.get("parameters") or {}
+    return {
+        "run": Path(r.get("run_dir", inv.get("nifti_dir", ""))).name,
+        "pipeline_status": res.get("status"),
+        "n_echoes": len(ef),
+        "te_json_ms": inv.get("te_json_ms"),
+        "te_match": inv.get("te_match"),
+        "vols_raw": [f.get("n_volumes") for f in ef],
+        "vols_used": res.get("n_volumes"),
+        "volume_pairing": res.get("volume_pairing"),
+        "matrix": _uniq([tuple(f.get("shape", ())[:3]) for f in ef]) if ef else None,
+        "voxel_mm": _uniq([tuple(round(v, 3) for v in f.get("voxel_mm", ())) for f in ef]) if ef else None,
+        "tr_s": u("RepetitionTime"),
+        "software": f"{u('ManufacturersModelName')} {u('SoftwareVersions')}",
+        "sequence": u("PulseSequenceDetails"),
+        "mb_slicetiming": (inv.get("sidecar") or {}).get("mb_from_slicetiming"),
+        "grappa": u("ParallelReductionFactorInPlane"),
+        "partial_fourier": u("PartialFourier"),
+        "pe_dir": u("PhaseEncodingDirection"),
+        "coil_combination": u("CoilCombinationMethod"),
+        "coil_elements": u("ReceiveCoilActiveElements"),
+        "n_phase_files": len(inv.get("phase_files", [])),
+        "max_trailing_noise_frames": max((e.get("n_trailing_noise_frames") or 0 for e in vol), default=None),
+        "max_nonsteady": max((e.get("n_nonsteady_leading") or 0 for e in vol), default=None),
+        "first_volume_signal_ratio": res.get("first_volume_signal_ratio"),
+        "n_physio_files": len(inv.get("physio_files", [])),
+        "te_source_pipeline": (r.get("echo_info") or {}).get("source"),
+        "tedana_version": res.get("tedana_version"),
+        "tedana_params": {k: params.get(k) for k in ("tree", "tedpca", "ica_method", "n_robust_runs", "seed", "interp", "dummy_scans", "max_volumes")} or None,
+        "mean_fd_mm": res.get("mean_fd_mm"),
+        "n_vols_fd_gt_0p5mm": res.get("n_vols_fd_gt_0p5mm"),
+        "mask_voxels": res.get("mask_voxels"),
+        "n_components": res.get("n_components_total"),
+        "n_likely_bold": res.get("n_likely_bold"),
+        "mc_echoes_kept": len(r.get("mc_echoes") or []),
+        "mc_mask_voxels_nonpositive": [m.get("n_mask_voxels_any_nonpositive") for m in mcc] or None,
+    }
+
+
+def _flags(row: dict, modal: dict) -> list[str]:
+    f = []
+    if row["n_echoes"] != 4:
+        f.append(f"{row['n_echoes']} echoes")
+    if row["te_match"] is False:
+        f.append("TE mismatch")
+    if row["vols_raw"] and len(set(row["vols_raw"])) > 1:
+        f.append("unequal echo volumes")
+    if row["n_phase_files"]:
+        f.append("phase saved")
+    if row["max_trailing_noise_frames"]:
+        f.append("noise frames")
+    if row["max_nonsteady"]:
+        f.append("non-steady-state volumes")
+    if row["n_physio_files"]:
+        f.append("physio files")
+    if row["pipeline_status"] != "ok":
+        f.append(f"pipeline status {row['pipeline_status']}")
+    for k in SUMMARY_CONSTANT:
+        if modal.get(k) is not None and json.dumps(row[k], default=str) != modal[k]:
+            f.append(f"{k} differs")
+    return f
+
+
+def write_summary(out_root, cfg: dict, status: list[dict] | None = None) -> list[dict]:
+    """Cross-subject table from every <out_root>/*/inventory.json."""
+    out_root = Path(out_root)
+    rows = []
+    for p in sorted(out_root.glob("*/inventory.json")):
+        try:
+            rows.append(summary_row(_read_json(p)))
+        except Exception as exc:
+            rows.append({"run": p.parent.name, "error": str(exc)})
+    good = [r for r in rows if "error" not in r]
+    modal = {}
+    for k in SUMMARY_CONSTANT:
+        vals = [json.dumps(r[k], default=str) for r in good]
+        if vals:   # most common value; ties go to the first run in sorted order (deterministic)
+            modal[k] = max(dict.fromkeys(vals), key=vals.count)
+    for r in good:
+        r["flags"] = "; ".join(_flags(r, modal)) or "-"
+
+    cols = list(good[0].keys()) if good else ["run", "error"]
+    io.write_tsv(out_root / "phase0_summary.tsv",
+                 {c: [json.dumps(r.get(c), default=str) if isinstance(r.get(c), (list, dict, tuple)) else r.get(c, "")
+                      for r in rows] for c in cols})
+    lines = ["# Phase 0 audit: all runs", "",
+             f"{len(rows)} run(s) audited; {sum(r.get('flags', '-') != '-' for r in good)} with flags; "
+             f"{len(rows) - len(good)} unreadable.", "", "## Values shared by most runs (modal)", "",
+             "| Field | Modal value | Runs differing |", "|---|---|---|"]
+    for k in SUMMARY_CONSTANT:
+        n_diff = sum(f"{k} differs" in r.get("flags", "") for r in good)
+        lines.append(f"| {k} | {modal.get(k, 'n/a').replace('|', '/')} | {n_diff} |")
+    lines += ["", "## Per run", "",
+              "| Run | Vols raw -> used | Mean FD (mm) | FD>0.5 | Likely BOLD / comps | MC echoes kept | Flags |",
+              "|---|---|---|---|---|---|---|"]
+    for r in good:
+        lines.append(f"| {r['run']} | {r['vols_raw']} -> {r['vols_used']} | {_r(r['mean_fd_mm'])} | {r['n_vols_fd_gt_0p5mm']} | "
+                     f"{r['n_likely_bold']} / {r['n_components']} | {r['mc_echoes_kept']} | {r['flags']} |")
+    for r in rows:
+        if "error" in r:
+            lines.append(f"| {r['run']} | unreadable inventory.json: {r['error']} | | | | | |")
+    if status:
+        failed = [s for s in status if s["status"].startswith("FAILED")]
+        if failed:
+            lines += ["", "## Failed audits (see <run>/error.txt)", ""] + [f"- {s['run']}: {s['status']}" for s in failed]
+    io.write_text(out_root / "phase0_summary.md", "\n".join(lines) + "\n")
+    io.write_json(out_root / "phase0_summary_status.json", {"status": status or [], **io.provenance(cfg, {})})
+    return rows
+
+
+def _r(v, nd=3):
+    try:
+        return round(float(v), nd)
+    except (TypeError, ValueError):
+        return v
