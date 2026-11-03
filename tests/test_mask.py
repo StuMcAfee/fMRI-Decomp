@@ -48,10 +48,14 @@ def phantom(shading=0.35, csf=0.3, seed=0, neck=False):
     shade = shading + (1 - shading) * rr ** 2                           # coil shading: dark centre
     sigma = 12.0
     rician = lambda x: np.sqrt((x + sigma * rng.standard_normal(shape)) ** 2 + (sigma * rng.standard_normal(shape)) ** 2)
+    rim = np.zeros(shape, bool)
+    if neck:   # dephased brain edge (lateral, inferior: like cerebellum next to the mastoid): normal at echo 1, fast decay
+        rim = brain & (r([20, 26, 19]) > 0.85) & (zz < c[0] - 6) & (xx > c[2] + 6)
+        t2[rim] = 15.0
     m1 = rician(img * shade)
     m4 = rician(img * shade * np.exp(-(TE[-1] - TE[0]) / t2))
     if neck:
-        return m1, m4, brain, scalp, vent, muscle
+        return m1, m4, brain, scalp, vent, muscle, rim
     return m1, brain, scalp, vent
 
 
@@ -96,14 +100,15 @@ def test_fill_holes_slicewise():
 
 def test_mask_excludes_neck_muscle_by_decay(cfg):
     """Neck muscle touching the brain is as bright as brain; only its fast decay (T2* ~20 ms) separates it."""
-    m1, m4, brain, scalp, vent, muscle = phantom(neck=True, seed=2)
+    m1, m4, brain, scalp, vent, muscle, rim = phantom(neck=True, seed=2)
     vox = (3.281, 3.281, 3.3)
     with_decay = mask.build_mask(m1, vox, cfg, mean_echo_last=m4, te_ms=TE)["mask"]
     intensity_only = mask.build_mask(m1, vox, cfg)["mask"]
     assert (intensity_only & muscle).sum() / muscle.sum() > 0.5          # the failure seen on real data
-    assert (with_decay & muscle).sum() / muscle.sum() < 0.1
-    assert with_decay[vent].all() and mask.dice(with_decay & ~muscle, brain) > 0.9
-    # limit: one-voxel regrowth can add a thin shell where short-T2* tissue touches the brain directly
+    assert (with_decay & muscle).sum() / muscle.sum() < 0.12               # thin band around the cord only
+    assert with_decay[vent].all() and mask.dice(with_decay & ~muscle, brain) > 0.95
+    assert rim.sum() > 200 and with_decay[rim].mean() > 0.9            # dephased brain edge kept (cerebellum, OFC)
+    # limit: regrowth adds a band of up to regrow_vox voxels where short-T2* tissue touches the brain
 
 
 def test_mask_qc_all_runs(cfg, tmp_path):

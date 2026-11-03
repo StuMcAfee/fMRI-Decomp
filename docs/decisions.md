@@ -234,3 +234,13 @@ Phase 2 remains stopped on the sigma question.
 - Air-noise ratios changed after resampling (SD 1, 0.65, 0.56, 0.50 vs raw 1, 0.57, 0.48, 0.47): the background is not a usable thermal reference in this data.
 - Mask (v1) 1715 ml: same over-inclusion as raw; mask v2 pending real-data check.
 - Test note: on the small simulated head (T2* 20-70 ms, skull base 22 ms) mask v2 keeps ~90 % of the simulated brain; the T2* > 25 ms limit trims short-T2* edge brain. Real-data contact sheets decide the limit.
+
+### 2026-11-03: per-echo noise on P04 (motion-corrected); mask v3; P02 excluded
+
+**Per-echo noise from the residual (P04, mc echoes, 20000 voxels):** all frames [1, 0.86, 0.61, 0.77]; voxel halves [1, 0.77, 0.58, 0.68] / [1, 0.96, 0.64, 0.86]; frames nearest the median head position [1, 0.84, 0.63, 0.70]. Echo 1 is the noisiest by all three methods (MP-PCA, air, residual), so CLAUDE.md 5.3's equal-sigma assumption is not supported in this data. The size is uncertain: the halves differ by up to 0.2 (~0.05 in simulation) and echo 4 > echo 3 is physically odd. Likely cause: the real residual is not pure noise (it tracks head drift after motion correction; the mean decay is slightly concave brain-wide, median ln(mu/fit) per echo [-0.004, 0.011, 0.005, -0.017], as through-slice dephasing produces). Decision on the noise model pending (user).
+
+**Mask v2 across 16 runs (mask QC):** volumes 1043-1600 ml (median 1292; pipeline median 1335). User: the outline variably excludes the edges of the cerebellum and orbitofrontal cortex, "important regions". Cause: the 25 ms decay limit also removes brain whose late echoes are lost to dephasing. Against the pipeline mask v2 lost a median 88 ml (max 165) at the edges and gained 64 ml (max 205) in the deep brain.
+
+**Mask v3:** the decay limit now only decides what is connected to the brain; the core then regrows up to 4 voxels (~13 mm) into adjacent tissue bright at echo 1, whatever its decay. Phantom with a dephased lateral-inferior rim (T2* 15 ms) and an anatomical neck: rim kept 33 % (v2) -> 96 % (v3); neck muscle 1.4 % -> 8.9 % (a band around the cord); scalp 2 %; ventricles 100 %. 3 voxels: rim 83 %, muscle 6 %; 5 voxels: rim 100 %, muscle 12 %. Tissue with almost no signal even at echo 1 (severe dropout) stays outside: an EPI-only mask cannot recover it; an anatomical (T1-based) mask could.
+
+**P02 excluded** (user): metal artefact or similar in the right cerebral hemisphere (also visible as an abnormal mask, 844 ml). 15 runs remain.
