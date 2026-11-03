@@ -336,3 +336,17 @@ The summary also reports the channel noise covariance implied if MP-PCA's echo r
 This is stricter than before (the level limit is unchanged; shape is tightened). It was set before the rerun results, but after the approximate estimate (level ~1.10, shape within ~0.07). The reason for the change is the consequence analysis above, not the expected outcome. MP-PCA is not ground truth: a fail means the two estimators disagree, not which one is wrong.
 
 `mejoint mppca-recheck <summary.json>` re-evaluates outputs made before this rule. 62 tests pass under seeds 0 and 1.
+
+### 2026-11-03: Phase 2 gate run on P04 (raw, differenced estimator, ratios [1, 0.721, 0.631, 0.560]): shape passes, level misses by 0.004 (STOP, user decides)
+
+MP-PCA check, level/shape rule:
+- **Shape:** [1, 0.952, 1.024, 1.072], within the 10 % limit. If MP-PCA's echo ratios were the truth, channel noise variances would be off by up to 4.2 % and the c0-c1 noise correlation would be +0.057.
+- **Level:** 1.204 after the simulated bias, against a limit of 1.20. Raw ratio 1.228; quiet window 1.218. Per-voxel differenced sigma alone (without the smooth-map fill in 30 % of voxels) gives 1.196 raw, 1.173 after the bias. The rule uses the sigma actually used for whitening, so the verdict is STOP.
+
+Why the level rose from the predicted ~1.12: sigma_v (echo-1 noise) depends on the echo ratios through the residual basis. Lowering r for echoes 2-4 raised the differenced sigma_v from 397 to 422 (+6 %). The earlier rescaling had assumed this coupling was weak; it is not.
+
+This run's own differenced ratios [1, 0.719, 0.603, 0.546] (halves within 0.02) agree with the study-wide vector within 0.03.
+
+Non-differenced residual energy against the differenced sigma is now 1.18. This is expected: 1 / 0.92^2, the slow violations. It no longer means a model failure.
+
+As agreed in advance, no further tuning of the noise model. The user decides whether the level gap is an accepted limitation.
