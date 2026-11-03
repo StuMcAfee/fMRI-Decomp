@@ -128,6 +128,17 @@ frontend:                     # Phase 2 (CLAUDE.md section 5.4); listed now so t
   background: {dilate_vox: 4, rel_threshold: 0.02}   # air voxels: > 4 voxels outside the brain mask and echo-1 mean < 2 % of brain median
   mppca_expected_ratio: 1.02  # residual / MP-PCA sigma in a full-size simulation (MP-PCA read 2 % low; 6 % on a small grid)
 
+nuisance:                     # Phase 2b: one projector over time, applied to the channels and the residual (= to the log-ratio echoes)
+  enabled: true                 # false = no-regression variant (kept for comparison; CLI --no-nuisance)
+  motion_filter: notch          # notch = band-stop at the breathing peak found in the motion parameters; lowpass; none
+  resp_search_hz: [0.15, 0.60]  # breathing-peak search band (children / young adults; Nyquist 0.667 Hz at TR 0.75 s)
+  notch_halfwidth_hz: 0.06      # band-stop = peak +/- 0.06 Hz (breathing rate varies within a run)
+  min_peak_prominence: 3.0      # peak power / robust power-law background fit in the search band; below this no band-stop is applied (reported)
+  lowpass_hz: 0.10              # used only with motion_filter: lowpass
+  filter_order: 4               # Butterworth, applied forwards and backwards (zero phase), within contiguous segments
+  expansion: 24                 # 6 = parameters; 12 = + frame-to-frame changes; 24 = + squares of both
+  poly_order: 0                 # Legendre drift terms per segment (0 = constants only)
+
 mask:                         # analysis mask built from the input echoes (mask.py); user decision 2026-11-02
   border_vox: 3               # image border used to measure the air (noise) level
   k_head: 4.0                 # head = echo-1 mean > 4 x air level (Rician noise mean ~1.25 sigma: ~5 sigma)

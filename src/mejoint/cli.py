@@ -44,6 +44,7 @@ def main(argv=None) -> int:
     fr.add_argument("--source", choices=["raw", "mc"], default="raw", help="raw dcm2niix echoes or motion-corrected")
     fr.add_argument("--out", required=True, help="output folder")
     fr.add_argument("--no-mppca", action="store_true", help="skip the MP-PCA sigma cross-check")
+    fr.add_argument("--no-nuisance", action="store_true", help="no-regression variant (skip the Phase 2b projector)")
     fr.add_argument("--mask", choices=["auto", "pipeline", "pipeline_filled"], default=None,
                     help="analysis mask: auto = built from the echoes (default); pipeline(_filled) = mbme_tedana's, for comparison")
     fr.add_argument("--config", help="config YAML (default: configs/default.yaml)")
@@ -89,7 +90,8 @@ def main(argv=None) -> int:
     elif args.cmd == "frontend":
         from . import frontend
         summ = frontend.run_subject(args.run_dir, cfg, args.out, source=args.source,
-                                    mppca=False if args.no_mppca else None, mask_source=args.mask, echo1=args.echo1)
+                                    mppca=False if args.no_mppca else None, mask_source=args.mask, echo1=args.echo1,
+                                    nuisance=False if args.no_nuisance else None)
         print(frontend.render_summary(summ))
         if "mppca_check" in summ and summ["mppca_check"]["verdict"] != "OK":
             return 3

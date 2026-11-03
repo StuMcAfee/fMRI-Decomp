@@ -149,7 +149,15 @@ def main(argv=None):
     fr = np.genfromtxt(folder / "frames.tsv", delimiter="\t", names=True, dtype=None, encoding=None)
     t = np.arange(len(fr))
     ax = fig.add_subplot(gs[len(rows), :ncol])
-    ax.plot(t, fr["residual_energy"].astype(float), color="#2a78d6", lw=0.9)
+    names = fr.dtype.names or ()
+    if "residual_energy_no_regression" in names:
+        try:
+            ax.plot(t, fr["residual_energy_no_regression"].astype(float), color="#9a9893", lw=0.8, label="without regression")
+        except (ValueError, TypeError):
+            pass
+    ax.plot(t, fr["residual_energy"].astype(float), color="#2a78d6", lw=0.9,
+            label="with nuisance regression" if (summ.get("nuisance") or {}).get("enabled") else "residual energy")
+    ax.legend(fontsize=6, frameon=False, loc="upper right")
     ax.set_ylabel("residual energy\n(brain mean)", fontsize=7)
     ax.set_xticklabels([])
     ax.grid(axis="y", color=GRID, lw=0.5)
@@ -158,10 +166,16 @@ def main(argv=None):
     ax2 = fig.add_subplot(gs[len(rows) + 1, :ncol], sharex=ax)
     try:
         fd = fr["fd_mm"].astype(float)
-        ax2.plot(t, fd, color="#52514e", lw=0.9)
+        ax2.plot(t, fd, color="#9a9893", lw=0.8, label="unfiltered")
+        if "fd_filtered_mm" in names:
+            try:
+                ax2.plot(t, fr["fd_filtered_mm"].astype(float), color="#52514e", lw=0.9, label="breathing band removed")
+                ax2.legend(fontsize=6, frameon=False, loc="upper right")
+            except (ValueError, TypeError):
+                pass
     except (ValueError, TypeError):
         ax2.text(0.5, 0.5, "FD not available", transform=ax2.transAxes, ha="center", color=MUTED)
-    ax2.set_ylabel("FD (mm,\nunfiltered)", fontsize=7)
+    ax2.set_ylabel("FD (mm)", fontsize=7)
     ax2.set_xticklabels([])
     ax2.grid(axis="y", color=GRID, lw=0.5)
     for s in ("top", "right"):
