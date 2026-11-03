@@ -756,11 +756,8 @@ def run_subject(run_dir, cfg: dict, out_dir, source: str = "raw", mppca: bool | 
                          "residual_sigma_median_same_voxels": float(np.nanmedian(sig_k[sel])),
                          "ratio_residual_over_mppca": round(ratio, 4),
                          "ratio_corrected_for_simulated_bias": round(ratio / exp, 4)})
-        worst = max(abs(r["ratio_corrected_for_simulated_bias"] - 1) for r in rows)
-        tol = float(cfg["frontend"]["mppca_sigma_tolerance"])
-        summ["mppca_check"] = {"per_echo": rows, "max_abs_deviation": round(worst, 4), "tolerance": tol,
-                               "quiet_window_start": q_start, "n_volumes": nmp,
-                               "verdict": "OK" if worst <= tol else "STOP: residual and MP-PCA sigma differ by more than the tolerance"}
+        summ["mppca_check"] = {"per_echo": rows, "quiet_window_start": q_start, "n_volumes": nmp,
+                               **mppca_verdict(rows, cfg, te, fe["echo_noise_ratios"])}
     io.write_json(out_dir / "summary.json", summ)
     io.write_text(out_dir / "summary.md", render_summary(summ))
     io.write_config_copy(cfg, out_dir)
@@ -769,6 +766,66 @@ def run_subject(run_dir, cfg: dict, out_dir, source: str = "raw", mppca: bool | 
         inputs.update({"pipeline_mask": info["mask"], "volumes_used": str(Path(run_dir) / "volumes_used.tsv")})
     io.write_json(out_dir / "done.json", {"stage": f"frontend_{source}", **io.provenance(cfg, inputs)})
     return summ
+
+
+def mppca_verdict(rows: list[dict], cfg: dict, te_ms, ratios_used) -> dict:
+    """Verdict of the MP-PCA cross-check, split into level and shape (user decision 2026-11-03).
+
+    level = echo-1 model / MP-PCA sigma, after the simulated MP-PCA bias: the overall noise scale.
+    shape = each later echo's ratio divided by echo 1's: whether the echo noise ratios r agree with MP-PCA's.
+    Shape errors change the echo weighting (correlated c0/c1 noise, spurious mixed components); a level
+    error only rescales all channels. Also reported: the channel noise covariance implied if MP-PCA's echo
+    ratios were the truth (level removed), at the brain-median mean decay of the compared voxels.
+    """
+    F = cfg["frontend"]
+    lvl_tol, shp_tol = float(F["mppca_level_tolerance"]), float(F["mppca_shape_tolerance"])
+    corr = [r["ratio_corrected_for_simulated_bias"] for r in rows]
+    level = corr[0]
+    shape = [c / level for c in corr]
+    level_dev = abs(level - 1)
+    shape_dev = max(abs(s - 1) for s in shape[1:]) if len(shape) > 1 else 0.0
+    out = {"level": round(level, 4), "shape": [round(s, 4) for s in shape],
+           "level_deviation": round(level_dev, 4), "shape_max_deviation": round(shape_dev, 4),
+           "level_tolerance": lvl_tol, "shape_tolerance": shp_tol}
+    mu = np.array([r.get("mu_median_same_voxels", np.nan) for r in rows], float)
+    E = len(rows)
+    if E >= 3 and np.all(np.isfinite(mu)) and np.all(mu > 0):
+        te = np.asarray(te_ms, float)
+        D = design(te)[:, :E]
+        w = mu / np.asarray(ratios_used, float)
+        Q, _ = np.linalg.qr(w[:, None] * D, mode="complete")
+        f = 1.0 / np.asarray(shape)                       # true / model noise per echo, if MP-PCA's ratios are right
+        C = Q.T @ np.diag(f ** 2) @ Q
+        out["implied_channel_variance_max_deviation"] = round(float(np.abs(np.diag(C) - 1).max()), 4)
+        out["implied_c0_c1_noise_correlation"] = round(float(C[0, 1] / np.sqrt(C[0, 0] * C[1, 1])), 4)
+    fails = []
+    if level_dev > lvl_tol:
+        fails.append(f"level {level:.3f} outside 1 +/- {lvl_tol:.2f}")
+    if shape_dev > shp_tol:
+        fails.append(f"shape deviates by {shape_dev:.3f} (> {shp_tol:.2f})")
+    out["verdict"] = "OK" if not fails else "STOP: " + "; ".join(fails)
+    return out
+
+
+def recheck_mppca(summary_json, cfg: dict) -> dict:
+    """Re-evaluate the MP-PCA verdict of an existing front-end output under the current rule
+    (e.g. a run made before the level/shape rule) and rewrite its summary.json / summary.md."""
+    import json
+    from pathlib import Path
+
+    from . import io
+
+    p = Path(summary_json)
+    s = json.loads(p.read_text())
+    m = s.get("mppca_check")
+    if not m:
+        raise ValueError(f"{p} has no MP-PCA check (run with MP-PCA on raw echoes)")
+    keep = {k: m[k] for k in ("per_echo", "quiet_window_start", "n_volumes") if k in m}
+    s["mppca_check"] = {**keep, **mppca_verdict(m["per_echo"], cfg, s["te_ms"], s["echo_noise_ratios_used"]),
+                        "rechecked": True}
+    io.write_json(p, s)
+    io.write_text(p.with_name("summary.md"), render_summary(s))
+    return s
 
 
 def render_summary(s: dict) -> str:
@@ -844,7 +901,16 @@ def render_summary(s: dict) -> str:
               f"{r['residual_sigma_median_same_voxels']:.3f} | {r['ratio_residual_over_mppca']:.3f} | "
               f"{f(r.get('ratio_residual_over_mppca_quiet'))} | {r['ratio_corrected_for_simulated_bias']:.3f} | "
               f"{f(r.get('residual_diff_sigma_median_same_voxels'))} | {f(r.get('ratio_residual_diff_over_mppca'))} |" for r in m["per_echo"]]
-        L += ["", f"Verdict (tolerance {100 * m['tolerance']:.0f} %): **{m['verdict']}**"]
+        if "level" in m:
+            L += ["", f"- Level (echo 1, after the simulated bias): {m['level']:.3f} (tolerance 1 +/- {m['level_tolerance']:.2f})",
+                  f"- Shape (each echo relative to echo 1): {m['shape']} (tolerance +/- {m['shape_tolerance']:.2f})"]
+            if "implied_c0_c1_noise_correlation" in m:
+                L.append(f"- If MP-PCA's echo ratios were right: channel noise variances off by up to "
+                         f"{100 * m['implied_channel_variance_max_deviation']:.1f} %, c0-c1 noise correlation "
+                         f"{m['implied_c0_c1_noise_correlation']:+.3f}")
+            L += ["", f"Verdict: **{m['verdict']}**" + (" (re-evaluated under the level/shape rule)" if m.get("rechecked") else "")]
+        else:                                                           # outputs made before the level/shape rule
+            L += ["", f"Verdict (tolerance {100 * m['tolerance']:.0f} %): **{m['verdict']}**"]
     return "\n".join(L) + "\n"
 
 

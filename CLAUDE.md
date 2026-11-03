@@ -185,7 +185,10 @@ Do not add extra weighting by df or echo count. Whitening already gives unit noi
 - Motion correction resamples each volume. With trilinear interpolation, noise SD can drop to about 0.35× at half-voxel shifts. It varies frame by frame and becomes spatially correlated.
 - The ratio across echoes stays equal (the same transform is used for all echoes), so the weights remain valid.
 - Absolute σ and the unit-variance claims are approximate on motion-corrected data.
-- Run the dipy MP-PCA σ cross-check (`mppca(..., return_sigma=True)`, per echo) on **raw, non-motion-corrected** echoes. Compare it per echo with the residual model σ_v·r_e. If they differ by more than 20%, stop and report. (Under the original equal-σ model this check failed on P04 with up to 70% disagreement; that led to the per-echo model above. With per-echo weights and the non-differenced σ it failed again at 33–53%; that led to the differenced estimator in step 4.)
+- Run the dipy MP-PCA σ cross-check (`mppca(..., return_sigma=True)`, per echo) on **raw, non-motion-corrected** echoes. Compare it per echo with the residual model σ_v·r_e, in two parts (user decision 2026-11-03, replacing one 20% rule for all echoes):
+  - **Shape** (each echo's model/MP-PCA ratio divided by echo 1's; tests the echo ratios r, which set the weighting): within ±10%. Worst case at 10%: c0–c1 noise correlation about 0.1.
+  - **Level** (echo 1's ratio after the simulated MP-PCA bias; the overall noise scale, which only rescales the channels): within ±20%.
+  - If either fails, stop and report. `mejoint mppca-recheck <summary.json>` re-evaluates an existing output. (Under the original equal-σ model this check failed on P04 with up to 70% disagreement; that led to the per-echo model above. With per-echo weights and the non-differenced σ it failed again at 33–53%; that led to the differenced estimator in step 4.)
 
 ## 6. Architecture (build in this order)
 
