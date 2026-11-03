@@ -375,3 +375,19 @@ def test_auto_mask_and_echo1_only_mode(cfg, tmp_path, record_property):
     assert "drift_mm_p50_p90_max" not in summ                         # no motion parameters without the pipeline
     with pytest.raises(ValueError, match="exactly one"):
         frontend.run_subject(None, c2, tmp_path / "x")
+
+
+
+@pytest.mark.parametrize("scale", [[1.0, 1.0, 1.0, 1.0], [1.0, 0.6, 0.5, 0.45]])
+def test_per_echo_noise_ratios_from_residual(cfg, record_property, scale):
+    """The residual-based estimator recovers per-echo noise ratios inside the brain, with all sources,
+    respiration and a g-factor map present (physiology does not enter the residual)."""
+    # precision needs voxels and frames: at 800 frames and ~18k voxels the seed-to-seed SD is ~1.5 %
+    sim = sim_with(cfg, 15, grid=[36, 40, 24], n_volumes=600, echo_sigma_scale=scale, gfactor={"enabled": True}, **NO_VIOL)
+    note(sim, record_property, f" (per-echo noise {scale})")
+    fe = run_fe(sim, cfg)
+    pe = fe["per_echo_noise"]
+    record_property("per_echo_ratio", np.round(pe["ratio"], 3).tolist())
+    assert pe is not None and pe["n_voxels"] >= 500
+    assert np.allclose(pe["ratio"], scale, atol=0.05)
+    assert np.allclose(pe["ratio_half_a"], pe["ratio_half_b"], atol=0.12)       # half samples: SD ~4 %

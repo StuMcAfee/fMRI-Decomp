@@ -281,12 +281,21 @@ def run(S: np.ndarray, te_ms, cfg: dict, mask3d: np.ndarray | None = None, form:
         resid_excess_r0 = np.where(df >= 1, np.nanmean(rc[:, 0] ** 2, axis=1) * scale, np.nan)
         resid_excess_r1 = np.where(df >= 2, np.nanmean(rc[:, 1] ** 2, axis=1) * scale, np.nan)
     static_curv, static_alt = static_shape(mu, te_ms, use)
+    pe_sel = use.all(1) & (snr[:, -1] >= float(F.get("per_echo_noise_min_snr", 10.0)))
+    per_echo = None
+    if pe_sel.sum() >= 500:
+        idx = np.flatnonzero(pe_sel)
+        cap = int(F.get("per_echo_noise_max_voxels", 20000))
+        if idx.size > cap:
+            idx = idx[np.linspace(0, idx.size - 1, cap).astype(int)]
+        per_echo = per_echo_noise(S[idx], mu[idx], te_ms, form)
 
     return {"mu": mu, "use": use, "n_use": n_use, "df": df, "nonpositive": nonpos, "snr": snr,
             "sigma": sigma, "sigma_voxel": sig_vox, "sigma_smooth": sig_smooth, "sigma_init": sig0,
             "sigma_low_snr": low, "trusted": trusted, "s0": s0, "t2s_ms": t2, "muhat": muhat,
             "static_misfit": static_misfit, "static_logres": lr, "static_curvature": static_curv,
             "static_alternating": static_alt, "resid_excess_r0": resid_excess_r0, "resid_excess_r1": resid_excess_r1,
+            "per_echo_noise": per_echo,
             "resid_energy": resid_energy, "resid_excess": resid_excess,
             "frame_energy": frame_energy, "c": c, "r": r, "R": R, "form": form}
 
@@ -311,6 +320,44 @@ def static_shape(mu: np.ndarray, te_ms, use: np.ndarray):
     curv = np.where(full, lm @ q_curv, np.nan)
     alt = np.where(full, lm @ q_alt, np.nan)
     return curv, alt
+
+
+def per_echo_noise(S: np.ndarray, mu: np.ndarray, te_ms, form: str = "log", n_iter: int = 100) -> dict:
+    """Per-echo thermal noise RATIOS (echo 1 = 1) from the residual, inside the brain.
+
+    The sigma-free residual u = Q_perp^T (mu o y) (Q_perp orthogonal to mu o [1, TE]) contains no BOLD
+    or S0 signal of any amplitude, whatever the per-echo noise. Its 2 x 2 noise covariance in voxel v
+    is g_v * sum_e tau_e q_ve q_ve^T, a known mixture of the per-echo variances tau_e (g_v = spatial
+    noise scale, e.g. g-factor). Pooling voxels with different T2* (different q) identifies tau up to
+    scale. Robust covariances (median-based) resist spikes. Use voxels with all 4 echoes at high SNR.
+    Simulation: recovers ratios within ~3 % with and without a g-factor map and with all sources on."""
+    te = np.asarray(te_ms, float)
+    D = design(te)
+
+    def solve(Sx, mx):
+        Q, _ = np.linalg.qr(mx[:, :, None] * D[None])
+        qp = Q[:, :, 2:4]
+        y = signal_form(Sx, mx, form)
+        u = np.einsum("vek,vet->vkt", qp, mx[:, :, None] * y)
+        u -= u.mean(2, keepdims=True)
+        rv = lambda x: np.median(x ** 2, axis=-1) / 0.45494
+        C = np.stack([rv(u[:, 0]), (rv(u[:, 0] + u[:, 1]) - rv(u[:, 0] - u[:, 1])) / 4, rv(u[:, 1])], 1)
+        F = np.stack([qp[:, :, 0] ** 2, qp[:, :, 0] * qp[:, :, 1], qp[:, :, 1] ** 2], axis=2)
+        tau = np.ones(te.size)
+        for _ in range(n_iter):
+            M = np.einsum("e,vek->vk", tau, F)
+            g = (C * M).sum(1) / (M * M).sum(1)
+            A = (g[:, None, None] * F).transpose(0, 2, 1).reshape(-1, te.size)
+            tau, *_ = np.linalg.lstsq(A, C.reshape(-1), rcond=None)
+            tau = tau / tau[0]
+        return np.sqrt(np.clip(tau, 0, None)), float(np.linalg.cond(A))
+
+    S = S.astype(np.float64)
+    ratio, cond = solve(S, mu)
+    half = np.arange(S.shape[0]) % 2 == 0
+    r_a, _ = solve(S[half], mu[half])
+    r_b, _ = solve(S[~half], mu[~half])
+    return {"ratio": ratio, "ratio_half_a": r_a, "ratio_half_b": r_b, "condition": cond, "n_voxels": int(S.shape[0])}
 
 
 def drift_mm(par: np.ndarray) -> np.ndarray:
@@ -486,12 +533,14 @@ def run_subject(run_dir, cfg: dict, out_dir, source: str = "raw", mppca: bool | 
     mask_source = mask_source or cfg["frontend"].get("mask_source", "auto")
     mask_info = {"source": mask_source}
     if mask_source == "auto":
-        d1 = np.asarray(ref.dataobj, dtype=np.float32)
-        if info["volumes"] is not None:
-            d1 = d1[..., np.asarray(info["volumes"][0], int)]
+        def temporal_mean(k):
+            d = np.asarray(nib.load(info["echo_files"][k]).dataobj, dtype=np.float32)
+            if info["volumes"] is not None:
+                d = d[..., np.asarray(info["volumes"][k], int)]
+            return d.mean(axis=3)
         si = next(i for i, c in enumerate(nib.aff2axcodes(ref.affine)) if c in ("S", "I"))
-        mk = maskmod.build_mask(d1.mean(axis=3), ref.header.get_zooms()[:3], cfg, si_axis=si)
-        del d1
+        mk = maskmod.build_mask(temporal_mean(0), ref.header.get_zooms()[:3], cfg, si_axis=si,
+                                mean_echo_last=temporal_mean(len(info["echo_files"]) - 1), te_ms=info["te_ms"])
         mask3d = mk["mask"]
         mask_info.update(volume_ml=mk["volume_ml"], head_volume_ml=mk["head_volume_ml"], air_level=round(mk["air_level"], 3))
     elif mask_source in ("pipeline", "pipeline_filled"):
@@ -605,6 +654,9 @@ def run_subject(run_dir, cfg: dict, out_dir, source: str = "raw", mppca: bool | 
     summ["static_logres_median_per_echo_inferior"] = [round(float(v), 4) for v in np.nanmedian(lres[inf], axis=0)]
     summ["static_curvature_p10_50_90"] = pct(fe["static_curvature"])
     summ["static_alternating_p10_50_90"] = pct(fe["static_alternating"])
+    if fe["per_echo_noise"] is not None:
+        pe = fe["per_echo_noise"]
+        summ["per_echo_noise"] = {k: ([round(float(x), 4) for x in v] if isinstance(v, np.ndarray) else v) for k, v in pe.items()}
     summ["resid_excess_r0_median"] = float(np.nanmedian(fe["resid_excess_r0"]))
     summ["resid_excess_r1_median"] = float(np.nanmedian(fe["resid_excess_r1"]))
     # mask holes and background noise
@@ -688,6 +740,13 @@ def render_summary(s: dict) -> str:
               f"- Odd/even-echo alternation p10/50/90: {s['static_alternating_p10_50_90']}",
               f"- Dynamic residual vs smooth sigma, median: curvature-like r0 {s['resid_excess_r0_median']:.3f}, "
               f"alternating-like r1 {s['resid_excess_r1_median']:.3f}"]
+    if "per_echo_noise" in s:
+        pe = s["per_echo_noise"]
+        L += ["", "## Per-echo thermal noise from the residual, inside the brain (ratios to echo 1)", "",
+              f"Equal noise across echoes (CLAUDE.md 5.3) gives [1, 1, 1, 1]. Estimated: **{pe['ratio']}** "
+              f"(two independent voxel halves: {pe['ratio_half_a']} / {pe['ratio_half_b']}; {pe['n_voxels']} voxels "
+              f"with 4 usable echoes and echo-4 SNR >= 10; condition {pe['condition']:.0f}). The residual holds no BOLD or "
+              "S0 signal, so physiology cannot inflate it; head motion and model violations can."]
     if "background_noise" in s:
         L += ["", "## Noise in air outside the head, per echo (pure noise: ratios track thermal sigma)", "",
               "| Echo | Median mean | Median temporal SD | Mean / echo 1 | SD / echo 1 | Voxels |", "|---|---|---|---|---|---|"]

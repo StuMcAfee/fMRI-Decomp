@@ -48,6 +48,11 @@ def main(argv=None) -> int:
                     help="analysis mask: auto = built from the echoes (default); pipeline(_filled) = mbme_tedana's, for comparison")
     fr.add_argument("--config", help="config YAML (default: configs/default.yaml)")
 
+    mq = sub.add_parser("mask-qc", help="build the analysis mask for every run and tabulate it (raw echoes 1 and 4)")
+    mq.add_argument("--pipeline-out", required=True, help="mbme_tedana --out folder")
+    mq.add_argument("--out", required=True, help="output folder")
+    mq.add_argument("--config", help="config YAML (default: configs/default.yaml)")
+
     args = ap.parse_args(argv)
     if args.cmd == "inventory" and not (args.nifti_dir or args.run_dir):
         ap.error("give --run-dir (preferred) or --nifti-dir")
@@ -76,6 +81,10 @@ def main(argv=None) -> int:
         print(frontend.render_summary(summ))
         if "mppca_check" in summ and summ["mppca_check"]["verdict"] != "OK":
             return 3
+    elif args.cmd == "mask-qc":
+        from . import mask
+        rows = mask.qc_all(args.pipeline_out, cfg, args.out)
+        return 1 if any("error" in r for r in rows) else 0
     elif args.cmd == "inventory-summary":
         from . import inventory
         inventory.write_summary(args.out, cfg)

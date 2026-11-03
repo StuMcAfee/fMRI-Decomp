@@ -118,6 +118,8 @@ frontend:                     # Phase 2 (CLAUDE.md section 5.4); listed now so t
   whiten_with: voxel          # voxel = per-voxel sigma, smooth map in low-SNR / df = 0 voxels; or "smooth"
   chunk_voxels: 5000          # voxels per block (memory)
   mppca: {enabled: true, patch_radius: 2, n_volumes: 100, slice_step: 6, inplane_step: 2, quiet_window: true}   # sigma cross-check on RAW echoes (dipy); sparse patch centres; also on the 100 frames with least head drift
+  per_echo_noise_min_snr: 10.0      # per-echo noise ratios from the residual: voxels with 4 usable echoes and echo-4 SNR >= 10
+  per_echo_noise_max_voxels: 20000  # evenly spaced subset for speed
   background: {dilate_vox: 4, rel_threshold: 0.02}   # air voxels: > 4 voxels outside the brain mask and echo-1 mean < 2 % of brain median
   mppca_expected_ratio: 1.02  # residual / MP-PCA sigma in a full-size simulation (MP-PCA read 2 % low; 6 % on a small grid)
 
@@ -126,8 +128,10 @@ mask:                         # analysis mask built from the input echoes (mask.
   k_head: 4.0                 # head = echo-1 mean > 4 x air level (Rician noise mean ~1.25 sigma: ~5 sigma)
   shading_fwhm_mm: 40.0       # smoothing that models coil shading (much larger than anatomy)
   k_brain: 0.45               # brain = shading-corrected intensity > 0.45 (drops the dark skull gap)
+  t2s_min_ms: 25.0            # brain-like decay: echo-last / echo-1 mean > exp(-(TE4 - TE1) / 25 ms) (excludes neck/face muscle)
   erode_vox: 1                # erosion before keeping the largest piece (cuts thin bridges to scalp/orbits)
   close_vox: 1                # final closing; enclosed holes are always filled (3D and slice-wise)
+  regrow_vox: 1               # then regrow into adjacent bright head tissue (edge brain with late echoes lost)
 
 simulate:                     # Phase 1 ground-truth simulator; tests override pieces of this
   grid: [24, 24, 14]          # small grid for tests (the real matrix is 52 x 64 x 48)
@@ -140,6 +144,7 @@ simulate:                     # Phase 1 ground-truth simulator; tests override p
   n_coils: 1                  # 1 = Rician; >1 = sum-of-squares noncentral chi (equal coil sensitivities)
   smoothness_vox: 3.0         # spatial smoothness of S0, T2* and diffuse maps
   gfactor: {enabled: false, amplitude: 0.5, smoothness_vox: 4.0}   # sigma x (1 .. 1 + amplitude), smooth
+  echo_sigma_scale: [1.0, 1.0, 1.0, 1.0]   # per-echo noise multiplier (CLAUDE.md 5.3 assumes equal; tests break it on purpose)
   band_hz: [0.01, 0.10]       # band of neural-like time courses
   # Source amplitudes: q (dR2*, s^-1) and s (dS0/S0 as delta ln S0) are the SD of the source at its
   # peak voxel (time courses have unit SD). SD 0.5 keeps ~95% of excursions within +/-1 s^-1 and
