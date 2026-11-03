@@ -423,8 +423,12 @@ def test_noise_survey_across_runs(cfg, tmp_path, record_property):
     assert any("excluded" in l for l in logs)
     md = (tmp_path / "all" / "noise_survey.md").read_text()
     assert "Across 1 runs" in md
+    assert "Differenced residual (1 runs)" in md
     frontend.run_all(out_pipe, cfg, tmp_path / "all", log=logs.append)
     assert any("skipped (done)" in l for l in logs)
+    logs.clear()
+    frontend.run_all(out_pipe, cfg, tmp_path / "all", log=logs.append, force=True)
+    assert not any("skipped" in l for l in logs) and any(": ok" in l for l in logs)
 
 
 
@@ -495,3 +499,11 @@ def test_differenced_residual_sigma_resists_slow_violations(cfg, record_property
         assert med_vox > 1.10                                          # the violation inflates the median-based estimate
     else:
         assert med_vox == pytest.approx(1.0, abs=0.03)
+    # the same data with the differenced estimator switched on for whitening
+    fd = run_fe(sim, io.merge(cfg, {"frontend": {"sigma_estimator": "differenced"}}))
+    okd = np.isfinite(fd["sigma"]) & ~fd["sigma_low_snr"]
+    med_used = float(np.median(fd["sigma"][okd] / true[okd]))
+    record_property("sigma_used_differenced_over_true", med_used)
+    assert fd["sigma_estimator"] == "differenced"
+    assert np.array_equal(fd["sigma_voxel"], fd["sigma_diff"], equal_nan=True)
+    assert med_used == pytest.approx(1.0, abs=0.03)

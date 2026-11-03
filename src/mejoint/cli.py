@@ -53,6 +53,7 @@ def main(argv=None) -> int:
     fa.add_argument("--out", required=True, help="output folder (one subfolder per run)")
     fa.add_argument("--source", choices=["raw", "mc"], default="raw")
     fa.add_argument("--mppca", action="store_true", help="also run the (slow) MP-PCA cross-check")
+    fa.add_argument("--force", action="store_true", help="rerun runs already done with the same config (after a code change)")
     fa.add_argument("--config", help="config YAML (default: configs/default.yaml)")
 
     mq = sub.add_parser("mask-qc", help="build the analysis mask for every run and tabulate it (raw echoes 1 and 4)")
@@ -90,7 +91,8 @@ def main(argv=None) -> int:
             return 3
     elif args.cmd == "frontend-all":
         from . import frontend
-        rows = frontend.run_all(args.pipeline_out, cfg, args.out, source=args.source, mppca=args.mppca)
+        rows = frontend.run_all(args.pipeline_out, cfg, args.out, source=args.source, mppca=args.mppca,
+                               force=args.force)
         print(f"Survey: {args.out}/noise_survey.md")
         return 1 if any("error" in r for r in rows) else 0
     elif args.cmd == "mask-qc":

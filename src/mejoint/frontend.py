@@ -236,7 +236,13 @@ def run(S: np.ndarray, te_ms, cfg: dict, mask3d: np.ndarray | None = None, form:
     if F.get("nonpositive_policy", "exclude_echo") != "exclude_echo":
         raise ValueError("only nonpositive_policy = exclude_echo is implemented")
 
-    def residual_sigma(use, difference=False):
+    estimator = F.get("sigma_estimator", "residual")
+    if estimator not in ("residual", "differenced"):
+        raise ValueError(f"sigma_estimator must be residual or differenced, not {estimator!r}")
+    diff_main = estimator == "differenced"
+
+    def residual_sigma(use, difference=None):
+        difference = diff_main if difference is None else difference
         sig = np.full(V, np.nan)
         for i0 in range(0, V, chunk):
             sl = slice(i0, min(i0 + chunk, V))
@@ -275,8 +281,9 @@ def run(S: np.ndarray, te_ms, cfg: dict, mask3d: np.ndarray | None = None, form:
     df = np.clip(n_use - 2, 0, None)
 
     # --- step 4: per-voxel sigma with the usable echoes; smooth map where low SNR or df = 0
-    sig_vox = residual_sigma(use)
-    sig_diff = residual_sigma(use, difference=True)                    # diagnostic (not used for whitening)
+    sig_plain = residual_sigma(use, difference=False)                  # median of the residual energy (CLAUDE.md 5.4)
+    sig_diff = residual_sigma(use, difference=True)                    # frame-to-frame differences (slow violations cancel)
+    sig_vox = sig_diff if diff_main else sig_plain                     # the one used for whitening
     mu_min = np.where(use, mur, np.inf).min(1)
     low = (df == 0) | ~np.isfinite(sig_vox) | (mu_min / sig_smooth < F["sigma_init_snr"])
     sigma = np.where(low, sig_smooth, sig_vox)
@@ -325,7 +332,7 @@ def run(S: np.ndarray, te_ms, cfg: dict, mask3d: np.ndarray | None = None, form:
 
     return {"mu": mu, "echo_noise_ratios": ratios, "weighting": F.get("weighting", "per_echo"),
             "use": use, "n_use": n_use, "df": df, "nonpositive": nonpos, "snr": snr,
-            "sigma": sigma, "sigma_voxel": sig_vox, "sigma_diff": sig_diff, "sigma_smooth": sig_smooth, "sigma_init": sig0,
+            "sigma": sigma, "sigma_voxel": sig_vox, "sigma_diff": sig_diff, "sigma_plain": sig_plain, "sigma_estimator": estimator, "sigma_smooth": sig_smooth, "sigma_init": sig0,
             "sigma_low_snr": low, "trusted": trusted, "s0": s0, "t2s_ms": t2, "muhat": muhat,
             "static_misfit": static_misfit, "static_logres": lr, "static_curvature": static_curv,
             "static_alternating": static_alt, "resid_excess_r0": resid_excess_r0, "resid_excess_r1": resid_excess_r1,
@@ -629,7 +636,7 @@ def run_subject(run_dir, cfg: dict, out_dir, source: str = "raw", mppca: bool | 
     save("snr", fe["snr"])
     save("usable", fe["use"].astype(float))
     save("nonpositive", fe["nonpositive"].astype(float))
-    for k in ("t2s_ms", "s0", "sigma", "sigma_voxel", "sigma_diff", "sigma_smooth", "resid_energy", "resid_excess", "static_misfit"):
+    for k in ("t2s_ms", "s0", "sigma", "sigma_voxel", "sigma_diff", "sigma_plain", "sigma_smooth", "resid_energy", "resid_excess", "static_misfit"):
         save(k, fe[k])
     save("n_usable_echoes", fe["n_use"].astype(float))
     save("df", fe["df"].astype(float))
@@ -675,7 +682,8 @@ def run_subject(run_dir, cfg: dict, out_dir, source: str = "raw", mppca: bool | 
         "echo4_snr_p10_50_90_inferior": pct(fe["snr"][inf, -1]),
         "t2s_ms_p10_50_90": pct(fe["t2s_ms"]), "t2s_ms_p10_50_90_inferior": pct(fe["t2s_ms"][inf]),
         "sigma_median": float(np.nanmedian(fe["sigma"])), "sigma_smooth_median": float(np.nanmedian(fe["sigma_smooth"])),
-        "sigma_diff_over_voxel_p10_50_90": pct(fe["sigma_diff"] / fe["sigma_voxel"]),
+        "sigma_diff_over_voxel_p10_50_90": pct(fe["sigma_diff"] / fe["sigma_plain"]),
+        "sigma_estimator": fe["sigma_estimator"],
         "fraction_sigma_from_smooth_map": round(float(np.mean(fe["sigma_low_snr"])), 4),
         "n_trusted_voxels": int(fe["trusted"].sum()),
         "sigma_voxel_over_smooth_p10_50_90": pct(fe["sigma_voxel"] / fe["sigma_smooth"]),
@@ -768,7 +776,7 @@ def render_summary(s: dict) -> str:
          f"| Residual energy vs smooth sigma (median; 1 = model holds) | {s['resid_excess_median']:.3f} | {s['resid_excess_median_inferior']:.3f} |",
          f"| Static mono-exponential misfit (median, log units) | {s['static_misfit_median']:.4f} | {s['static_misfit_median_inferior']:.4f} |",
          "", f"- Voxels by number of usable echoes (4/3/2/1/0): {s['n_usable_echoes_fraction']}",
-         f"- Sigma: median {s['sigma_median']:.3f} (smooth map {s['sigma_smooth_median']:.3f}); "
+         f"- Sigma ({s.get('sigma_estimator', 'residual')} estimator): median {s['sigma_median']:.3f} (smooth map {s['sigma_smooth_median']:.3f}); "
          f"{100 * s['fraction_sigma_from_smooth_map']:.1f} % of voxels use the smooth map; {s['n_trusted_voxels']} trusted voxels",
          f"- Per-voxel / smooth sigma p10/50/90: {s['sigma_voxel_over_smooth_p10_50_90']}",
          f"- Differenced-residual / residual sigma p10/50/90: {s.get('sigma_diff_over_voxel_p10_50_90')} "
@@ -820,7 +828,7 @@ def render_summary(s: dict) -> str:
         m = s["mppca_check"]
         L += ["", "## Sigma cross-check per echo: residual model (sigma x ratio) vs MP-PCA (raw echoes)", "",
               f"MP-PCA on frames 0-{m.get('n_volumes', 100) - 1} and on the quietest window (start frame {m.get('quiet_window_start')}).", "",
-              "| Echo | Mean signal | MP-PCA sigma | MP-PCA sigma (quiet) | Residual sigma | Ratio | Ratio (quiet) | Ratio / simulated bias | Differenced residual sigma | Differenced / MP-PCA |",
+              "| Echo | Mean signal | MP-PCA sigma | MP-PCA sigma (quiet) | Model sigma (used) | Ratio | Ratio (quiet) | Ratio / simulated bias | Differenced residual sigma | Differenced / MP-PCA |",
               "|---|---|---|---|---|---|---|---|---|---|"]
         f = lambda v: "n/a" if v is None else f"{v:.3f}"
         L += [f"| {r['echo']} | {f(r.get('mu_median_same_voxels'))} | {r['mppca_sigma_median']:.3f} | {f(r.get('mppca_sigma_median_quiet'))} | "
@@ -832,10 +840,12 @@ def render_summary(s: dict) -> str:
 
 
 # ======================================================================= all runs (noise survey)
-def run_all(pipeline_out, cfg: dict, out_root, source: str = "raw", mppca: bool = False, log=print) -> list[dict]:
+def run_all(pipeline_out, cfg: dict, out_root, source: str = "raw", mppca: bool = False, log=print,
+            force: bool = False) -> list[dict]:
     """Front end on every mbme_tedana run (excluded subjects skipped), then one table of the per-echo
     noise ratios and key numbers across runs (<out>/noise_survey.tsv / .md). Runs already done with the
-    same config are skipped; a failing run is recorded and the loop continues."""
+    same config are skipped (force=True reruns them, e.g. after a code change); a failing run is recorded and
+    the loop continues."""
     import json
     import traceback
     from pathlib import Path
@@ -854,7 +864,7 @@ def run_all(pipeline_out, cfg: dict, out_root, source: str = "raw", mppca: bool 
         od = out_root / rd.name / source
         done = od / "done.json"
         try:
-            if done.exists() and json.loads(done.read_text()).get("config_sha256") == chash and (od / "summary.json").exists():
+            if not force and done.exists() and json.loads(done.read_text()).get("config_sha256") == chash and (od / "summary.json").exists():
                 log(f"{rd.name}: skipped (done)")
             else:
                 run_subject(rd, cfg, od, source=source, mppca=mppca)
@@ -862,9 +872,13 @@ def run_all(pipeline_out, cfg: dict, out_root, source: str = "raw", mppca: bool 
             s = json.loads((od / "summary.json").read_text())
             pe = s.get("per_echo_noise") or {}
             ld = pe.get("low_drift") or {}
+            dd = pe.get("differenced") or {}
             rows.append({"run": rd.name, "n_voxels": s["n_voxels"], "mask_ml": (s.get("mask") or {}).get("volume_ml"),
                          "ratio": pe.get("ratio"), "half_a": pe.get("ratio_half_a"), "half_b": pe.get("ratio_half_b"),
                          "ratio_low_drift": ld.get("ratio"), "n_voxels_ratio": pe.get("n_voxels"),
+                         "ratio_differenced": dd.get("ratio"), "diff_half_a": dd.get("ratio_half_a"),
+                         "diff_half_b": dd.get("ratio_half_b"),
+                         "sigma_diff_over_residual": s.get("sigma_diff_over_voxel_p10_50_90"),
                          "sigma_median": round(s["sigma_median"], 2), "echo4_usable": s["usable_fraction_per_echo"][-1],
                          "resid_vs_drift": s.get("frame_energy_vs_drift_spearman"),
                          "t2s_median": s["t2s_ms_p10_50_90"][1]})
@@ -883,19 +897,22 @@ def write_noise_survey(rows: list[dict], out_root, cfg: dict) -> None:
 
     out_root = Path(out_root)
     good = [r for r in rows if "error" not in r and r.get("ratio")]
-    cols = ["run", "ratio", "ratio_low_drift", "half_a", "half_b", "n_voxels_ratio", "sigma_median", "echo4_usable",
+    cols = ["run", "ratio", "ratio_low_drift", "ratio_differenced", "half_a", "half_b", "diff_half_a", "diff_half_b",
+            "sigma_diff_over_residual", "n_voxels_ratio", "sigma_median", "echo4_usable",
             "t2s_median", "resid_vs_drift", "mask_ml", "n_voxels", "error"]
     fmt = lambda v: "[" + ", ".join(f"{x:.3f}" for x in v) + "]" if isinstance(v, list) else ("" if v is None else v)
     io.write_tsv(out_root / "noise_survey.tsv", {c: [fmt(r.get(c)) for r in rows] for c in cols})
     L = ["# Per-echo noise survey (front end on every run)", "",
          "Ratios of thermal noise to echo 1, from the residual inside the brain. Equal noise (CLAUDE.md 5.3) = [1, 1, 1, 1].", "",
-         "| Run | All frames | Low-drift frames | Voxel halves | Echo-4 usable | Residual vs drift |", "|---|---|---|---|---|---|"]
+         "| Run | All frames | Low-drift frames | Differenced | Voxel halves (differenced) | Differenced / residual sigma p10/50/90 "
+         "| Echo-4 usable | Residual vs drift |", "|---|---|---|---|---|---|---|---|"]
     for r in rows:
         if "error" in r:
-            L.append(f"| {r['run']} | FAILED: {r['error']} | | | | |")
+            L.append(f"| {r['run']} | FAILED: {r['error']} | | | | | | |")
         else:
             L.append(f"| {r['run'].split('_acq')[0]} | {fmt(r['ratio'])} | {fmt(r['ratio_low_drift'])} | "
-                     f"{fmt(r['half_a'])} / {fmt(r['half_b'])} | {r['echo4_usable']:.2f} | {r['resid_vs_drift']} |")
+                     f"{fmt(r.get('ratio_differenced'))} | {fmt(r.get('diff_half_a'))} / {fmt(r.get('diff_half_b'))} | "
+                     f"{fmt(r.get('sigma_diff_over_residual'))} | {r['echo4_usable']:.2f} | {r['resid_vs_drift']} |")
     if good:
         A = np.array([r["ratio"] for r in good], float)
         L += ["", f"Across {len(good)} runs, all frames: median {fmt(list(np.median(A, 0)))}, "
@@ -904,5 +921,10 @@ def write_noise_survey(rows: list[dict], out_root, cfg: dict) -> None:
         if lows:
             B = np.array(lows, float)
             L.append(f"Low-drift frames: median {fmt(list(np.median(B, 0)))}.")
+        diffs = [r["ratio_differenced"] for r in good if r.get("ratio_differenced")]
+        if diffs:
+            C = np.array(diffs, float)
+            L.append(f"Differenced residual ({len(diffs)} runs): median {fmt(list(np.median(C, 0)))}, interquartile range "
+                     f"{fmt(list(np.percentile(C, 25, 0)))} to {fmt(list(np.percentile(C, 75, 0)))}.")
     io.write_text(out_root / "noise_survey.md", "\n".join(L) + "\n")
     io.write_json(out_root / "noise_survey_status.json", {"rows": rows, **io.provenance(cfg, {})})

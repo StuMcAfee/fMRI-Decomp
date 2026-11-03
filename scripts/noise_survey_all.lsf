@@ -1,7 +1,9 @@
 #!/bin/bash
 # Front end on every run (raw echoes, no MP-PCA) and a table of per-echo noise ratios across runs.
 # Interactive session:  bash scripts/noise_survey_all.lsf "<mbme_tedana OUT folder>"
-# Safe to rerun: finished runs are skipped. Roughly 3-5 minutes per run.
+# Safe to rerun: finished runs are skipped. Add "force" as a second argument to redo them (after a code change):
+#   bash scripts/noise_survey_all.lsf "<mbme_tedana OUT folder>" force
+# Roughly 3-5 minutes per run.
 #BSUB -J mejoint_noise
 #BSUB -q standard
 #BSUB -n 4
@@ -11,6 +13,7 @@
 set -euo pipefail
 PY="$HOME/miniconda3_new/envs/mejoint/bin/python"
 PIPELINE_OUT="${1:-}"
+FORCE=""; [ "${2:-}" = "force" ] && FORCE="--force"
 REPO=""
 for cand in "$(dirname "${BASH_SOURCE[0]:-.}")/.." "$PWD" "${LS_SUBCWD:-}"; do
     if [ -n "$cand" ] && [ -f "$cand/src/mejoint/__init__.py" ]; then REPO="$(cd "$cand" && pwd)"; break; fi
@@ -22,6 +25,6 @@ NT="${LSB_DJOB_NUMPROC:-4}"; export OMP_NUM_THREADS="$NT" MKL_NUM_THREADS="$NT" 
 [ -n "$PIPELINE_OUT" ] && [ -d "$PIPELINE_OUT" ] || { echo "first argument must be the mbme_tedana OUT folder" >&2; exit 2; }
 echo "== mejoint noise survey | $(date) | git $(git rev-parse --short HEAD 2>/dev/null || echo '?')"
 status=0
-"$PY" -m mejoint.cli frontend-all --pipeline-out "$PIPELINE_OUT" --out outputs/phase2/all --source raw || status=$?
+"$PY" -m mejoint.cli frontend-all --pipeline-out "$PIPELINE_OUT" --out outputs/phase2/all --source raw $FORCE || status=$?
 echo "done: $PWD/outputs/phase2/all/noise_survey.md (exit $status)"
 exit $status
