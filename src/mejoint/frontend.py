@@ -221,9 +221,11 @@ def fit_monoexp(mu: np.ndarray, te_ms, use: np.ndarray, n_iter: int = 15, echo_r
 
 # ======================================================================= the whole front end
 def run(S: np.ndarray, te_ms, cfg: dict, mask3d: np.ndarray | None = None, form: str | None = None,
-        chunk: int | None = None, quiet_frames: np.ndarray | None = None) -> dict:
+        chunk: int | None = None, quiet_frames: np.ndarray | None = None, nuisance=None) -> dict:
     """Front end on masked magnitude data S (V, E, T). mask3d (X, Y, Z) is needed for the smooth sigma
-    map (V must be the voxels of mask3d in C order). Returns maps (V, ...) and channels (V, 2, T)."""
+    map (V must be the voxels of mask3d in C order). Returns maps (V, ...) and channels (V, 2, T).
+    nuisance: a nuisance.Projector over time (Phase 2b) or None. It is applied to the channels and the
+    residual (equivalent to projecting the log-ratio echoes); sigma is corrected for the removed df."""
     F = cfg["frontend"]
     form = form or F.get("signal_form", "log")
     chunk = chunk or int(F.get("chunk_voxels", 5000))
@@ -257,7 +259,10 @@ def run(S: np.ndarray, te_ms, cfg: dict, mask3d: np.ndarray | None = None, form:
             sl = slice(i0, min(i0 + chunk, V))
             y = signal_form(S[sl], mu[sl], form)
             pr = project(np.where(use[sl][:, :, None], y, 0.0), mur[sl], use[sl], te_ms)
-            sig[sl] = sigma_from_residual(pr["r"], np.clip(use[sl].sum(1) - 2, 0, None), difference)
+            u = pr["r"] if nuisance is None else nuisance.apply(pr["r"])
+            sig[sl] = sigma_from_residual(u, np.clip(use[sl].sum(1) - 2, 0, None), difference)
+        if nuisance is not None:                                       # noise variance kept by the projector
+            sig = sig / np.sqrt(nuisance.factor(difference))
         return sig
 
     # --- step 2: sigma_init in high-SNR voxels, smooth map.
@@ -303,11 +308,25 @@ def run(S: np.ndarray, te_ms, cfg: dict, mask3d: np.ndarray | None = None, form:
     c = np.full((V, 2, T), np.nan, np.float32)
     r = np.full((V, 2, T), np.nan, np.float32)
     R = np.full((V, 2, 2), np.nan)
+    energy = {"before": np.zeros(4), "after": np.zeros(4)}           # c0, c1, r0, r1 (brain totals)
+    e_frame_noreg = np.full((V, T), np.nan) if nuisance is not None else None
     for i0 in range(0, V, chunk):
         sl = slice(i0, min(i0 + chunk, V))
         y = signal_form(S[sl], mu[sl], form)
         pr = project(np.where(use[sl][:, :, None], y, 0.0), mur[sl] / sigma[sl, None], use[sl], te_ms)
-        c[sl], r[sl], R[sl] = pr["c"], pr["r"], pr["R"]
+        cc, rr = pr["c"], pr["r"]
+        if nuisance is not None:
+            with _quiet():
+                r0 = rr.astype(np.float64) - np.nanmean(rr, axis=2, keepdims=True)
+                dfl = df[sl]
+                e_frame_noreg[sl] = np.where(dfl[:, None] > 0, np.nansum(r0 ** 2, axis=1) / np.maximum(dfl, 1)[:, None], np.nan)
+            cr = np.concatenate([cc, rr], axis=1).astype(np.float64)
+            with _quiet():
+                cr -= np.nanmean(cr, axis=2, keepdims=True)
+            energy["before"] += np.nansum(cr ** 2, axis=(0, 2))
+            cc, rr = nuisance.apply(cc), nuisance.apply(rr)
+            energy["after"] += np.nansum(np.concatenate([cc, rr], axis=1).astype(np.float64) ** 2, axis=(0, 2))
+        c[sl], r[sl], R[sl] = cc, rr, pr["R"]
 
     # --- step 6: static fit and diagnostics
     s0, t2, muhat = fit_monoexp(mu, te_ms, use, echo_ratios=ratios)
@@ -315,6 +334,8 @@ def run(S: np.ndarray, te_ms, cfg: dict, mask3d: np.ndarray | None = None, form:
         lr = np.where(use, np.log(mu / muhat), np.nan)
         static_misfit = np.sqrt(np.nanmean(lr ** 2, axis=1))
         rc = r.astype(np.float64) - np.nanmean(r, axis=2, keepdims=True)
+        if nuisance is not None:                                       # back to units of sigma^2, frame by frame (leverage)
+            rc /= np.sqrt(np.clip(nuisance.kept_per_frame(), 1e-3, None))[None, None, :]
         # residual energy per frame and voxel, in units of the per-voxel sigma (about 1 under the model)
         e_frame = np.where(df[:, None] > 0, np.nansum(rc ** 2, axis=1) / df[:, None], np.nan)   # (V, T)
         resid_energy = np.nanmean(e_frame, axis=1)
@@ -322,6 +343,7 @@ def run(S: np.ndarray, te_ms, cfg: dict, mask3d: np.ndarray | None = None, form:
         resid_excess = resid_energy * (sigma / sig_smooth) ** 2
     with _quiet():
         frame_energy = np.nanmean(e_frame, axis=0)                     # (T,) brain mean per frame
+        frame_energy_noreg = None if e_frame_noreg is None else np.nanmean(e_frame_noreg, axis=0)
         # residual split: r0 ~ curvature-like, r1 ~ odd/even-echo (alternating) pattern; vs smooth sigma
         scale = (sigma / sig_smooth) ** 2
         resid_excess_r0 = np.where(df >= 1, np.nanmean(rc[:, 0] ** 2, axis=1) * scale, np.nan)
@@ -334,8 +356,8 @@ def run(S: np.ndarray, te_ms, cfg: dict, mask3d: np.ndarray | None = None, form:
         cap = int(F.get("per_echo_noise_max_voxels", 20000))
         if idx.size > cap:
             idx = idx[np.linspace(0, idx.size - 1, cap).astype(int)]
-        per_echo = per_echo_noise(S[idx], mu[idx], te_ms, form)
-        per_echo["differenced"] = per_echo_noise(S[idx], mu[idx], te_ms, form, difference=True)
+        per_echo = per_echo_noise(S[idx], mu[idx], te_ms, form, proj=nuisance)
+        per_echo["differenced"] = per_echo_noise(S[idx], mu[idx], te_ms, form, difference=True, proj=nuisance)
         if quiet_frames is not None and quiet_frames.sum() >= 100:   # frames nearest the median head position
             per_echo["low_drift"] = per_echo_noise(S[idx][:, :, quiet_frames], mu[idx], te_ms, form)
 
@@ -345,7 +367,10 @@ def run(S: np.ndarray, te_ms, cfg: dict, mask3d: np.ndarray | None = None, form:
             "sigma_low_snr": low, "trusted": trusted, "s0": s0, "t2s_ms": t2, "muhat": muhat,
             "static_misfit": static_misfit, "static_logres": lr, "static_curvature": static_curv,
             "static_alternating": static_alt, "resid_excess_r0": resid_excess_r0, "resid_excess_r1": resid_excess_r1,
-            "per_echo_noise": per_echo,
+            "per_echo_noise": per_echo, "frame_energy_noreg": frame_energy_noreg,
+            "nuisance_energy_kept": (None if nuisance is None else
+                                     {k: float(a / b) if b > 0 else None
+                                      for k, a, b in zip(("c0", "c1", "r0", "r1"), energy["after"], energy["before"])}),
             "resid_energy": resid_energy, "resid_excess": resid_excess,
             "frame_energy": frame_energy, "c": c, "r": r, "R": R, "form": form}
 
@@ -373,7 +398,7 @@ def static_shape(mu: np.ndarray, te_ms, use: np.ndarray):
 
 
 def per_echo_noise(S: np.ndarray, mu: np.ndarray, te_ms, form: str = "log", n_iter: int = 100,
-                   difference: bool = False) -> dict:
+                   difference: bool = False, proj=None) -> dict:
     """Per-echo thermal noise RATIOS (echo 1 = 1) from the residual, inside the brain.
 
     The sigma-free residual u = Q_perp^T (mu o y) (Q_perp orthogonal to mu o [1, TE]) contains no BOLD
@@ -391,6 +416,8 @@ def per_echo_noise(S: np.ndarray, mu: np.ndarray, te_ms, form: str = "log", n_it
         y = signal_form(Sx, mx, form)
         u = np.einsum("vek,vet->vkt", qp, mx[:, :, None] * y)
         u -= u.mean(2, keepdims=True)
+        if proj is not None:                                          # nuisance projector (Phase 2b); ratios unaffected by its df factor
+            u = proj.apply(u)
         if difference:                                                # removes slow violations; ratios unchanged
             u = np.diff(u, axis=2)
         rv = lambda x: np.median(x ** 2, axis=-1) / 0.45494
@@ -560,8 +587,10 @@ def inferior_third(mask3d: np.ndarray, affine) -> np.ndarray:
 
 
 def run_subject(run_dir, cfg: dict, out_dir, source: str = "raw", mppca: bool | None = None,
-                mask_source: str | None = None, echo1=None) -> dict:
-    """Front end on one real run: maps (NIfTI), channel cache (.npy), summary, provenance."""
+                mask_source: str | None = None, echo1=None, nuisance: bool | None = None) -> dict:
+    """Front end on one real run: maps (NIfTI), channel cache (.npy), summary, provenance.
+    nuisance: apply the Phase 2b projector (default: config nuisance.enabled; needs the run's motion
+    parameters, so it is skipped, and recorded as skipped, in --echo1 mode)."""
     import json
     from pathlib import Path
 
@@ -636,7 +665,16 @@ def run_subject(run_dir, cfg: dict, out_dir, source: str = "raw", mppca: bool | 
     if info["par"] is not None and len(info["par"]) == S.shape[2]:
         dr = drift_mm(info["par"])
         quiet = dr <= np.median(dr)
-    fe = run(S, te, cfg, mask3d, quiet_frames=quiet)
+    from . import nuisance as nuis
+    want_nuis = bool(cfg.get("nuisance", {}).get("enabled", False)) if nuisance is None else nuisance
+    proj, nrec = None, {"info": {"enabled": False, "reason": "disabled (no-regression variant)"}}
+    if want_nuis:
+        if info["par"] is None or len(info["par"]) != S.shape[2]:
+            nrec = {"info": {"enabled": False, "reason": "no motion parameters matching the volumes (e.g. --echo1 mode)"}}
+        else:
+            vols = info["volumes"][0] if info["volumes"] is not None else None
+            proj, nrec = nuis.build(info["par"], float(cfg["acquisition"]["tr_s"]), cfg, volumes=vols)
+    fe = run(S, te, cfg, mask3d, quiet_frames=quiet, nuisance=proj)
     V, E, T = S.shape
 
     # ---- maps
@@ -669,9 +707,14 @@ def run_subject(run_dir, cfg: dict, out_dir, source: str = "raw", mppca: bool | 
         np.save(out_dir / f"{name}.npy", arr)
     np.save(out_dir / "R.npy", fe["R"])
     drift = drift_mm(info["par"]) if info["par"] is not None and len(info["par"]) == T else None
+    na = ["n/a"] * T
     io.write_tsv(out_dir / "frames.tsv", {"frame": list(range(T)), "residual_energy": list(fe["frame_energy"]),
-                                         "fd_mm": list(info["fd"]) if info["fd"] is not None and len(info["fd"]) == T else ["n/a"] * T,
-                                         "drift_mm": list(drift) if drift is not None else ["n/a"] * T})
+                                         "residual_energy_no_regression": list(fe["frame_energy_noreg"]) if fe["frame_energy_noreg"] is not None else na,
+                                         "fd_mm": list(info["fd"]) if info["fd"] is not None and len(info["fd"]) == T else na,
+                                         "fd_filtered_mm": list(nrec["fd_filtered"]) if "fd_filtered" in nrec else na,
+                                         "drift_mm": list(drift) if drift is not None else na})
+    if proj is not None:                                   # the regressors, for later phases (rank null df)
+        io.write_tsv(out_dir / "nuisance_regressors.tsv", {n: list(nrec["X"][:, j]) for j, n in enumerate(nrec["names"])})
 
     # ---- summary
     inf = inferior_third(mask3d, ref.affine)[mask3d]
@@ -709,6 +752,18 @@ def run_subject(run_dir, cfg: dict, out_dir, source: str = "raw", mppca: bool | 
     if drift is not None:
         summ["frame_energy_vs_drift_spearman"] = round(float(spearmanr(fe["frame_energy"], drift)[0]), 4)
         summ["drift_mm_p50_p90_max"] = [round(float(v), 3) for v in np.percentile(drift, [50, 90, 100])]
+    # nuisance projection (Phase 2b)
+    summ["nuisance"] = dict(nrec["info"])
+    if proj is not None:
+        summ["nuisance"]["energy_kept"] = {k: (None if v is None else round(v, 4)) for k, v in fe["nuisance_energy_kept"].items()}
+        fen = fe["frame_energy_noreg"]
+        summ["nuisance"]["residual_energy_median_no_regression"] = round(float(np.nanmedian(fen)), 4)
+        summ["nuisance"]["residual_energy_median"] = round(float(np.nanmedian(fe["frame_energy"])), 4)
+        if drift is not None:
+            summ["nuisance"]["frame_energy_vs_drift_spearman_no_regression"] = round(float(spearmanr(fen, drift)[0]), 4)
+        if info["fd"] is not None and len(info["fd"]) == T:
+            summ["nuisance"]["frame_energy_vs_fd_spearman_no_regression"] = round(float(spearmanr(fen, info["fd"])[0]), 4)
+            summ["nuisance"]["frame_energy_vs_fd_filtered_spearman"] = round(float(spearmanr(fe["frame_energy"], nrec["fd_filtered"])[0]), 4)
     # static decay shape and residual split
     lres = fe["static_logres"]
     summ["static_logres_median_per_echo"] = [round(float(v), 4) for v in np.nanmedian(lres, axis=0)]
@@ -862,6 +917,40 @@ def render_summary(s: dict) -> str:
         h = s["mask_holes"]
         L.append(f"- Pipeline-mask holes: {h['axial_fill_voxels']} voxels enclosed slice-wise but outside the mask "
                  f"({100 * h['axial_fill_fraction_of_mask']:.1f} % of the mask); {h['fill3d_voxels']} enclosed in 3D")
+    if "nuisance" in s:
+        n = s["nuisance"]
+        L += ["", "## Nuisance projection (Phase 2b)", ""]
+        if not n.get("enabled"):
+            L.append(f"- Not applied: {n.get('reason')}")
+        else:
+            fi = n["filter"]
+            pk = fi.get("respiratory_peak") or {}
+            if fi["kind"] == "notch":
+                ftxt = (f"band-stop {fi['band_hz']} Hz at the breathing peak {pk.get('freq_hz')} Hz (prominence {pk.get('prominence')})"
+                        if fi.get("applied") else f"none ({fi.get('reason')}; peak {pk.get('freq_hz')} Hz, prominence {pk.get('prominence')})")
+            elif fi["kind"] == "lowpass":
+                ftxt = f"low-pass {fi.get('cutoff_hz')} Hz"
+            else:
+                ftxt = "none"
+            L += [f"- Motion-parameter filter: {ftxt}",
+                  f"- Regressors: {n['n_regressors']} (expansion {n['expansion']}, polynomial order {n['poly_order']}) + "
+                  f"{n['n_segments']} segment constant(s); projector rank {n['rank']} of {s['n_volumes']} frames",
+                  f"- Noise variance kept: {n['var_factor']:.4f} (residual), {n['diff_factor']:.4f} (differenced residual); "
+                  "sigma corrected by these factors",
+                  f"- FD mean / 95th percentile, unfiltered: {n['fd_mean_unfiltered']} / {n['fd_p95_unfiltered']} mm; "
+                  f"filtered: {n['fd_mean_filtered']} / {n['fd_p95_filtered']} mm"]
+            if "energy_kept" in n:
+                ek = n["energy_kept"]
+                L.append(f"- Energy kept after projection: c0 {ek['c0']}, c1 {ek['c1']}, r0 {ek['r0']}, r1 {ek['r1']} "
+                         "(thermal noise alone would keep the residual factor above)")
+                L.append(f"- Frame-wise residual energy, median: {n.get('residual_energy_median_no_regression')} without regression, "
+                         f"{n.get('residual_energy_median')} with")
+            if "frame_energy_vs_drift_spearman_no_regression" in n:
+                L.append(f"- Residual energy vs head drift (Spearman): {n['frame_energy_vs_drift_spearman_no_regression']} without "
+                         f"regression, {s.get('frame_energy_vs_drift_spearman')} with")
+            if "frame_energy_vs_fd_spearman_no_regression" in n:
+                L.append(f"- Residual energy vs FD (Spearman): {n['frame_energy_vs_fd_spearman_no_regression']} without regression, "
+                         f"{s.get('frame_energy_vs_fd_spearman')} with; vs filtered FD {n.get('frame_energy_vs_fd_filtered_spearman')}")
     if "static_logres_median_per_echo" in s:
         L += ["", "## Shape of the static decay (log units; mean signal vs mono-exponential fit)", "",
               f"- Median ln(mu / fit) per echo, whole brain: {s['static_logres_median_per_echo']}; inferior third: "

@@ -368,3 +368,24 @@ Gate evidence, P04 (raw and mc, differenced estimator, ratios [1, 0.721, 0.631, 
 - **mc non-positive frames** (spline undershoot): [45, 182, 404, 667] voxels per echo. Under `nonpositive_policy: exclude_echo` these voxel-echoes are unusable (echo 4: 1.7 % of the mask). This policy still needs the user's confirmation.
 
 Label fix: "Residual energy vs smooth sigma" now reads "1 = white thermal noise, > 1 = slow violations or model misfit". With the differenced sigma, slow violations show up here rather than inflating sigma.
+
+### 2026-11-03: Phase 2 gate passed (user); nonpositive_policy exclude_echo confirmed; Phase 2b built
+
+User: Phase 2 gate passes; `nonpositive_policy: exclude_echo` confirmed (a voxel-echo with any frame <= 0 is unusable).
+
+Phase 2b, nuisance projection (`nuisance.py`, config `nuisance:`). Choices (defaults; all in the config):
+- **Regressors:** the 24-parameter expansion of the mcflirt parameters (6 parameters, their frame-to-frame changes, and the squares of both, demeaned), plus one constant per contiguous segment. Squares are included because the Phase 2 residual tracked distance from the median head position, which is not linear in the parameters. No physiological or phase regressors exist (Phase 0).
+- **Respiratory filter:** each run's breathing peak is found in the motion-parameter spectrum within 0.15-0.60 Hz, measured against a robust power-law background fit; drift alone scores 1.3-1.6 in simulation. If its prominence is >= 3, the parameters are band-stopped at the peak +/- 0.06 Hz (Butterworth order 4, zero phase). Otherwise they are left unfiltered and the reason is reported. Filtered parameters are used for the regressors and for FD (`fd_filtered_mm` in frames.tsv); unfiltered FD is kept alongside. `motion_filter: lowpass` (0.10 Hz) and `none` are available.
+- **Gaps** (e.g. P10): segments come from volumes_used.tsv; filtering, frame-to-frame changes and FD never cross a gap; each segment gets its own constant.
+- **Where it is applied:** to the channels c and the residual r. This is equivalent to applying it to the log-ratio echoes, because identical regressors commute with the per-voxel echo mixing (test: equal to float32 precision).
+- **df correction (CLAUDE.md: "reduce df by p + 1"):** sigma is divided by sqrt of the noise variance the projector keeps: (T - rank) / T for the residual estimator, tr(D P D^T) / (2 (T - 1)) for the differenced one (both exact, Monte Carlo checked). Frame-wise residual energy is corrected per frame by 1 - leverage, so frames with unusual motion are not under-read. The rank is recorded in summary.json and the regressors in `nuisance_regressors.tsv`, for the Phase 3 rank null.
+- **No-regression variant:** `frontend --no-nuisance` (job script 4th argument `noreg`, output folder `_noreg`). Every regression run also reports its own residual energy and drift / FD correlations without regression.
+
+Tests (tests/test_nuisance.py; 69 tests in total pass under seeds 0-2, each run twice):
+- gaps and FD;
+- breathing peak found within one frequency bin and > 98 % of its power removed, slow motion kept within 5 %;
+- no band-stop without a peak;
+- the projector removes its regressors exactly, is idempotent, and its df factors and per-frame leverage match Monte Carlo;
+- commutation of projecting echoes vs channels;
+- simulation with a motion-paced violation: non-differenced sigma 2x true without regression, within 3 % with it; differenced sigma within 3 %; residual covariance = kept variance x I within 0.05; c1 noise-only for pure dR2*;
+- end-to-end run with and without regression.

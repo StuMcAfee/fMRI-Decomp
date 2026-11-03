@@ -1,11 +1,13 @@
 #!/bin/bash
 # Phase 2 front end on one mbme_tedana run: maps, channel cache, summary, QC figure.
 # Interactive session (recommended; arguments, quotes keep spaces):
-#   bash scripts/phase2_frontend_subject.lsf "<RUN_DIR>" [raw|mc] [auto|pipeline|pipeline_filled]
+#   bash scripts/phase2_frontend_subject.lsf "<RUN_DIR>" [raw|mc] [auto|pipeline|pipeline_filled] [reg|noreg]
 #   bash scripts/phase2_frontend_subject.lsf "<raw ..._e1.nii.gz>"     (no pipeline outputs needed)
 # The analysis mask is built from the echoes ("auto", default); pipeline masks are for comparison only.
 # raw (default) = the dcm2niix echoes (sigma and the MP-PCA cross-check must use raw data);
 # mc = motion-corrected echoes (needs a run made with --keep-intermediates).
+# reg (default) = Phase 2b nuisance projection from the run's motion parameters; noreg = without it
+# (comparison variant; output folder gets "_noreg").
 #BSUB -J mejoint_phase2
 #BSUB -q standard
 #BSUB -n 4
@@ -18,6 +20,8 @@ PY="$HOME/miniconda3_new/envs/mejoint/bin/python"     # always the env's python,
 RUN_DIR="${1:-${RUN_DIR:-}}"
 SOURCE="${2:-${SOURCE:-raw}}"
 MASK="${3:-auto}"
+REG="${4:-reg}"
+case "$REG" in reg|noreg) ;; *) echo "fourth argument must be reg or noreg" >&2; exit 2;; esac
 
 REPO=""
 for cand in "$(dirname "${BASH_SOURCE[0]:-.}")/.." "$PWD" "${LS_SUBCWD:-}"; do
@@ -35,6 +39,7 @@ echo "repo:    $PWD (git $(git rev-parse --short HEAD 2>/dev/null || echo '?'))"
 echo "RUN_DIR: ${RUN_DIR:-<unset>}"
 echo "SOURCE:  $SOURCE"
 echo "MASK:    $MASK"
+echo "NUISANCE: $REG"
 fail() { echo "PREFLIGHT FAILED: $*" >&2; exit 2; }
 [ -x "$PY" ] || fail "no python at $PY"
 "$PY" -c "import mejoint, numpy, scipy, nibabel, yaml, matplotlib" || fail "python packages missing (see the import error above)"
@@ -50,9 +55,11 @@ echo "== preflight ok"
 
 OUT="outputs/phase2/$NAME/$SOURCE"
 if [ "$MASK" != "auto" ]; then OUT="${OUT}_${MASK}"; fi
+NOREG=()
+if [ "$REG" = "noreg" ]; then OUT="${OUT}_noreg"; NOREG=(--no-nuisance); fi
 mkdir -p "$OUT"
 status=0
-/usr/bin/time -v "$PY" -m mejoint.cli frontend "${INPUT[@]}" --source "$SOURCE" --mask "$MASK" --out "$OUT" 2> "$OUT/time.txt" || status=$?
+/usr/bin/time -v "$PY" -m mejoint.cli frontend "${INPUT[@]}" --source "$SOURCE" --mask "$MASK" ${NOREG[@]+"${NOREG[@]}"} --out "$OUT" 2> "$OUT/time.txt" || status=$?
 grep -E "Elapsed|Maximum resident" "$OUT/time.txt" || true
 if [ -f "$OUT/summary.json" ]; then
     "$PY" scripts/plot_frontend.py "$OUT" "$OUT/frontend_qc.png" || echo "figure failed (outputs are still valid)"

@@ -347,5 +347,6 @@ def simulate(cfg: dict, seed=None, overrides: dict | None = None) -> Simulation:
     sim.meta = {"params": P, "te_ms": te_ms.tolist(), "tr_s": tr, "n_coils": L, "echo_sigma_scale": esc.tolist(),
                 "seed": {"entropy": int(ss.entropy), "spawn_key": list(ss.spawn_key)},
                 "spike_frames": spike_frames.tolist(), "focal_centers": {s["name"]: s["center"] for s in sources if s["center"]},
+                "slow_violation_timecourse": slow["timecourse"].tolist() if slow is not None else None,
                 "tsnr": sim.tsnr() if sigma0 > 0 else None, "thermal_snr": sim.thermal_snr() if sigma0 > 0 else None}
     return sim
