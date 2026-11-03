@@ -307,3 +307,14 @@ Proposal (needs user approval; changes CLAUDE.md 5.4 step 4):
 (b) Re-derive the study-wide ratios as the median of the differenced ratios over the 15 runs (noise survey rerun; the survey now reports them).
 (c) Rerun P04 (raw with MP-PCA, mc for maps). Rule fixed in advance: all four echoes within 20 % -> the MP-PCA check passes. Otherwise stop: no further tuning of the noise model to pass this check; the user decides whether the remaining gap is an accepted limitation.
 Infrastructure added (no change to the analysis defaults): `frontend-all --force` / `noise_survey_all.lsf <OUT> force`; survey columns for differenced ratios, their halves and differenced / residual sigma; `sigma_plain.nii.gz` map.
+
+### 2026-11-03: differenced sigma estimator and new study-wide ratios adopted (user approved (a)-(c))
+
+Noise survey rerun (15 runs, raw echoes, all with `force`): differenced per-echo ratios median **[1, 0.721, 0.631, 0.560]**, interquartile range [1, 0.678, 0.608, 0.529] to [1, 0.768, 0.669, 0.584]. Voxel halves agree within 0.02 in 10 of 15 runs (P01, P06, P11, 53370 and P07 up to 0.17 apart). Non-differenced estimates in the same rerun remain unstable (e.g. P06 [1, 1.37, 1.00, 1.15], P09 [1, 1.38, 0.66, 1.04]). Differenced / residual sigma brain median 0.87-0.98 across runs (P09 lowest). The low-drift median moved from [1, 0.761, 0.671, 0.602] (first survey) to [1, 0.721, 0.617, 0.558] (this rerun); the voxel selection changed with the per-echo weights, another sign that the non-differenced estimate is sensitive to which voxels are used.
+
+Decision (user, 2026-11-03):
+(a) `frontend.sigma_estimator: differenced` (CLAUDE.md 5.4 step 4 updated); `residual` kept as a sensitivity analysis.
+(b) `frontend.echo_noise_ratios: [1.0, 0.721, 0.631, 0.560]` (CLAUDE.md 5.3 updated).
+(c) Rerun P04 (raw with MP-PCA; mc for the maps). Rule fixed in advance: all four echoes within 20 % of MP-PCA (after the simulated 2 % bias) -> the MP-PCA check passes; otherwise stop, no further tuning of the noise model; the user decides whether the remaining gap is an accepted limitation.
+
+Standard error of the differenced estimator: 1.103x (df 1) and 1.124x (df 2) the non-differenced one (simulation, white noise; unbiased); `sigma_rel_se(..., difference=True)` and test (d) use it. 57 tests pass under seeds 0, 1 and 2.
