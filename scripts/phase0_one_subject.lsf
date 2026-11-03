@@ -28,6 +28,7 @@ done
 [ -n "$REPO" ] || { echo "Cannot find the fMRI-Decomp folder (src/mejoint). Run from inside it." >&2; exit 2; }
 cd "$REPO"
 export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"  # use the code in this folder; no pip install needed
+export PYTHONUNBUFFERED=1          # progress lines reach the log as they happen
 
 # ---- preflight: print everything needed to diagnose a failure, stop with a clear message
 echo "== mejoint phase 0 | $(date) | host $(hostname) | job ${LSB_JOBID:-interactive}"
