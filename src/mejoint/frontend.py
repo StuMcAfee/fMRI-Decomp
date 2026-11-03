@@ -190,7 +190,7 @@ def fit_monoexp(mu: np.ndarray, te_ms, use: np.ndarray, n_iter: int = 15):
 
 # ======================================================================= the whole front end
 def run(S: np.ndarray, te_ms, cfg: dict, mask3d: np.ndarray | None = None, form: str | None = None,
-        chunk: int | None = None) -> dict:
+        chunk: int | None = None, quiet_frames: np.ndarray | None = None) -> dict:
     """Front end on masked magnitude data S (V, E, T). mask3d (X, Y, Z) is needed for the smooth sigma
     map (V must be the voxels of mask3d in C order). Returns maps (V, ...) and channels (V, 2, T)."""
     F = cfg["frontend"]
@@ -289,6 +289,8 @@ def run(S: np.ndarray, te_ms, cfg: dict, mask3d: np.ndarray | None = None, form:
         if idx.size > cap:
             idx = idx[np.linspace(0, idx.size - 1, cap).astype(int)]
         per_echo = per_echo_noise(S[idx], mu[idx], te_ms, form)
+        if quiet_frames is not None and quiet_frames.sum() >= 100:   # frames nearest the median head position
+            per_echo["low_drift"] = per_echo_noise(S[idx][:, :, quiet_frames], mu[idx], te_ms, form)
 
     return {"mu": mu, "use": use, "n_use": n_use, "df": df, "nonpositive": nonpos, "snr": snr,
             "sigma": sigma, "sigma_voxel": sig_vox, "sigma_smooth": sig_smooth, "sigma_init": sig0,
@@ -579,7 +581,11 @@ def run_subject(run_dir, cfg: dict, out_dir, source: str = "raw", mppca: bool | 
 
     S = io.load_masked_echoes(info["echo_files"], mask3d, info["volumes"], hook)
     te = np.asarray(info["te_ms"])
-    fe = run(S, te, cfg, mask3d)
+    quiet = None
+    if info["par"] is not None and len(info["par"]) == S.shape[2]:
+        dr = drift_mm(info["par"])
+        quiet = dr <= np.median(dr)
+    fe = run(S, te, cfg, mask3d, quiet_frames=quiet)
     V, E, T = S.shape
 
     # ---- maps
@@ -656,7 +662,11 @@ def run_subject(run_dir, cfg: dict, out_dir, source: str = "raw", mppca: bool | 
     summ["static_alternating_p10_50_90"] = pct(fe["static_alternating"])
     if fe["per_echo_noise"] is not None:
         pe = fe["per_echo_noise"]
-        summ["per_echo_noise"] = {k: ([round(float(x), 4) for x in v] if isinstance(v, np.ndarray) else v) for k, v in pe.items()}
+        clean = lambda d: {k: ([round(float(x), 4) for x in v] if isinstance(v, np.ndarray) else v)
+                           for k, v in d.items() if k != "low_drift"}
+        summ["per_echo_noise"] = clean(pe)
+        if "low_drift" in pe:
+            summ["per_echo_noise"]["low_drift"] = clean(pe["low_drift"])
     summ["resid_excess_r0_median"] = float(np.nanmedian(fe["resid_excess_r0"]))
     summ["resid_excess_r1_median"] = float(np.nanmedian(fe["resid_excess_r1"]))
     # mask holes and background noise
@@ -747,6 +757,10 @@ def render_summary(s: dict) -> str:
               f"(two independent voxel halves: {pe['ratio_half_a']} / {pe['ratio_half_b']}; {pe['n_voxels']} voxels "
               f"with 4 usable echoes and echo-4 SNR >= 10; condition {pe['condition']:.0f}). The residual holds no BOLD or "
               "S0 signal, so physiology cannot inflate it; head motion and model violations can."]
+        if "low_drift" in pe:
+            ld = pe["low_drift"]
+            L.append(f"On the half of frames nearest the median head position: **{ld['ratio']}** "
+                     f"(halves {ld['ratio_half_a']} / {ld['ratio_half_b']}).")
     if "background_noise" in s:
         L += ["", "## Noise in air outside the head, per echo (pure noise: ratios track thermal sigma)", "",
               "| Echo | Median mean | Median temporal SD | Mean / echo 1 | SD / echo 1 | Voxels |", "|---|---|---|---|---|---|"]

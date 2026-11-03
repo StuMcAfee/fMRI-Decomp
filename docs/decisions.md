@@ -225,3 +225,12 @@ Added (2026-11-03):
 3. **Mask QC across runs** (`mejoint mask-qc`, `scripts/mask_qc_all.lsf`): echoes 1 and 4 only, a table of volumes and Dice with the pipeline mask, and one contact sheet with both outlines for every run.
 
 Phase 2 remains stopped on the sigma question.
+
+### 2026-11-03: P04 motion-corrected echoes (front end before the per-echo estimator)
+
+- Residual energy still tracks head drift after motion correction (Spearman 0.82; raw 0.92). Not only misregistration: when the head moves, the B0 inhomogeneity near air/bone moves relative to the brain, changing through-slice dephasing and so the curvature of the decay (seen only by the residual). Added: per-echo noise ratios are also computed on the half of frames nearest the median head position (`low_drift`), to compare with all frames.
+- Residual sigma median 312 (raw 324): single spline resampling lowers the noise by ~4 %.
+- Voxel-echoes with frames <= 0 rose from [75, 194, 131, 62] (raw) to [164, 565, 639, 705] (spline undershoot); `nonpositive_policy: exclude_echo` handles them.
+- Air-noise ratios changed after resampling (SD 1, 0.65, 0.56, 0.50 vs raw 1, 0.57, 0.48, 0.47): the background is not a usable thermal reference in this data.
+- Mask (v1) 1715 ml: same over-inclusion as raw; mask v2 pending real-data check.
+- Test note: on the small simulated head (T2* 20-70 ms, skull base 22 ms) mask v2 keeps ~90 % of the simulated brain; the T2* > 25 ms limit trims short-T2* edge brain. Real-data contact sheets decide the limit.
