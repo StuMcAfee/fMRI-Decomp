@@ -279,3 +279,12 @@ Motion-corrected run: mask 1424 ml (40077 voxels); echo 4 usable in 79 % of voxe
 Raw run: mask 1416 ml; residual excess 0.97; sigma_v 455; per-echo estimate unstable again ([1, 0.91, 0.59, 0.84], halves up to 0.15 apart; residual vs drift Spearman 0.92).
 MP-PCA check (raw), residual model sigma_v r_e / MP-PCA sigma_e: 1.33, 1.33, 1.45, 1.53 (quiet window the same). The shape across echoes now nearly matches (under equal weights: 0.93-1.73); the overall level is ~33 % above MP-PCA and exceeds the 20 % rule. Second failure of this check: stopped and asked the user (CLAUDE.md section 2).
 Candidate explanations: (1) slow model violations (drift-related changes in a non-mono-exponential decay) inflate the residual-based sigma; (2) MP-PCA reads low because MB-6/GRAPPA noise is spatially correlated (unverified size). Proposed test, no method change: sigma and per-echo ratios also from frame-to-frame differences of the residual (white thermal noise survives differencing, slow violations do not).
+
+### 2026-11-03: differenced-residual diagnostic (user: option A)
+
+Added, as a diagnostic only (whitening unchanged): sigma and per-echo ratios from frame-to-frame differences of the sigma-free residual (`sigma_from_residual(..., difference=True)`, `per_echo_noise(..., difference=True)`). White thermal noise has variance 2 sigma^2 after differencing; slow (drift-paced) model violations largely cancel. Fast violations (e.g. respiration-paced) do not, and a spike now touches two differences (the median stays robust).
+Simulator: optional `slow_violation` (drift-paced curvature change outside span{1, TE}).
+Validation (30 x 32 x 18, 600 volumes, per-echo noise): white noise only: residual sigma / true 0.999, differenced 1.000; with the slow violation (amplitude 0.03): residual 2.06, differenced 1.001; differenced per-echo ratios correct within 0.06 in both.
+Outputs: `sigma_diff.nii.gz`; summary lines "Differenced-residual / residual sigma" and differenced per-echo ratios; MP-PCA table gains "Differenced residual sigma" and "Differenced / MP-PCA" per echo.
+Decision rule agreed in advance: differenced / MP-PCA near 1 (within 20 %) -> the residual sigma was inflated by slow violations (propose the differenced estimator, CLAUDE.md 5.4 step 4 change, to the user); still ~1.3 -> MP-PCA likely biased low for this reconstruction (revisit the 20 % rule).
+Tests: 55 pass under three seeds; the two heaviest simulation tests are marked slow (`-m "not slow"` for a quick check).

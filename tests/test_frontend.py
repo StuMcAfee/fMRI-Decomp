@@ -391,6 +391,7 @@ def test_auto_mask_and_echo1_only_mode(cfg, tmp_path, record_property):
 
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("scale", [[1.0, 1.0, 1.0, 1.0], [1.0, 0.6, 0.5, 0.45]])
 def test_per_echo_noise_ratios_from_residual(cfg, record_property, scale):
     """The residual-based estimator recovers per-echo noise ratios inside the brain, with all sources,
@@ -468,3 +469,29 @@ def test_per_echo_weights_whiten_unequal_noise_and_equal_weights_do_not(cfg, rec
     record_property("max_dev_equal", float(np.abs(C_eq - np.eye(4)).max()))
     assert np.abs(C_pe - np.eye(4)).max() <= 0.05
     assert np.abs(C_eq - np.eye(4)).max() > 0.10
+
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("slow", [False, True])
+def test_differenced_residual_sigma_resists_slow_violations(cfg, record_property, slow):
+    """A drift-paced curvature change (outside span{1, TE}) inflates the median-based residual sigma; the
+    frame-to-frame differenced estimate stays at the true thermal sigma, and its per-echo ratios stay right.
+    Without the violation both estimates agree (white noise)."""
+    sim = sim_with(cfg, 17, grid=[30, 32, 18], n_volumes=600, slow_violation={"enabled": slow, "amplitude": 0.03},
+                   **NO_VIOL)
+    note(sim, record_property, f" (slow violation {'on' if slow else 'off'})")
+    fe = run_fe(sim, cfg)
+    true = sim.sigma[sim.mask]
+    ok = np.isfinite(fe["sigma_voxel"]) & np.isfinite(fe["sigma_diff"]) & ~fe["sigma_low_snr"]
+    med_vox = float(np.median(fe["sigma_voxel"][ok] / true[ok]))
+    med_diff = float(np.median(fe["sigma_diff"][ok] / true[ok]))
+    record_property("sigma_voxel_over_true", med_vox)
+    record_property("sigma_diff_over_true", med_diff)
+    assert med_diff == pytest.approx(1.0, abs=0.03)
+    pe_d = fe["per_echo_noise"]["differenced"]["ratio"]
+    assert np.allclose(pe_d, sim.echo_sigma_scale, atol=0.06)
+    if slow:
+        assert med_vox > 1.10                                          # the violation inflates the median-based estimate
+    else:
+        assert med_vox == pytest.approx(1.0, abs=0.03)

@@ -282,6 +282,18 @@ def simulate(cfg: dict, seed=None, overrides: dict | None = None) -> Simulation:
     spike_region = (brain & ~ndimage.binary_erosion(brain, iterations=2)) if sp["region"] == "edge" else brain.copy()
     spike_jumps = {int(t): float(sp["s0"]) + float(sp["echo_sd"]) * rng.standard_normal(E) for t in spike_frames}
 
+    # slow model violation: a drift-paced change in decay curvature (outside span{1, TE}), like head-position
+    # dependent dephasing; ln S += A * m_v * d(t) * p_e, d slow (unit SD, below cutoff_hz), p_e = centred TE^2
+    sv = P.get("slow_violation") or {"enabled": False}
+    slow = None
+    if sv.get("enabled"):
+        d = _bandlimited(rng, T, tr, 0.0, float(sv.get("cutoff_hz", 0.01)))
+        pe = (te_s - te_s.mean()) ** 2
+        pe = pe - pe.mean()
+        pe = pe / np.abs(pe).max()
+        mv = 0.5 + 0.5 * np.clip(_smooth_field(rng, shape, sm, brain), -1, 1)
+        slow = {"timecourse": d, "pattern": pe, "map": mv, "amplitude": float(sv.get("amplitude", 0.01))}
+
     # ---------------------------------------------------------------- signal + noise, in voxel chunks
     flat = lambda a: a.reshape(-1, *a.shape[3:]) if a.ndim > 3 else a.reshape(-1)
     nvox = int(np.prod(shape))
@@ -314,6 +326,9 @@ def simulate(cfg: dict, seed=None, overrides: dict | None = None) -> Simulation:
             spk = spk_f[sl][inb]
             for t, jump in spike_jumps.items():
                 logS[spk, :, t] += jump[None, :]
+            if slow is not None:
+                mv = flat(slow["map"])[sl][inb]
+                logS += slow["amplitude"] * mv[:, None, None] * slow["pattern"][None, :, None] * slow["timecourse"][None, None, :]
             S[inb] = np.exp(logS)
         if sigma0 > 0:
             sg = sig_f[sl][:, None, None] * esc[None, :, None]           # per-echo noise scale (1 = equal)
