@@ -403,3 +403,23 @@ Tests (tests/test_nuisance.py; 69 tests in total pass under seeds 0-2, each run 
 - **Non-differenced per-echo ratios** are now stable ([1, 0.711, 0.585, 0.489], halves within 0.05; before: halves up to 0.36 apart) and close to the differenced ones ([1, 0.716, 0.608, 0.540]). This supports the reading that the earlier instability came from motion-related violations.
 - **sigma:** 414.6 vs 418.2 without regression.
 - **Energy kept** (thermal noise alone would keep 0.969): c0 0.50, c1 0.71, r0 0.78, r1 0.84. The 24 motion regressors remove about half of c0's energy. Part of that is chance overlap: the slow regressors (parameters and squares) share the low-frequency band where resting-state BOLD also lives. The size of that overlap is not yet known.
+
+### 2026-11-03: surrogate-regressor check added (user: go fast); Phase 3 rank built, gate NOT passed
+
+Surrogate check (`nuisance.n_surrogates: 5`): projectors from phase-randomized motion parameters (same spectrum and cross-spectra, scrambled timing), built like the real projector. The summary reports energy kept with them next to the real one. Test: on pure noise the chance removal equals the df share.
+
+Phase 3 (`rank.py`, `mejoint rank`, `scripts/phase3_overnight.lsf`):
+- **Spectrum:** stacked [c0 | c1] (undefined c1 rows excluded), T x T Gram in float64.
+- **Nulls:** thermal (residual rows, aspect matched); Marchenko-Pastur edge; MAPCA AIC / KIC / MDL (mapca package, normalize=True as in tedana; c0 and c1 maps side by side with a gap); phase-randomized surrogates (mirror-extended, so the slowest half-cycle mode of non-periodic data is represented).
+
+Gate test: K = 30 planted components at 2-20x the noise edge.
+- White noise: deflated null recovers 30 exactly.
+- Coloured noise (AR(1), rho 0-0.6 per row):
+  - index-by-index parallel analysis under-counts (22-26). The null inherits the components' power when rows share a spectrum.
+  - deflated (sequential) parallel analysis over-counts (runs to k_max). Its null's top eigenvalue sits ~2 % below the data's first noise eigenvalue once the strong components are removed.
+  - Mirror extension fixes the randomization itself (pure coloured noise: null within ~1 %). The deflation step is the open problem.
+- The colored-noise and projected-data cases are marked as known failures (strict xfail) until fixed.
+
+**Gate not passed.** The overnight run on P04 is exploratory: front end with the surrogate check, then all rank estimates and the real-data spectra. The spectra are required for the gate anyway and will show which estimator to fix.
+
+Candidate fixes for the next session (not yet tested): AR(p) surrogates per row instead of phase randomization; deflation with the null's own top directions matched; or a noise reference from the residual channels after rescaling by their measured coloured spectrum.

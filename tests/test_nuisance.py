@@ -176,6 +176,9 @@ def test_run_subject_with_and_without_regression(cfg, tmp_path, record_property)
     n = s1["nuisance"]
     record_property("nuisance", {k: n[k] for k in ("filter", "rank", "var_factor", "diff_factor", "energy_kept")})
     assert n["enabled"] and n["rank"] == 25 and n["filter"]["applied"]
+    es = n["energy_kept_surrogates"]                                # surrogates: same df, unrelated timing
+    assert n["n_surrogates"] == c["nuisance"]["n_surrogates"]
+    assert es["r0"]["mean"] == pytest.approx(n["var_factor"], abs=0.03)   # pure noise: chance removal = df share
     assert abs(n["filter"]["respiratory_peak"]["freq_hz"] - 0.35) < 0.02
     assert n["fd_mean_filtered"] < n["fd_mean_unfiltered"]
     assert (tmp_path / "reg" / "nuisance_regressors.tsv").exists()
@@ -187,3 +190,15 @@ def test_run_subject_with_and_without_regression(cfg, tmp_path, record_property)
     assert np.isfinite(fr["fd_filtered_mm"]).all() and np.isfinite(fr["residual_energy_no_regression"]).all()
     done = json.loads((tmp_path / "reg" / "done.json").read_text())
     assert "config_sha256" in done
+
+
+def test_phase_randomized_surrogate_keeps_spectrum():
+    rng = np.random.default_rng(SEED + 7)
+    x, _ = fake_par(512, rng)
+    y = nuisance.phase_randomize(x, np.random.default_rng(1))
+    px, py = np.abs(np.fft.rfft(x - x.mean(0), axis=0)), np.abs(np.fft.rfft(y - y.mean(0), axis=0))
+    assert np.allclose(px, py, rtol=1e-6, atol=1e-9)                # same amplitude spectrum
+    r = [np.corrcoef(x[:, 3], nuisance.phase_randomize(x, np.random.default_rng(k))[:, 3])[0, 1] for k in range(50)]
+    assert abs(np.mean(r)) < 0.15                                    # timing scrambled: no correlation on average
+    cx, cy = np.corrcoef(x.T), np.corrcoef(y.T)
+    assert np.abs(cx - cy).max() < 0.35                             # cross-correlations roughly kept (shared phases)
