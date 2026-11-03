@@ -206,3 +206,22 @@ Tests (`tests/test_mask.py`): on a synthetic head with centre-dark shading (cent
 Not yet validated on real data: the P04 run with the new default will show both outlines (analysis orange, pipeline blue dashed). Real heads have orbits, sinuses, neck and a resection cavity in some patients; the thresholds may need tuning after inspection across subjects.
 
 Independence: the front end runs from the raw echo files alone (`mejoint frontend --echo1 <..._e1.nii.gz>`; TEs from the JSON sidecars; equal echo volume counts required). Still from mbme_tedana: volume pairing (5 of 17 runs) and motion correction (needed from Phase 3/4 on). Open decision: proposed to import mbme_tedana's own pairing and motion-correction functions as a library (a mejoint `preprocess` stage that runs them without tedana), rather than reimplementing them (CLAUDE.md section 4).
+
+### 2026-11-03: P04 results with the diagnostics; per-echo noise estimator; mask v2
+
+Reproducibility: the `--keep-intermediates` rerun of P04 gave "0 likely-BOLD components (of 19 total; 13 accepted)", the same count and component number as the original run.
+
+Raw-echo front end with the first automatic mask (summary from the user):
+- MP-PCA per-echo sigma is the same on the 100 quietest frames (349, 261, 211, 179) as on frames 0-99 (348, 258, 209, 179): head drift does not cause its echo dependence.
+- MP-PCA sigma fits sigma_e^2 = 128^2 + (0.032 x mean signal_e)^2 within 4 % on all four echoes: a fixed floor plus a part proportional to signal (high-rank within 5 x 5 x 5 patches, so MP-PCA counts it as noise). Whether that part is thermal is not decidable from MP-PCA alone.
+- Air outside the head: temporal SD ratios 1, 0.57, 0.48, 0.47 (a drop from echo 1 to 2, flat after). No single noise model fits, and the air SD (~13-29) is ~25x below the in-brain levels, so this reconstruction's background does not represent in-brain noise. Inconclusive.
+- No per-echo image scaling: median ln(mean / mono-exponential fit) per echo is within 0.017 of 0.
+- Frame-wise residual energy tracks head drift from the median position (Spearman 0.92; drift up to 1.6 mm): on raw echoes the residual carries motion-driven model violations, which also inflates the residual-based sigma (337).
+- The first automatic mask was too large (1687 ml; head 2664 ml): it took in neck and face below the brain (inferior third: echo 4 usable in 11 % of voxels, T2* p10 14 ms).
+
+Added (2026-11-03):
+1. **Per-echo noise ratios from the residual** (`frontend.per_echo_noise`): the residual's 2 x 2 covariance per voxel is a known mixture of the four per-echo variances (weights depend on T2*); pooling voxels solves for the ratios. BOLD and S0 signal never enter the residual, so physiology cannot inflate it (motion can). Simulation at 800 volumes and ~18k voxels: equal noise gives 1.00 with seed-to-seed SD 1.3-1.7 %; [1, 0.6, 0.5, 0.45] and [1, 0.74, 0.60, 0.51] are recovered within ~0.02, with a g-factor map and all sources present. A smoothed-scale variant was worse (biased) and was dropped. This is the in-brain test of CLAUDE.md 5.3's equal-sigma assumption; run it on the motion-corrected echoes (ratios survive resampling, CLAUDE.md 5.4).
+2. **Mask v2**: brain step also requires a brain-like decay, mean(echo 4) / mean(echo 1) > exp(-(TE4 - TE1) / 25 ms), which coil shading cannot affect; neck and face muscle decays faster than brain or CSF. One voxel of regrowth into bright head tissue afterwards. Phantom with a neck joined only through the cord: intensity-only mask includes 100 % of the neck muscle, mask v2 1.4 %; ventricles 100 %, brain Dice 0.998. Trade-off: brain with T2* < 25 ms at the very edge (next to air/bone) can be trimmed; `mask.t2s_min_ms` sets it.
+3. **Mask QC across runs** (`mejoint mask-qc`, `scripts/mask_qc_all.lsf`): echoes 1 and 4 only, a table of volumes and Dice with the pipeline mask, and one contact sheet with both outlines for every run.
+
+Phase 2 remains stopped on the sigma question.

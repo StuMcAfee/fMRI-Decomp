@@ -1,0 +1,27 @@
+#!/bin/bash
+# Analysis mask for every mbme_tedana run, a table of volumes and one contact sheet (raw echoes 1 and 4 only).
+# Interactive session:  bash scripts/mask_qc_all.lsf "<mbme_tedana OUT folder>"
+#BSUB -J mejoint_maskqc
+#BSUB -q standard
+#BSUB -n 1
+#BSUB -R "rusage[mem=4000]"
+#BSUB -env "all"
+#BSUB -o maskqc_%J.log
+set -euo pipefail
+PY="$HOME/miniconda3_new/envs/mejoint/bin/python"
+PIPELINE_OUT="${1:-}"
+REPO=""
+for cand in "$(dirname "${BASH_SOURCE[0]:-.}")/.." "$PWD" "${LS_SUBCWD:-}"; do
+    if [ -n "$cand" ] && [ -f "$cand/src/mejoint/__init__.py" ]; then REPO="$(cd "$cand" && pwd)"; break; fi
+done
+[ -n "$REPO" ] || { echo "Cannot find the fMRI-Decomp folder (src/mejoint). Run from inside it." >&2; exit 2; }
+cd "$REPO"
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
+[ -n "$PIPELINE_OUT" ] && [ -d "$PIPELINE_OUT" ] || { echo "first argument must be the mbme_tedana OUT folder" >&2; exit 2; }
+echo "== mejoint mask QC | $(date) | git $(git rev-parse --short HEAD 2>/dev/null || echo '?')"
+OUT="outputs/mask_qc"
+status=0
+"$PY" -m mejoint.cli mask-qc --pipeline-out "$PIPELINE_OUT" --out "$OUT" || status=$?
+"$PY" scripts/plot_mask_qc.py "$OUT" "$OUT/mask_qc.png" || echo "contact sheet failed"
+echo "done: $PWD/$OUT/mask_qc.png and mask_qc.tsv (exit $status)"
+exit $status

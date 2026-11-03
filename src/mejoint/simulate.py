@@ -283,6 +283,9 @@ def simulate(cfg: dict, seed=None, overrides: dict | None = None) -> Simulation:
     b_flat, s0_f, r2_f, df_f, sig_f = flat(brain), flat(s0), flat(r2s), flat(df0), flat(sigma)
     spk_f = flat(spike_region)
     L = int(P["n_coils"])
+    esc = np.asarray(P.get("echo_sigma_scale") or [1.0] * E, float)
+    if esc.size != E:
+        raise ValueError("echo_sigma_scale needs one value per echo")
     data = np.empty((nvox, E, T), np.float32)
     step = int(P["chunk_voxels"])
     for i0 in range(0, nvox, step):
@@ -304,7 +307,7 @@ def simulate(cfg: dict, seed=None, overrides: dict | None = None) -> Simulation:
                 logS[spk, :, t] += jump[None, :]
             S[inb] = np.exp(logS)
         if sigma0 > 0:
-            sg = sig_f[sl][:, None, None]
+            sg = sig_f[sl][:, None, None] * esc[None, :, None]           # per-echo noise scale (1 = equal)
             M2 = (S + sg * rng.standard_normal((n, E, T))) ** 2 + (sg * rng.standard_normal((n, E, T))) ** 2
             if L > 1:
                 M2 += sg ** 2 * rng.chisquare(2 * (L - 1), size=(n, E, T))
