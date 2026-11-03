@@ -389,3 +389,17 @@ Tests (tests/test_nuisance.py; 69 tests in total pass under seeds 0-2, each run 
 - commutation of projecting echoes vs channels;
 - simulation with a motion-paced violation: non-differenced sigma 2x true without regression, within 3 % with it; differenced sigma within 3 %; residual covariance = kept variance x I within 0.05; c1 noise-only for pure dR2*;
 - end-to-end run with and without regression.
+
+### 2026-11-03: Phase 2b on P04 (mc, 24 regressors): slow violations removed; projector removes half of c0's energy (to review)
+
+- **Breathing peak:** 0.26 Hz (about 16 breaths/min), prominence 15.5; band-stopped at 0.20-0.32 Hz. Filtered FD mean 0.24 -> 0.13 mm, 95th percentile 0.51 -> 0.29 mm.
+- **Slow violations removed:**
+  - differenced / non-differenced sigma brain median 0.927 -> 0.978;
+  - residual energy vs smooth sigma 1.154 -> 1.037 (r0 1.16 -> 1.04, r1 1.11 -> 1.02);
+  - frame-wise residual energy median 1.33 -> 1.11.
+- **Correlations of frame-wise residual energy:**
+  - with head drift: 0.86 -> -0.40. The sign flip is probably confounded with time (high drift early with little fast motion; more fast motion later). Unverified.
+  - with unfiltered FD: 0.13; with filtered FD: 0.02. The remaining frame-wise residual tracks breathing pseudo-motion (the TE-nonlinear part of respiratory B0, CLAUDE.md section 10), which is deliberately not regressed.
+- **Non-differenced per-echo ratios** are now stable ([1, 0.711, 0.585, 0.489], halves within 0.05; before: halves up to 0.36 apart) and close to the differenced ones ([1, 0.716, 0.608, 0.540]). This supports the reading that the earlier instability came from motion-related violations.
+- **sigma:** 414.6 vs 418.2 without regression.
+- **Energy kept** (thermal noise alone would keep 0.969): c0 0.50, c1 0.71, r0 0.78, r1 0.84. The 24 motion regressors remove about half of c0's energy. Part of that is chance overlap: the slow regressors (parameters and squares) share the low-frequency band where resting-state BOLD also lives. The size of that overlap is not yet known.
