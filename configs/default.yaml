@@ -16,6 +16,7 @@ acquisition:
 subjects:
   exclude:                               # user decision 2026-11-02
     "51497": "267-278 volumes per echo; volume pairing failed in mbme_tedana"
+    "40240": "metal artefact or similar in the right cerebral hemisphere (user, 2026-11-03)"
 
 inventory:                    # Phase 0 audit
   search_depth: 1             # NIfTI/DICOM may sit in the NIfTI folder or one level deeper
@@ -131,7 +132,7 @@ mask:                         # analysis mask built from the input echoes (mask.
   t2s_min_ms: 25.0            # brain-like decay: echo-last / echo-1 mean > exp(-(TE4 - TE1) / 25 ms) (excludes neck/face muscle)
   erode_vox: 1                # erosion before keeping the largest piece (cuts thin bridges to scalp/orbits)
   close_vox: 1                # final closing; enclosed holes are always filled (3D and slice-wise)
-  regrow_vox: 1               # then regrow into adjacent bright head tissue (edge brain with late echoes lost)
+  regrow_vox: 4               # regrow up to 4 voxels (~13 mm) from the core into tissue bright at echo 1, any decay (dephased cerebellar / orbitofrontal edges); phantom: rim 96 %, neck muscle 9 %
 
 simulate:                     # Phase 1 ground-truth simulator; tests override pieces of this
   grid: [24, 24, 14]          # small grid for tests (the real matrix is 52 x 64 x 48)

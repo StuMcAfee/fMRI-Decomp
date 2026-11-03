@@ -13,8 +13,11 @@ T1-saturated, so the deep brain falls below a whole-image threshold and the mask
      decay: mu_last / mu_1 = exp(-(TE_last - TE_1) / T2*) is independent of coil shading, and neck and
      face muscle (T2* ~20-30 ms) decays faster than brain (40-70 ms) or CSF (longer); erode once to cut
      thin bridges (scalp, orbits), keep the largest connected piece, regrow;
-  4. fill every enclosed hole in 3D and slice by slice (ventricles, dark deep structures), close once,
-     then regrow one voxel into bright head tissue (edge brain whose late echoes are lost to dephasing).
+  4. fill every enclosed hole in 3D and slice by slice (ventricles, dark deep structures), close once;
+  5. regrow from that core up to `regrow_vox` voxels into any adjacent tissue bright enough at echo 1,
+     whatever its decay: brain edges whose late echoes are lost to dephasing (lateral cerebellum near the
+     mastoid and petrous bone, orbitofrontal cortex) come back; the decay test only decides what is
+     connected to the brain. Neck muscle, joined to the brain only around the cord, gains a thin band.
 """
 from __future__ import annotations
 
@@ -83,8 +86,10 @@ def build_mask(mean_echo1: np.ndarray, voxel_mm, cfg: dict, si_axis: int = 2,
     brain = fill_holes(core, si_axis)
     brain = ndimage.binary_closing(brain, iterations=int(M["close_vox"])) & head
     brain = fill_holes(brain, si_axis)
-    for _ in range(int(M.get("regrow_vox", 0))):
-        brain |= ndimage.binary_dilation(brain) & head & (norm > float(M["k_brain"]))
+    bright = head & (norm > float(M["k_brain"]))
+    for _ in range(int(M.get("regrow_vox", 0))):                       # constrained (geodesic) regrowth
+        brain |= ndimage.binary_dilation(brain) & bright
+    brain = fill_holes(brain, si_axis)
 
     voxel_ml = float(np.prod(vox)) / 1000.0
     return {"mask": brain, "head": head, "normalised": norm, "air_level": air, "decay_ratio_min": r_min,
