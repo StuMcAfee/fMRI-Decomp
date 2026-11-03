@@ -413,3 +413,25 @@ def test_noise_survey_across_runs(cfg, tmp_path, record_property):
     assert "Across 1 runs" in md
     frontend.run_all(out_pipe, cfg, tmp_path / "all", log=logs.append)
     assert any("skipped (done)" in l for l in logs)
+
+
+
+def test_monoexp_fit_has_no_numerical_blowups():
+    """Voxels with one usable echo, rising, flat, very fast and non-monotonic decays: no overflow warnings,
+    NaN where the fit is undetermined, exact T2* where it is well posed."""
+    import warnings
+    te = np.array([16.2, 31.22, 46.24, 61.26])
+    mu = np.array([[10000, 7300, 5200, 3600], [2000, 2200, 2500, 2700], [3000, 3000, 3000, 3000],
+                   [8000, 900, 100, 20], [6000, 2000, 2500, 400], [3, 2.5, 2.8, 2.6], [5000, 3000, 1, 1]] * 20, float)
+    use = np.ones_like(mu, bool)
+    use[::7, 1:] = False                                                  # every 7th voxel: one usable echo
+    use[6::7, 2:] = False                                                 # two usable echoes
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")                                     # any RuntimeWarning fails the test
+        s0, t2, muhat = frontend.fit_monoexp(mu, te, use)
+    assert np.isnan(t2[::7]).all() and np.isnan(s0[::7]).all()
+    assert np.isfinite(t2[1::7]).all() and np.isfinite(s0[1::7]).all()
+    assert (t2[np.isfinite(t2)] >= 1).all() and (t2[np.isfinite(t2)] <= 500).all()
+    good = np.exp(np.log(1.44e4) - te / 45.06)                             # well-posed decay: unchanged result
+    s0g, t2g, _ = frontend.fit_monoexp(good[None], te, np.ones((1, 4), bool))
+    assert t2g[0] == pytest.approx(45.06, rel=1e-3)

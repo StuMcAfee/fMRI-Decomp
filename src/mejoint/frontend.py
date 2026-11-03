@@ -153,37 +153,44 @@ def fit_monoexp(mu: np.ndarray, te_ms, use: np.ndarray, n_iter: int = 15):
     """Non-linear least squares of mu_e = S0 exp(-TE_e / T2*) over the usable echoes, per voxel.
 
     Equal sigma across echoes makes unweighted signal-domain LS the ML fit. Initialised by a
-    log-linear fit weighted by mu^2; Gauss-Newton on (ln S0, R2*). T2* in ms; NaN with < 2 echoes.
+    log-linear fit weighted by mu^2; Gauss-Newton on (ln S0, R2*). T2* in ms, capped to 1-500 ms.
+    Only voxels with >= 2 usable echoes are fitted (with one echo the problem is undetermined and the
+    normal equations are singular); the others get NaN.
     """
     te = np.asarray(te_ms, float)
     V, E = mu.shape
-    w = np.where(use, 1.0, 0.0)
+    s0 = np.full(V, np.nan)
+    t2 = np.full(V, np.nan)
     ok = use.sum(1) >= 2
-    lm = np.log(np.clip(mu, 1e-12, None))
-    # weighted log-linear start: minimise sum w mu^2 (ln mu - (a - TE r))^2
-    ww = w * mu ** 2
-    sw, st, stt = ww.sum(1), (ww * te).sum(1), (ww * te ** 2).sum(1)
-    sy, sty = (ww * lm).sum(1), (ww * te * lm).sum(1)
-    det = sw * stt - st ** 2
-    with np.errstate(divide="ignore", invalid="ignore"):
-        r2 = -(sw * sty - st * sy) / det
-        a = (sy + r2 * st) / sw
-    r2 = np.clip(np.nan_to_num(r2, nan=1 / 40), 1 / 500, 1.0)
-    a = np.nan_to_num(a, nan=0.0)
-    for _ in range(n_iter):
-        f = np.exp(a[:, None] - te[None] * r2[:, None])
-        res = (mu - f) * w
-        j1, j2 = f * w, -te[None] * f * w
-        A11, A12, A22 = (j1 * j1).sum(1), (j1 * j2).sum(1), (j2 * j2).sum(1)
-        b1, b2 = (j1 * res).sum(1), (j2 * res).sum(1)
-        dt = A11 * A22 - A12 ** 2
+    if ok.any():
+        m, w = mu[ok], np.where(use[ok], 1.0, 0.0)
+        lm = np.log(np.clip(m, 1e-12, None))
+        # weighted log-linear start: minimise sum w mu^2 (ln mu - (a - TE r))^2
+        ww = w * m ** 2
+        sw, st, stt = ww.sum(1), (ww * te).sum(1), (ww * te ** 2).sum(1)
+        sy, sty = (ww * lm).sum(1), (ww * te * lm).sum(1)
+        det = sw * stt - st ** 2
         with np.errstate(divide="ignore", invalid="ignore"):
-            da = np.where(dt > 0, (A22 * b1 - A12 * b2) / dt, 0.0)
-            dr = np.where(dt > 0, (A11 * b2 - A12 * b1) / dt, 0.0)
-        a = a + da
-        r2 = np.clip(r2 + dr, 1 / 500, 1.0)
-    s0 = np.where(ok, np.exp(a), np.nan)
-    t2 = np.where(ok, 1.0 / r2, np.nan)
+            r2 = -(sw * sty - st * sy) / det
+            a = (sy + r2 * st) / sw
+        r2 = np.clip(np.nan_to_num(r2, nan=1 / 40), 1 / 500, 1.0)
+        a = np.nan_to_num(a, nan=0.0)
+        a_lo, a_hi = lm.min(1) - 1.0, lm.max(1) + te.max() * 1.0 + 1.0   # plausible ln S0 range
+        for _ in range(n_iter):
+            f = np.exp(a[:, None] - te[None] * r2[:, None])
+            res = (m - f) * w
+            j1, j2 = f * w, -te[None] * f * w
+            A11, A12, A22 = (j1 * j1).sum(1), (j1 * j2).sum(1), (j2 * j2).sum(1)
+            b1, b2 = (j1 * res).sum(1), (j2 * res).sum(1)
+            dt = A11 * A22 - A12 ** 2
+            good = dt > 1e-12 * A11 * A22                                 # well-conditioned voxels only
+            with np.errstate(divide="ignore", invalid="ignore"):
+                da = np.where(good, (A22 * b1 - A12 * b2) / dt, 0.0)
+                dr = np.where(good, (A11 * b2 - A12 * b1) / dt, 0.0)
+            a = np.clip(a + np.clip(da, -1.0, 1.0), a_lo, a_hi)           # bounded steps
+            r2 = np.clip(r2 + np.clip(dr, -0.05, 0.05), 1 / 500, 1.0)
+        s0[ok] = np.exp(a)
+        t2[ok] = 1.0 / r2
     muhat = s0[:, None] * np.exp(-te[None] / t2[:, None])
     return s0, t2, muhat
 
