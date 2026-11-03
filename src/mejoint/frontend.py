@@ -122,19 +122,25 @@ def sigma_rel_se(df, n_frames: int) -> np.ndarray:
     return 1.0 / (4.0 * np.sqrt(n_frames) * stats.chi2.pdf(m, df) * m)
 
 
-def sigma_from_residual(u: np.ndarray, df: np.ndarray) -> np.ndarray:
+def sigma_from_residual(u: np.ndarray, df: np.ndarray, difference: bool = False) -> np.ndarray:
     """Per-voxel sigma from the sigma-free residual u = Q_perp^T (mu o y) = sigma * r.
 
     sigma^2 = median_t(sum_k u_k^2) / median(chi2_df), robust to spikes. u is demeaned over time first
     (ln(S / mean S) has a small constant offset). NaN where df = 0.
+    difference=True (diagnostic): use frame-to-frame differences u_t - u_(t-1). White thermal noise gives
+    variance 2 sigma^2 per channel; slow model violations (drift-paced) largely cancel.
     """
     u = u.astype(np.float64)
     with np.errstate(invalid="ignore"), _quiet():
         u = u - np.nanmean(u, axis=2, keepdims=True)
+    scale = 1.0
+    if difference:
+        u = np.diff(u, axis=2)
+        scale = 2.0
     e = np.nansum(u ** 2, axis=1)                                      # (V, T)
     out = np.full(u.shape[0], np.nan)
     ok = df >= 1
-    out[ok] = np.sqrt(np.median(e[ok], axis=1) / chi2_median(df[ok]))
+    out[ok] = np.sqrt(np.median(e[ok], axis=1) / (scale * chi2_median(df[ok])))
     return out
 
 
@@ -230,13 +236,13 @@ def run(S: np.ndarray, te_ms, cfg: dict, mask3d: np.ndarray | None = None, form:
     if F.get("nonpositive_policy", "exclude_echo") != "exclude_echo":
         raise ValueError("only nonpositive_policy = exclude_echo is implemented")
 
-    def residual_sigma(use):
+    def residual_sigma(use, difference=False):
         sig = np.full(V, np.nan)
         for i0 in range(0, V, chunk):
             sl = slice(i0, min(i0 + chunk, V))
             y = signal_form(S[sl], mu[sl], form)
             pr = project(np.where(use[sl][:, :, None], y, 0.0), mur[sl], use[sl], te_ms)
-            sig[sl] = sigma_from_residual(pr["r"], np.clip(use[sl].sum(1) - 2, 0, None))
+            sig[sl] = sigma_from_residual(pr["r"], np.clip(use[sl].sum(1) - 2, 0, None), difference)
         return sig
 
     # --- step 2: sigma_init in high-SNR voxels, smooth map.
@@ -270,6 +276,7 @@ def run(S: np.ndarray, te_ms, cfg: dict, mask3d: np.ndarray | None = None, form:
 
     # --- step 4: per-voxel sigma with the usable echoes; smooth map where low SNR or df = 0
     sig_vox = residual_sigma(use)
+    sig_diff = residual_sigma(use, difference=True)                    # diagnostic (not used for whitening)
     mu_min = np.where(use, mur, np.inf).min(1)
     low = (df == 0) | ~np.isfinite(sig_vox) | (mu_min / sig_smooth < F["sigma_init_snr"])
     sigma = np.where(low, sig_smooth, sig_vox)
@@ -312,12 +319,13 @@ def run(S: np.ndarray, te_ms, cfg: dict, mask3d: np.ndarray | None = None, form:
         if idx.size > cap:
             idx = idx[np.linspace(0, idx.size - 1, cap).astype(int)]
         per_echo = per_echo_noise(S[idx], mu[idx], te_ms, form)
+        per_echo["differenced"] = per_echo_noise(S[idx], mu[idx], te_ms, form, difference=True)
         if quiet_frames is not None and quiet_frames.sum() >= 100:   # frames nearest the median head position
             per_echo["low_drift"] = per_echo_noise(S[idx][:, :, quiet_frames], mu[idx], te_ms, form)
 
     return {"mu": mu, "echo_noise_ratios": ratios, "weighting": F.get("weighting", "per_echo"),
             "use": use, "n_use": n_use, "df": df, "nonpositive": nonpos, "snr": snr,
-            "sigma": sigma, "sigma_voxel": sig_vox, "sigma_smooth": sig_smooth, "sigma_init": sig0,
+            "sigma": sigma, "sigma_voxel": sig_vox, "sigma_diff": sig_diff, "sigma_smooth": sig_smooth, "sigma_init": sig0,
             "sigma_low_snr": low, "trusted": trusted, "s0": s0, "t2s_ms": t2, "muhat": muhat,
             "static_misfit": static_misfit, "static_logres": lr, "static_curvature": static_curv,
             "static_alternating": static_alt, "resid_excess_r0": resid_excess_r0, "resid_excess_r1": resid_excess_r1,
@@ -348,7 +356,8 @@ def static_shape(mu: np.ndarray, te_ms, use: np.ndarray):
     return curv, alt
 
 
-def per_echo_noise(S: np.ndarray, mu: np.ndarray, te_ms, form: str = "log", n_iter: int = 100) -> dict:
+def per_echo_noise(S: np.ndarray, mu: np.ndarray, te_ms, form: str = "log", n_iter: int = 100,
+                   difference: bool = False) -> dict:
     """Per-echo thermal noise RATIOS (echo 1 = 1) from the residual, inside the brain.
 
     The sigma-free residual u = Q_perp^T (mu o y) (Q_perp orthogonal to mu o [1, TE]) contains no BOLD
@@ -366,6 +375,8 @@ def per_echo_noise(S: np.ndarray, mu: np.ndarray, te_ms, form: str = "log", n_it
         y = signal_form(Sx, mx, form)
         u = np.einsum("vek,vet->vkt", qp, mx[:, :, None] * y)
         u -= u.mean(2, keepdims=True)
+        if difference:                                                # removes slow violations; ratios unchanged
+            u = np.diff(u, axis=2)
         rv = lambda x: np.median(x ** 2, axis=-1) / 0.45494
         C = np.stack([rv(u[:, 0]), (rv(u[:, 0] + u[:, 1]) - rv(u[:, 0] - u[:, 1])) / 4, rv(u[:, 1])], 1)
         F = np.stack([qp[:, :, 0] ** 2, qp[:, :, 0] * qp[:, :, 1], qp[:, :, 1] ** 2], axis=2)
@@ -618,7 +629,7 @@ def run_subject(run_dir, cfg: dict, out_dir, source: str = "raw", mppca: bool | 
     save("snr", fe["snr"])
     save("usable", fe["use"].astype(float))
     save("nonpositive", fe["nonpositive"].astype(float))
-    for k in ("t2s_ms", "s0", "sigma", "sigma_voxel", "sigma_smooth", "resid_energy", "resid_excess", "static_misfit"):
+    for k in ("t2s_ms", "s0", "sigma", "sigma_voxel", "sigma_diff", "sigma_smooth", "resid_energy", "resid_excess", "static_misfit"):
         save(k, fe[k])
     save("n_usable_echoes", fe["n_use"].astype(float))
     save("df", fe["df"].astype(float))
@@ -664,6 +675,7 @@ def run_subject(run_dir, cfg: dict, out_dir, source: str = "raw", mppca: bool | 
         "echo4_snr_p10_50_90_inferior": pct(fe["snr"][inf, -1]),
         "t2s_ms_p10_50_90": pct(fe["t2s_ms"]), "t2s_ms_p10_50_90_inferior": pct(fe["t2s_ms"][inf]),
         "sigma_median": float(np.nanmedian(fe["sigma"])), "sigma_smooth_median": float(np.nanmedian(fe["sigma_smooth"])),
+        "sigma_diff_over_voxel_p10_50_90": pct(fe["sigma_diff"] / fe["sigma_voxel"]),
         "fraction_sigma_from_smooth_map": round(float(np.mean(fe["sigma_low_snr"])), 4),
         "n_trusted_voxels": int(fe["trusted"].sum()),
         "sigma_voxel_over_smooth_p10_50_90": pct(fe["sigma_voxel"] / fe["sigma_smooth"]),
@@ -689,10 +701,11 @@ def run_subject(run_dir, cfg: dict, out_dir, source: str = "raw", mppca: bool | 
     if fe["per_echo_noise"] is not None:
         pe = fe["per_echo_noise"]
         clean = lambda d: {k: ([round(float(x), 4) for x in v] if isinstance(v, np.ndarray) else v)
-                           for k, v in d.items() if k != "low_drift"}
+                           for k, v in d.items() if k not in ("low_drift", "differenced")}
         summ["per_echo_noise"] = clean(pe)
-        if "low_drift" in pe:
-            summ["per_echo_noise"]["low_drift"] = clean(pe["low_drift"])
+        for sub in ("low_drift", "differenced"):
+            if sub in pe:
+                summ["per_echo_noise"][sub] = clean(pe[sub])
     summ["resid_excess_r0_median"] = float(np.nanmedian(fe["resid_excess_r0"]))
     summ["resid_excess_r1_median"] = float(np.nanmedian(fe["resid_excess_r1"]))
     # mask holes and background noise
@@ -718,6 +731,9 @@ def run_subject(run_dir, cfg: dict, out_dir, source: str = "raw", mppca: bool | 
                 row_q = {"mppca_sigma_median_quiet": float(np.nanmedian(mpq[k][mask3d][selq])),
                          "ratio_residual_over_mppca_quiet": round(float(np.nanmedian(fe["sigma"][selq] * fe["echo_noise_ratios"][k]) /
                                                                          np.nanmedian(mpq[k][mask3d][selq])), 4)}
+            sig_dk = fe["sigma_diff"] * fe["echo_noise_ratios"][k]          # differenced-residual model (diagnostic)
+            row_q["residual_diff_sigma_median_same_voxels"] = float(np.nanmedian(sig_dk[sel]))
+            row_q["ratio_residual_diff_over_mppca"] = round(float(np.nanmedian(sig_dk[sel]) / np.nanmedian(mp[k][mask3d][sel])), 4)
             rows.append({"echo": k + 1, **row_q, "mu_median_same_voxels": float(np.nanmedian(fe["mu"][sel, k])),
                          "mppca_sigma_median": float(np.nanmedian(mp[k][mask3d][sel])),
                          "residual_sigma_median_same_voxels": float(np.nanmedian(sig_k[sel])),
@@ -755,6 +771,8 @@ def render_summary(s: dict) -> str:
          f"- Sigma: median {s['sigma_median']:.3f} (smooth map {s['sigma_smooth_median']:.3f}); "
          f"{100 * s['fraction_sigma_from_smooth_map']:.1f} % of voxels use the smooth map; {s['n_trusted_voxels']} trusted voxels",
          f"- Per-voxel / smooth sigma p10/50/90: {s['sigma_voxel_over_smooth_p10_50_90']}",
+         f"- Differenced-residual / residual sigma p10/50/90: {s.get('sigma_diff_over_voxel_p10_50_90')} "
+         "(1 = white noise; < 1 = slow model violations inflate the residual sigma)",
          f"- Voxels with any frame <= 0, per echo: {s['nonpositive_voxels_per_echo']}"]
     if "frame_energy_vs_fd_spearman" in s:
         L.append(f"- Frame-wise residual energy vs FD (Spearman): {s['frame_energy_vs_fd_spearman']}")
@@ -785,6 +803,10 @@ def render_summary(s: dict) -> str:
               f"(two independent voxel halves: {pe['ratio_half_a']} / {pe['ratio_half_b']}; {pe['n_voxels']} voxels "
               f"with 4 usable echoes and echo-4 SNR >= 10; condition {pe['condition']:.0f}). The residual holds no BOLD or "
               "S0 signal, so physiology cannot inflate it; head motion and model violations can."]
+        if "differenced" in pe:
+            dd = pe["differenced"]
+            L.append(f"From frame-to-frame differences of the residual (slow violations removed): **{dd['ratio']}** "
+                     f"(halves {dd['ratio_half_a']} / {dd['ratio_half_b']}).")
         if "low_drift" in pe:
             ld = pe["low_drift"]
             L.append(f"On the half of frames nearest the median head position: **{ld['ratio']}** "
@@ -798,12 +820,13 @@ def render_summary(s: dict) -> str:
         m = s["mppca_check"]
         L += ["", "## Sigma cross-check per echo: residual model (sigma x ratio) vs MP-PCA (raw echoes)", "",
               f"MP-PCA on frames 0-{m.get('n_volumes', 100) - 1} and on the quietest window (start frame {m.get('quiet_window_start')}).", "",
-              "| Echo | Mean signal | MP-PCA sigma | MP-PCA sigma (quiet) | Residual sigma | Ratio | Ratio (quiet) | Ratio / simulated bias |",
-              "|---|---|---|---|---|---|---|---|"]
+              "| Echo | Mean signal | MP-PCA sigma | MP-PCA sigma (quiet) | Residual sigma | Ratio | Ratio (quiet) | Ratio / simulated bias | Differenced residual sigma | Differenced / MP-PCA |",
+              "|---|---|---|---|---|---|---|---|---|---|"]
         f = lambda v: "n/a" if v is None else f"{v:.3f}"
         L += [f"| {r['echo']} | {f(r.get('mu_median_same_voxels'))} | {r['mppca_sigma_median']:.3f} | {f(r.get('mppca_sigma_median_quiet'))} | "
               f"{r['residual_sigma_median_same_voxels']:.3f} | {r['ratio_residual_over_mppca']:.3f} | "
-              f"{f(r.get('ratio_residual_over_mppca_quiet'))} | {r['ratio_corrected_for_simulated_bias']:.3f} |" for r in m["per_echo"]]
+              f"{f(r.get('ratio_residual_over_mppca_quiet'))} | {r['ratio_corrected_for_simulated_bias']:.3f} | "
+              f"{f(r.get('residual_diff_sigma_median_same_voxels'))} | {f(r.get('ratio_residual_diff_over_mppca'))} |" for r in m["per_echo"]]
         L += ["", f"Verdict (tolerance {100 * m['tolerance']:.0f} %): **{m['verdict']}**"]
     return "\n".join(L) + "\n"
 

@@ -48,6 +48,12 @@ The analysis mask is built from the echoes (`src/mejoint/mask.py`); outputs go t
 ~/miniconda3_new/envs/mejoint/bin/python -m pytest -q
 ```
 
+Quick check without the slow simulation tests (the full suite is the gate):
+
+```bash
+~/miniconda3_new/envs/mejoint/bin/python -m pytest -q -m "not slow"
+```
+
 Rerun the suite under another random seed (checks that tests do not depend on one draw):
 
 ```bash

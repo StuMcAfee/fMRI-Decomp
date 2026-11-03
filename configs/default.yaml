@@ -161,6 +161,7 @@ simulate:                     # Phase 1 ground-truth simulator; tests override p
     - {name: s0_diffuse, kind: s0, extent: diffuse, s: 0.0025}
   respiration: {enabled: true, freq_hz: 0.30, freq_jitter_hz: 0.03, q: 0.25}   # smooth global dR2* (SD at peak)
   spikes: {n: 3, s0: 0.05, echo_sd: 0.02, region: edge}   # model-violating frames (log-space, per echo)
+  slow_violation: {enabled: false, amplitude: 0.01, cutoff_hz: 0.01}   # drift-paced curvature change (log units at the extreme echoes); off by default
   skull_base:                 # through-slice dephasing in the lowest brain slices: curvature in the decay
     enabled: true
     slices: 3
