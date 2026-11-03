@@ -350,3 +350,21 @@ This run's own differenced ratios [1, 0.719, 0.603, 0.546] (halves within 0.02) 
 Non-differenced residual energy against the differenced sigma is now 1.18. This is expected: 1 / 0.92^2, the slow violations. It no longer means a model failure.
 
 As agreed in advance, no further tuning of the noise model. The user decides whether the level gap is an accepted limitation.
+
+### 2026-11-03: level gap accepted as a documented limitation (user: option A); Phase 2 gate evidence
+
+Decision (user): the MP-PCA level gap (1.204 against a limit of 1.20; shape passes) is accepted as a limitation and is not treated as a model failure. It is reported as "thermal sigma level uncertain within about 20 % between two independent estimators (residual, MP-PCA)". The `snr_min` = 3 and `sigma_estimator: residual` sensitivity runs bracket its effect. Later, a spatial-noise-correlation measurement and an MP-PCA simulation will be added as a reported diagnostic only, not as a gate. They test whether MP-PCA reads low on correlated MB-6/GRAPPA noise and will inform which sigma level to trust for eta's noise correction.
+
+Gate evidence, P04 (raw and mc, differenced estimator, ratios [1, 0.721, 0.631, 0.560]):
+- **Tests:** 62 synthetic tests pass, including (a)-(e).
+- **Maps** (mu, T2*, sigma, usable echoes / df, residual energy, inferior slices z = 3, 7, 13):
+  - The analysis mask keeps the cerebellum and orbitofrontal cortex.
+  - Echo 4 is usable in 81 % of the brain and 40 % of the inferior third.
+  - Fewer usable echoes at the skull base and orbitofrontal sinus interface (dephasing).
+  - Long T2* in CSF / 4th ventricle.
+  - The sigma map is smooth, with a central rise that MP-PCA reproduces spatially. The two disagree in level, not in pattern.
+- **Residual energy against the differenced sigma:** 1.18 (raw) and 1.15 (mc), highest at tissue edges. Frame-wise residual energy follows head drift (Spearman 0.94 raw, 0.86 mc; a step at the mid-run position jump), not FD (0.06, 0.09). Interpretation (unverified): position-dependent changes of a non-mono-exponential decay (e.g. B0 / through-slice dephasing changing with head position). Phase 2b motion regressors should absorb the slow part.
+- **mc vs raw:** sigma 418 vs 428 (spline interpolation lowers it about 2 %). Differenced ratios agree ([1, 0.718, 0.603, 0.541] vs [1, 0.719, 0.603, 0.546]).
+- **mc non-positive frames** (spline undershoot): [45, 182, 404, 667] voxels per echo. Under `nonpositive_policy: exclude_echo` these voxel-echoes are unusable (echo 4: 1.7 % of the mask). This policy still needs the user's confirmation.
+
+Label fix: "Residual energy vs smooth sigma" now reads "1 = white thermal noise, > 1 = slow violations or model misfit". With the differenced sigma, slow violations show up here rather than inflating sigma.

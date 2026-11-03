@@ -1,7 +1,7 @@
 """QC sheet of the Phase 2 front end on one real run (Phase 2 gate evidence).
 
 Rows: mean signal (echo 1, echo 4), echo-4 SNR, usable echoes, T2*, sigma, per-voxel / smooth sigma,
-residual energy against the smooth sigma (1 = model holds), static mono-exponential misfit, and the
+residual energy against the smooth sigma (1 = white thermal noise; > 1 = violations), static mono-exponential misfit, and the
 MP-PCA sigma (echo 1) if computed. Columns: axial slices from the bottom of the brain upwards (the
 first two are at the posterior-fossa / skull-base level) and a mid-sagittal slice. Axial images are
 in neurological orientation (subject's right on the image's right, marked R; anterior up); the
@@ -87,7 +87,7 @@ def main(argv=None):
     sig = load(folder, "sigma")
     rows.append(("Thermal sigma (residual-based)", sig, SEQ, {"vmin": 0, "vmax": np.nanpercentile(sig[brain], 99)}, "a.u."))
     rows.append(("Per-voxel / smooth sigma", load(folder, "sigma_ratio_voxel_smooth"), DIV, {"norm": TwoSlopeNorm(1.0, 0.6, 1.4)}, "ratio"))
-    rows.append(("Residual energy vs smooth sigma (1 = model holds)", load(folder, "resid_excess"), DIV,
+    rows.append(("Residual energy vs smooth sigma (1 = white noise)", load(folder, "resid_excess"), DIV,
                  {"norm": TwoSlopeNorm(1.0, 0.4, 3.0)}, "ratio"))
     rows.append(("Static mono-exponential misfit", load(folder, "static_misfit"), SEQ, {"vmin": 0, "vmax": 0.05}, "log units"))
     cv = load(folder, "static_curvature")
