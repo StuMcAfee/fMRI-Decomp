@@ -272,3 +272,10 @@ Decision (user, 2026-11-03): **option A**. `frontend.weighting: per_echo`, `fron
 Evidence (simulation with these ratios, 28 x 28 x 16, 400 volumes): whitened channel/residual covariance within 0.9 % of I with per-echo weights; up to 65 % off with equal weights. Tests now simulate the configured ratios by default; properties defined under equal noise (test (c), the sigma bootstrap) run with equal data and equal weights. The floor case of test (e) was recalibrated from a six-seed spread (excess 1.080-1.105 included vs 1.023-1.044 excluded). 53 tests pass under six seeds.
 
 Phase 2 gate still needs: 47159 rerun with per-echo weights (raw with the per-echo MP-PCA check; mc for the maps).
+
+### 2026-11-03: Phase 2 gate run on 47159 with per-echo weights: MP-PCA check fails a second time (STOP)
+
+Motion-corrected run: mask 1424 ml (40077 voxels); echo 4 usable in 79 % of voxels (36 % of the inferior third); residual excess 0.97 (0.94 inferior); sigma_v (echo-1 noise) median 439. This run's own per-echo estimate [1, 0.69, 0.54, 0.53] is lower than the study-wide ratios and its voxel halves agree within ~0.1; it is close to MP-PCA's ratios for 47159 ([1, 0.74, 0.60, 0.51]).
+Raw run: mask 1416 ml; residual excess 0.97; sigma_v 455; per-echo estimate unstable again ([1, 0.91, 0.59, 0.84], halves up to 0.15 apart; residual vs drift Spearman 0.92).
+MP-PCA check (raw), residual model sigma_v r_e / MP-PCA sigma_e: 1.33, 1.33, 1.45, 1.53 (quiet window the same). The shape across echoes now nearly matches (under equal weights: 0.93-1.73); the overall level is ~33 % above MP-PCA and exceeds the 20 % rule. Second failure of this check: stopped and asked the user (CLAUDE.md section 2).
+Candidate explanations: (1) slow model violations (drift-related changes in a non-mono-exponential decay) inflate the residual-based sigma; (2) MP-PCA reads low because MB-6/GRAPPA noise is spatially correlated (unverified size). Proposed test, no method change: sigma and per-echo ratios also from frame-to-frame differences of the residual (white thermal noise survives differencing, slow violations do not).
