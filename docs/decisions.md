@@ -244,3 +244,10 @@ Phase 2 remains stopped on the sigma question.
 **Mask v3:** the decay limit now only decides what is connected to the brain; the core then regrows up to 4 voxels (~13 mm) into adjacent tissue bright at echo 1, whatever its decay. Phantom with a dephased lateral-inferior rim (T2* 15 ms) and an anatomical neck: rim kept 33 % (v2) -> 96 % (v3); neck muscle 1.4 % -> 8.9 % (a band around the cord); scalp 2 %; ventricles 100 %. 3 voxels: rim 83 %, muscle 6 %; 5 voxels: rim 100 %, muscle 12 %. Tissue with almost no signal even at echo 1 (severe dropout) stays outside: an EPI-only mask cannot recover it; an anatomical (T1-based) mask could.
 
 **40240 excluded** (user): metal artefact or similar in the right cerebral hemisphere (also visible as an abnormal mask, 844 ml). 15 runs remain.
+
+### 2026-11-03: stay on the gated route; mask frozen; noise survey next (user)
+
+User: continue on the gated route; avoid getting sidetracked perfecting the mask.
+- Mask v3 is frozen as the Phase 2 analysis mask. Any refinement (e.g. a T1-based mask) is deferred to Phase 5, which needs tissue masks anyway.
+- Remaining Phase 2 blocker: the noise model. Next step: front end on the raw echoes of all 15 runs (`scripts/noise_survey_all.lsf`, no MP-PCA) and a table of per-echo noise ratios (`noise_survey.md`). Consistent ratios across runs would make the echo dependence a protocol/reconstruction property that can be set once.
+- A `mejoint preprocess` step (mbme_tedana's pairing and motion correction without tedana) is deferred to Phase 6; Phases 3-5 use 47159, which already has motion-corrected echoes.

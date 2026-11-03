@@ -394,3 +394,22 @@ def test_per_echo_noise_ratios_from_residual(cfg, record_property, scale):
     assert pe is not None and pe["n_voxels"] >= 500
     assert np.allclose(pe["ratio"], scale, atol=0.05)
     assert np.allclose(pe["ratio_half_a"], pe["ratio_half_b"], atol=0.12)       # half samples: SD ~4 %
+
+
+def test_noise_survey_across_runs(cfg, tmp_path, record_property):
+    import shutil
+    out_pipe = tmp_path / "OUT"
+    out_pipe.mkdir()
+    for i, run in enumerate(["sub-90001_acq-20260101000000_ser-5", "sub-40240_acq-20261006072639_ser-5"]):
+        sim = sim_with(cfg, 20 + i, grid=[30, 30, 16], n_volumes=60)
+        rd = make_run_folder(sim, tmp_path / f"r{i}", run_id=run)
+        shutil.move(str(rd), out_pipe / run)
+    note(sim, record_property)
+    logs = []
+    rows = frontend.run_all(out_pipe, cfg, tmp_path / "all", log=logs.append)
+    assert [r["run"] for r in rows] == ["sub-90001_acq-20260101000000_ser-5"]       # 40240 excluded
+    assert any("excluded" in l for l in logs)
+    md = (tmp_path / "all" / "noise_survey.md").read_text()
+    assert "Across 1 runs" in md
+    frontend.run_all(out_pipe, cfg, tmp_path / "all", log=logs.append)
+    assert any("skipped (done)" in l for l in logs)
