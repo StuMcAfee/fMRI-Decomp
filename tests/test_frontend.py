@@ -272,9 +272,12 @@ def test_run_subject_end_to_end(cfg, tmp_path, record_property):
         assert (out / f).exists(), f
     import nibabel as nib
     sig = np.asarray(nib.load(str(out / "sigma.nii.gz")).dataobj)[sim.mask]
-    assert abs(np.median(sig / sim.sigma[sim.mask]) - 1) < 0.03
+    inside = np.isfinite(sig)                                            # analysis mask (built from the echoes)
+    assert inside.mean() > 0.85      # the mask's decay limit (T2* > 25 ms) trims the simulated 20-25 ms edge brain
+    assert abs(np.median(sig[inside] / sim.sigma[sim.mask][inside]) - 1) < 0.03
     c0 = np.load(out / "c0.npy")
-    assert c0.shape == (sim.mask.sum(), sim.n_volumes)
+    used = np.asarray(nib.load(str(out / "analysis_mask.nii.gz")).dataobj) > 0
+    assert c0.shape == (used.sum(), sim.n_volumes)                      # one row per analysis-mask voxel
     assert summ["mppca_check"]["verdict"] == "OK"
     assert "Sigma cross-check" in (out / "summary.md").read_text()
     assert "frame_energy_vs_fd_spearman" in summ
