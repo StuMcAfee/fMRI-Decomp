@@ -19,7 +19,14 @@ R2_ONLY = [{"name": "r2a", "kind": "r2", "extent": "focal", "q": 0.5, "radius_vo
 
 @pytest.fixture
 def cfg():
-    return io.load_config()
+    """Project config with simulated noise matching the configured per-echo ratios (data = model)."""
+    c = io.load_config()
+    return io.merge(c, {"simulate": {"echo_sigma_scale": c["frontend"]["echo_noise_ratios"]}})
+
+
+def equal_cfg(cfg):
+    """Equal noise in the data and equal weights in the front end (CLAUDE.md's original construction)."""
+    return io.merge(cfg, {"frontend": {"weighting": "equal"}, "simulate": {"echo_sigma_scale": [1.0, 1.0, 1.0, 1.0]}})
 
 
 def sim_with(cfg, offset=0, **over):
@@ -96,7 +103,7 @@ def test_a_whitened_noise_covariance_is_identity(cfg, record_property):
     sim = sim_with(cfg, 1, grid=[28, 28, 16], snr0=60.0, **CLEAN)
     note(sim, record_property)
     fe = run_fe(sim, cfg)
-    snr_min = sim.mu_base[sim.mask].min(1) / sim.sigma[sim.mask]
+    snr_min = (sim.mu_base[sim.mask] / sim.sigma_echo[sim.mask]).min(1)
     Z = np.concatenate([fe["c"], fe["r"]], axis=1).astype(np.float64)
     full = fe["n_use"] == 4
 
@@ -140,6 +147,7 @@ def test_b_c1_is_zero_for_pure_r2star(cfg, record_property):
 
 def test_c_c0_is_negative_optimal_combination(cfg, record_property):
     """(c) c0 = -k_v x OC deviation (tedana weights TE exp(-TE/T2*)), linear form, equal sigma."""
+    cfg = equal_cfg(cfg)
     sim = sim_with(cfg, 3, **NO_VIOL)
     note(sim, record_property)
     Sd = sim.data[sim.mask].astype(np.float64)
@@ -196,18 +204,19 @@ def test_e_residual_energy_rises_where_violations_were_injected(cfg, record_prop
     assert np.median(others) == pytest.approx(1.0, abs=0.03)
     assert fe["frame_energy"][sim.spike_frames].max() > np.percentile(others, 99.5)
     # noise floor: including echoes near the floor raises residual energy; snr_min removes most of it
-    # T2* 20-35 ms at SNR0 50 puts echo 4 near the floor (mu/sigma ~2-9) brain-wide, for any seed
-    low = sim_with(cfg, 6, snr0=50.0, t2s_ms_range=[20.0, 35.0],
+    # T2* 20-35 ms at SNR0 30 puts echo 4 near the floor (mu / sigma_4 ~2-9, with sigma_4 = 0.6 sigma), any seed
+    low = sim_with(cfg, 6, snr0=30.0, t2s_ms_range=[20.0, 35.0],
                    sources=[{"name": "r2d", "kind": "r2", "extent": "diffuse", "q": 1.0}],
                    respiration={"enabled": True, "q": 1.0}, **NO_VIOL)
     note(low, record_property, " (floor case)")
-    snr4 = low.mu_base[low.mask][:, 3] / low.sigma[low.mask]
+    snr4 = low.mu_base[low.mask][:, 3] / low.sigma_echo[low.mask][:, 3]
     keep = frontend.run(low.data[low.mask], low.te_ms, cfg, low.mask)
     incl = frontend.run(low.data[low.mask], low.te_ms, io.merge(cfg, {"frontend": {"snr_min": 0.0}}), low.mask)
     sel = (snr4 < 4) & (keep["df"] > 0) & (incl["df"] > 0)
     assert sel.sum() >= 50
-    assert np.nanmedian(incl["resid_excess"][sel]) > 1.08
-    assert np.nanmedian(incl["resid_excess"][sel]) > np.nanmedian(keep["resid_excess"][sel]) + 0.05
+    # six seeds (per-echo noise data): included 1.080-1.105, excluded 1.023-1.044, difference 0.047-0.068
+    assert np.nanmedian(incl["resid_excess"][sel]) > 1.06
+    assert np.nanmedian(incl["resid_excess"][sel]) > np.nanmedian(keep["resid_excess"][sel]) + 0.03
 
 
 def test_echo_usability_and_nonpositive_frames(cfg, record_property):
@@ -217,7 +226,7 @@ def test_echo_usability_and_nonpositive_frames(cfg, record_property):
     S[:5, 3, 10] = 0.0                                                   # spline-like undershoot
     fe = frontend.run(S, sim.te_ms, cfg, sim.mask)
     assert not fe["use"][:5, 3].any() and fe["nonpositive"][:5, 3].all()
-    snr4 = sim.mu_base[sim.mask][:, 3] / sim.sigma[sim.mask]
+    snr4 = sim.mu_base[sim.mask][:, 3] / sim.sigma_echo[sim.mask][:, 3]
     excluded = ~fe["use"][5:, 3]
     assert np.all(snr4[5:][excluded] < 7) and np.all(snr4[5:][~excluded] > 3.5)   # cut near snr_min = 5
     assert np.array_equal(fe["df"], np.clip(fe["use"].sum(1) - 2, 0, None))
@@ -226,6 +235,7 @@ def test_echo_usability_and_nonpositive_frames(cfg, record_property):
 
 def test_sigma_bootstrap_when_echo4_is_weak_everywhere(cfg, record_property):
     """No voxel has echo-4 mu/sigma > 10: sigma_init falls back to echoes 1-3 and still recovers sigma."""
+    cfg = equal_cfg(cfg)
     sim = sim_with(cfg, 8, snr0=50.0, t2s_ms_range=[20.0, 32.0], **CLEAN)     # echo-4 mu/sigma < ~8.5
     note(sim, record_property)
     assert (sim.mu_base[sim.mask][:, 3] / sim.sigma[sim.mask]).max() < 10
@@ -325,7 +335,7 @@ def test_drift_quiet_window_and_mask_holes():
 def test_background_noise_detects_per_echo_scaling(cfg, tmp_path, record_property, scale):
     """Air outside the head is pure noise: its level per echo must stay equal when the echoes share one
     thermal sigma, and must recover deliberately applied per-echo scale factors."""
-    sim = sim_with(cfg, 12, grid=[30, 30, 14], n_volumes=60)
+    sim = sim_with(cfg, 12, grid=[30, 30, 14], n_volumes=60, echo_sigma_scale=[1.0, 1.0, 1.0, 1.0])
     note(sim, record_property, f" (per-echo scaling {scale})")
     if scale is not None:
         sim.data *= np.asarray(scale, np.float32)[None, None, None, :, None]
@@ -388,7 +398,8 @@ def test_per_echo_noise_ratios_from_residual(cfg, record_property, scale):
     # precision needs voxels and frames: at 800 frames and ~18k voxels the seed-to-seed SD is ~1.5 %
     sim = sim_with(cfg, 15, grid=[36, 40, 24], n_volumes=600, echo_sigma_scale=scale, gfactor={"enabled": True}, **NO_VIOL)
     note(sim, record_property, f" (per-echo noise {scale})")
-    fe = run_fe(sim, cfg)
+    # configured ratios = simulated noise (as in real use): voxel selection by echo-4 SNR is then correct
+    fe = run_fe(sim, io.merge(cfg, {"frontend": {"echo_noise_ratios": list(scale)}}))
     pe = fe["per_echo_noise"]
     record_property("per_echo_ratio", np.round(pe["ratio"], 3).tolist())
     assert pe is not None and pe["n_voxels"] >= 500
@@ -435,3 +446,25 @@ def test_monoexp_fit_has_no_numerical_blowups():
     good = np.exp(np.log(1.44e4) - te / 45.06)                             # well-posed decay: unchanged result
     s0g, t2g, _ = frontend.fit_monoexp(good[None], te, np.ones((1, 4), bool))
     assert t2g[0] == pytest.approx(45.06, rel=1e-3)
+
+
+
+def test_per_echo_weights_whiten_unequal_noise_and_equal_weights_do_not(cfg, record_property):
+    """Data with the study-wide per-echo noise: per-echo weights give unit-variance channels (test (a));
+    CLAUDE.md's original equal weights do not. This is why option A was adopted (2026-11-03)."""
+    sim = sim_with(cfg, 16, grid=[28, 28, 16], snr0=60.0, **CLEAN)
+    note(sim, record_property, f" (per-echo noise {sim.echo_sigma_scale.tolist()})")
+    snr_min = (sim.mu_base[sim.mask] / sim.sigma_echo[sim.mask]).min(1)
+
+    def cov(fe):
+        Z = np.concatenate([fe["c"], fe["r"]], axis=1).astype(np.float64)
+        sel = (fe["n_use"] == 4) & (snr_min >= 10)
+        z = Z[sel] - Z[sel].mean(2, keepdims=True)
+        return np.einsum("vit,vjt->ij", z, z) / (z.shape[0] * (z.shape[2] - 1))
+
+    C_pe = cov(run_fe(sim, cfg))
+    C_eq = cov(run_fe(sim, io.merge(cfg, {"frontend": {"weighting": "equal"}})))
+    record_property("max_dev_per_echo", float(np.abs(C_pe - np.eye(4)).max()))
+    record_property("max_dev_equal", float(np.abs(C_eq - np.eye(4)).max()))
+    assert np.abs(C_pe - np.eye(4)).max() <= 0.05
+    assert np.abs(C_eq - np.eye(4)).max() > 0.10

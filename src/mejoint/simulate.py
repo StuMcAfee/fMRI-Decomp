@@ -124,10 +124,19 @@ class Simulation:
         d = self.masked(region).astype(np.float64)
         return [float(np.median(d[:, e].mean(1) / d[:, e].std(1))) for e in range(self.n_echoes)]
 
+    @property
+    def echo_sigma_scale(self) -> np.ndarray:
+        return np.asarray(self.meta.get("echo_sigma_scale") or [1.0] * self.n_echoes, float)
+
+    @property
+    def sigma_echo(self) -> np.ndarray:
+        """(X, Y, Z, E) thermal noise SD of every echo (sigma x per-echo scale)."""
+        return self.sigma[..., None] * self.echo_sigma_scale
+
     def thermal_snr(self, region: str = "brain") -> list[float]:
         """Median baseline signal / thermal sigma per echo."""
         m = self.regions[region]
-        return [float(np.median(self.mu_base[m][:, e] / self.sigma[m])) for e in range(self.n_echoes)]
+        return [float(np.median(self.mu_base[m][:, e] / self.sigma_echo[m][:, e])) for e in range(self.n_echoes)]
 
     def describe(self) -> str:
         base = (f"grid {self.data.shape[:3]}, {self.n_volumes} vols, TR {self.tr_s} s, "
@@ -320,7 +329,7 @@ def simulate(cfg: dict, seed=None, overrides: dict | None = None) -> Simulation:
                      sigma=sigma, mu_base=mu_base, dephasing_hz=df0, sources=sources,
                      regions={"brain": brain, "interior": interior, "skull_base": skull, "spike": spike_region & brain},
                      spike_frames=spike_frames)
-    sim.meta = {"params": P, "te_ms": te_ms.tolist(), "tr_s": tr, "n_coils": L,
+    sim.meta = {"params": P, "te_ms": te_ms.tolist(), "tr_s": tr, "n_coils": L, "echo_sigma_scale": esc.tolist(),
                 "seed": {"entropy": int(ss.entropy), "spawn_key": list(ss.spawn_key)},
                 "spike_frames": spike_frames.tolist(), "focal_centers": {s["name"]: s["center"] for s in sources if s["center"]},
                 "tsnr": sim.tsnr() if sigma0 > 0 else None, "thermal_snr": sim.thermal_snr() if sigma0 > 0 else None}
