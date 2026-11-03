@@ -138,6 +138,15 @@ nuisance:                     # Phase 2b: one projector over time, applied to th
   filter_order: 4               # Butterworth, applied forwards and backwards (zero phase), within contiguous segments
   expansion: 24                 # 6 = parameters; 12 = + frame-to-frame changes; 24 = + squares of both
   poly_order: 0                 # Legendre drift terms per segment (0 = constants only)
+  n_surrogates: 5               # diagnostic: projectors from phase-randomized motion parameters (chance overlap with signal); 0 = off
+
+rank:                         # Phase 3: dimensionality of the stacked whitened channels [c0 | c1]
+  n_surrogates: 20              # phase-randomized surrogates for the index-by-index null (reported) and spectra plot
+  deflated_n_surrogates: 10     # surrogates per tested k in the deflated (gated) estimator (~10 values of k by bisection)
+  null_quantile: 0.95           # data eigenvalue must exceed this quantile of the null
+  k_max: 300                    # upper end of the bisection search
+  sweep_fixed: [50, 70, 90]     # fixed k always run in Phase 4 (CLAUDE.md), alongside the MAPCA estimates
+  mapca: true                   # MAPCA AIC / KIC / MDL via the mapca package (tedana's estimator)
 
 mask:                         # analysis mask built from the input echoes (mask.py); user decision 2026-11-02
   border_vox: 3               # image border used to measure the air (noise) level

@@ -61,6 +61,11 @@ def main(argv=None) -> int:
     rc.add_argument("summaries", nargs="+", help="summary.json file(s) of front-end runs on raw echoes")
     rc.add_argument("--config", help="config YAML (default: configs/default.yaml)")
 
+    rk = sub.add_parser("rank", help="Phase 3 rank of the stacked channels of one front-end output folder")
+    rk.add_argument("--frontend-dir", required=True, help="front-end output folder (channel cache c0/c1/r0/r1.npy)")
+    rk.add_argument("--out", required=True, help="output folder")
+    rk.add_argument("--config", help="config YAML (default: configs/default.yaml)")
+
     mq = sub.add_parser("mask-qc", help="build the analysis mask for every run and tabulate it (raw echoes 1 and 4)")
     mq.add_argument("--pipeline-out", required=True, help="mbme_tedana --out folder")
     mq.add_argument("--out", required=True, help="output folder")
@@ -110,6 +115,10 @@ def main(argv=None) -> int:
                   f"{m.get('implied_c0_c1_noise_correlation')}\n  verdict: {m['verdict']}")
             status = status or (0 if m["verdict"] == "OK" else 3)
         return status
+    elif args.cmd == "rank":
+        from . import rank
+        res = rank.run_dir(args.frontend_dir, cfg, args.out)
+        print(rank.render(res))
     elif args.cmd == "mask-qc":
         from . import mask
         rows = mask.qc_all(args.pipeline_out, cfg, args.out)

@@ -221,7 +221,8 @@ def fit_monoexp(mu: np.ndarray, te_ms, use: np.ndarray, n_iter: int = 15, echo_r
 
 # ======================================================================= the whole front end
 def run(S: np.ndarray, te_ms, cfg: dict, mask3d: np.ndarray | None = None, form: str | None = None,
-        chunk: int | None = None, quiet_frames: np.ndarray | None = None, nuisance=None) -> dict:
+        chunk: int | None = None, quiet_frames: np.ndarray | None = None, nuisance=None,
+        surrogates: list | None = None) -> dict:
     """Front end on masked magnitude data S (V, E, T). mask3d (X, Y, Z) is needed for the smooth sigma
     map (V must be the voxels of mask3d in C order). Returns maps (V, ...) and channels (V, 2, T).
     nuisance: a nuisance.Projector over time (Phase 2b) or None. It is applied to the channels and the
@@ -309,6 +310,8 @@ def run(S: np.ndarray, te_ms, cfg: dict, mask3d: np.ndarray | None = None, form:
     r = np.full((V, 2, T), np.nan, np.float32)
     R = np.full((V, 2, 2), np.nan)
     energy = {"before": np.zeros(4), "after": np.zeros(4)}           # c0, c1, r0, r1 (brain totals)
+    surrogates = surrogates or []
+    e_sur = np.zeros((len(surrogates), 4))                            # the same with surrogate regressors
     e_frame_noreg = np.full((V, T), np.nan) if nuisance is not None else None
     for i0 in range(0, V, chunk):
         sl = slice(i0, min(i0 + chunk, V))
@@ -324,6 +327,8 @@ def run(S: np.ndarray, te_ms, cfg: dict, mask3d: np.ndarray | None = None, form:
             with _quiet():
                 cr -= np.nanmean(cr, axis=2, keepdims=True)
             energy["before"] += np.nansum(cr ** 2, axis=(0, 2))
+            for j, sp in enumerate(surrogates):
+                e_sur[j] += np.nansum(sp.apply(np.concatenate([cc, rr], axis=1).astype(np.float64)) ** 2, axis=(0, 2))
             cc, rr = nuisance.apply(cc), nuisance.apply(rr)
             energy["after"] += np.nansum(np.concatenate([cc, rr], axis=1).astype(np.float64) ** 2, axis=(0, 2))
         c[sl], r[sl], R[sl] = cc, rr, pr["R"]
@@ -368,6 +373,9 @@ def run(S: np.ndarray, te_ms, cfg: dict, mask3d: np.ndarray | None = None, form:
             "static_misfit": static_misfit, "static_logres": lr, "static_curvature": static_curv,
             "static_alternating": static_alt, "resid_excess_r0": resid_excess_r0, "resid_excess_r1": resid_excess_r1,
             "per_echo_noise": per_echo, "frame_energy_noreg": frame_energy_noreg,
+            "nuisance_energy_kept_surrogates": ([{k: float(a / b) if b > 0 else None
+                                                  for k, a, b in zip(("c0", "c1", "r0", "r1"), es, energy["before"])}
+                                                 for es in e_sur] if surrogates and nuisance is not None else None),
             "nuisance_energy_kept": (None if nuisance is None else
                                      {k: float(a / b) if b > 0 else None
                                       for k, a, b in zip(("c0", "c1", "r0", "r1"), energy["after"], energy["before"])}),
@@ -674,7 +682,13 @@ def run_subject(run_dir, cfg: dict, out_dir, source: str = "raw", mppca: bool | 
         else:
             vols = info["volumes"][0] if info["volumes"] is not None else None
             proj, nrec = nuis.build(info["par"], float(cfg["acquisition"]["tr_s"]), cfg, volumes=vols)
-    fe = run(S, te, cfg, mask3d, quiet_frames=quiet, nuisance=proj)
+    surr = []
+    n_sur = int(cfg.get("nuisance", {}).get("n_surrogates", 0))
+    if proj is not None and n_sur > 0:
+        subj = int(info["subject"]) if str(info.get("subject") or "").isdigit() else 0
+        ss = io.seed_sequence(cfg, subj, 0, 21)                        # stage 21 = nuisance surrogates
+        surr = nuis.surrogate_projectors(info["par"], float(cfg["acquisition"]["tr_s"]), cfg, vols, n_sur, ss)
+    fe = run(S, te, cfg, mask3d, quiet_frames=quiet, nuisance=proj, surrogates=surr)
     V, E, T = S.shape
 
     # ---- maps
@@ -715,6 +729,7 @@ def run_subject(run_dir, cfg: dict, out_dir, source: str = "raw", mppca: bool | 
                                          "drift_mm": list(drift) if drift is not None else na})
     if proj is not None:                                   # the regressors, for later phases (rank null df)
         io.write_tsv(out_dir / "nuisance_regressors.tsv", {n: list(nrec["X"][:, j]) for j, n in enumerate(nrec["names"])})
+        np.save(out_dir / "nuisance_Q.npy", proj.Q)          # orthonormal basis of the removed subspace (Phase 3 nulls)
 
     # ---- summary
     inf = inferior_third(mask3d, ref.affine)[mask3d]
@@ -756,6 +771,12 @@ def run_subject(run_dir, cfg: dict, out_dir, source: str = "raw", mppca: bool | 
     summ["nuisance"] = dict(nrec["info"])
     if proj is not None:
         summ["nuisance"]["energy_kept"] = {k: (None if v is None else round(v, 4)) for k, v in fe["nuisance_energy_kept"].items()}
+        if fe["nuisance_energy_kept_surrogates"]:
+            sv = fe["nuisance_energy_kept_surrogates"]
+            summ["nuisance"]["energy_kept_surrogates"] = {
+                k: {"mean": round(float(np.mean([d[k] for d in sv])), 4), "min": round(float(np.min([d[k] for d in sv])), 4),
+                    "max": round(float(np.max([d[k] for d in sv])), 4)} for k in ("c0", "c1", "r0", "r1")}
+            summ["nuisance"]["n_surrogates"] = len(sv)
         fen = fe["frame_energy_noreg"]
         summ["nuisance"]["residual_energy_median_no_regression"] = round(float(np.nanmedian(fen)), 4)
         summ["nuisance"]["residual_energy_median"] = round(float(np.nanmedian(fe["frame_energy"])), 4)
@@ -943,6 +964,11 @@ def render_summary(s: dict) -> str:
                 ek = n["energy_kept"]
                 L.append(f"- Energy kept after projection: c0 {ek['c0']}, c1 {ek['c1']}, r0 {ek['r0']}, r1 {ek['r1']} "
                          "(thermal noise alone would keep the residual factor above)")
+                if "energy_kept_surrogates" in n:
+                    es = n["energy_kept_surrogates"]
+                    L.append(f"- Energy kept with {n['n_surrogates']} phase-randomized surrogate regressor sets (same spectrum, "
+                             "scrambled timing; chance overlap), mean [min-max]: "
+                             + ", ".join(f"{k} {es[k]['mean']} [{es[k]['min']}-{es[k]['max']}]" for k in ("c0", "c1", "r0", "r1")))
                 L.append(f"- Frame-wise residual energy, median: {n.get('residual_energy_median_no_regression')} without regression, "
                          f"{n.get('residual_energy_median')} with")
             if "frame_energy_vs_drift_spearman_no_regression" in n:

@@ -193,6 +193,25 @@ class Projector:
         return self.diff_factor() if difference else self.var_factor()
 
 
+def phase_randomize(x: np.ndarray, rng) -> np.ndarray:
+    """Surrogate with the same power spectrum (and cross-spectra between columns: one set of random
+    phases shared by all columns) but scrambled timing. x: (T, n)."""
+    T = x.shape[0]
+    F = np.fft.rfft(x - x.mean(0), axis=0)
+    ph = rng.uniform(0, 2 * np.pi, F.shape[0])
+    ph[0] = 0.0
+    if T % 2 == 0:
+        ph[-1] = 0.0
+    return np.fft.irfft(F * np.exp(1j * ph)[:, None], n=T, axis=0) + x.mean(0)
+
+
+def surrogate_projectors(par: np.ndarray, tr: float, cfg: dict, volumes, n: int, seed) -> list[Projector]:
+    """Projectors built exactly like the real one (same filter, expansion, segments) from
+    phase-randomized motion parameters: how much signal regressors of this spectrum remove by chance."""
+    rng = np.random.default_rng(seed)
+    return [build(phase_randomize(np.asarray(par, float), rng), tr, cfg, volumes)[0] for _ in range(int(n))]
+
+
 def build(par: np.ndarray, tr: float, cfg: dict, volumes=None) -> tuple[Projector, dict]:
     """Projector and a record of what went into it (filter, regressors, rank, noise factors, FD)."""
     N = cfg["nuisance"]
