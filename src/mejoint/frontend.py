@@ -839,7 +839,7 @@ def render_summary(s: dict) -> str:
          f"| Usable fraction per echo | {s['usable_fraction_per_echo']} | {s['usable_fraction_per_echo_inferior']} |",
          f"| Echo-4 SNR (mu/sigma) p10/50/90 | {s['echo4_snr_p10_50_90']} | {s['echo4_snr_p10_50_90_inferior']} |",
          f"| T2* (ms) p10/50/90 | {s['t2s_ms_p10_50_90']} | {s['t2s_ms_p10_50_90_inferior']} |",
-         f"| Residual energy vs smooth sigma (median; 1 = model holds) | {s['resid_excess_median']:.3f} | {s['resid_excess_median_inferior']:.3f} |",
+         f"| Residual energy vs smooth sigma (median; 1 = white thermal noise, > 1 = slow violations or model misfit) | {s['resid_excess_median']:.3f} | {s['resid_excess_median_inferior']:.3f} |",
          f"| Static mono-exponential misfit (median, log units) | {s['static_misfit_median']:.4f} | {s['static_misfit_median_inferior']:.4f} |",
          "", f"- Voxels by number of usable echoes (4/3/2/1/0): {s['n_usable_echoes_fraction']}",
          f"- Sigma ({s.get('sigma_estimator', 'residual')} estimator): median {s['sigma_median']:.3f} (smooth map {s['sigma_smooth_median']:.3f}); "
