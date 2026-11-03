@@ -26,6 +26,7 @@ done
 [ -n "$REPO" ] || { echo "Cannot find the fMRI-Decomp folder (src/mejoint). Run from inside it." >&2; exit 2; }
 cd "$REPO"
 export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONUNBUFFERED=1          # progress lines reach the log as they happen
 NT="${LSB_DJOB_NUMPROC:-4}"                               # worker count from LSF, not os.cpu_count()
 export OMP_NUM_THREADS="$NT" MKL_NUM_THREADS="$NT" OPENBLAS_NUM_THREADS="$NT"
 

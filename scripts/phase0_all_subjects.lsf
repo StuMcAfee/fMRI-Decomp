@@ -22,6 +22,7 @@ done
 [ -n "$REPO" ] || { echo "Cannot find the fMRI-Decomp folder (src/mejoint). Run from inside it." >&2; exit 2; }
 cd "$REPO"
 export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONUNBUFFERED=1          # progress lines reach the log as they happen
 
 echo "== mejoint phase 0 (all runs) | $(date) | host $(hostname) | job ${LSB_JOBID:-interactive}"
 echo "repo:         $PWD (git $(git rev-parse --short HEAD 2>/dev/null || echo '?'))"
