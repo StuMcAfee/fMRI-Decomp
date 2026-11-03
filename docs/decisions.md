@@ -288,3 +288,22 @@ Validation (30 x 32 x 18, 600 volumes, per-echo noise): white noise only: residu
 Outputs: `sigma_diff.nii.gz`; summary lines "Differenced-residual / residual sigma" and differenced per-echo ratios; MP-PCA table gains "Differenced residual sigma" and "Differenced / MP-PCA" per echo.
 Decision rule agreed in advance: differenced / MP-PCA near 1 (within 20 %) -> the residual sigma was inflated by slow violations (propose the differenced estimator, CLAUDE.md 5.4 step 4 change, to the user); still ~1.3 -> MP-PCA likely biased low for this reconstruction (revisit the 20 % rule).
 Tests: 55 pass under three seeds; the two heaviest simulation tests are marked slow (`-m "not slow"` for a quick check).
+
+### 2026-11-03: differenced diagnostic on P04: mixed result against the agreed rule (STOP, proposal to the user)
+
+Motion-corrected: differenced / residual sigma p10/50/90 0.80 / 0.93 / 0.99; differenced per-echo ratios [1, 0.720, 0.606, 0.546] (halves within 0.012).
+Raw: differenced / residual sigma 0.77 / 0.92 / 0.99; differenced ratios [1, 0.732, 0.609, 0.560] (halves within 0.01). Non-differenced ratios in the same run: [1, 0.91, 0.59, 0.84] (halves up to 0.13 apart); low-drift frames [1, 0.85, 0.63, 0.71] (halves up to 0.36 apart).
+MP-PCA check (raw), model sigma / MP-PCA sigma per echo: residual 1.33, 1.33, 1.45, 1.53; differenced 1.12, 1.13, 1.22, 1.30. MP-PCA's own ratios: [1, 0.757, 0.616, 0.522].
+
+Reading:
+1. Slow violations inflate the residual sigma by about 8 % (brain median), more in some voxels (p10 0.77). Echo 1, which no ratio affects, moves from 1.33 to 1.12.
+2. The differenced ratios are stable (halves within 0.01), agree raw vs mc, and are close to MP-PCA's shape. The non-differenced ratios that set the study-wide vector are not stable. The study-wide vector [1, 0.761, 0.671, 0.602] is therefore likely too high at echoes 3-4 (it came from drift-contaminated residuals).
+3. With this run's differenced ratios instead of the study-wide ones, differenced / MP-PCA would be about 1.12, 1.09, 1.11, 1.20 (approximate: rescaled from the table, not rerun; sigma_v also depends weakly on the ratios through the residual basis). A uniform ~10 % excess over MP-PCA remains; candidates are a modest MP-PCA low bias on MB-6/GRAPPA data or fast (e.g. respiration-paced) violations. Neither is verified.
+
+Against the rule: echoes 1-2 within 20 %, echoes 3-4 not (1.22, 1.30), with the study-wide ratios. Gate still stopped.
+
+Proposal (needs user approval; changes CLAUDE.md 5.4 step 4):
+(a) sigma from frame-to-frame differences of the residual: sigma^2 = median_t(sum_k (Delta u)^2) / (2 median chi2_df). Config `frontend.sigma_estimator: differenced` (implemented, default still `residual`; simulation: differenced sigma used for whitening is within 3 % of true with and without the slow violation).
+(b) Re-derive the study-wide ratios as the median of the differenced ratios over the 15 runs (noise survey rerun; the survey now reports them).
+(c) Rerun P04 (raw with MP-PCA, mc for maps). Rule fixed in advance: all four echoes within 20 % -> the MP-PCA check passes. Otherwise stop: no further tuning of the noise model to pass this check; the user decides whether the remaining gap is an accepted limitation.
+Infrastructure added (no change to the analysis defaults): `frontend-all --force` / `noise_survey_all.lsf <OUT> force`; survey columns for differenced ratios, their halves and differenced / residual sigma; `sigma_plain.nii.gz` map.
