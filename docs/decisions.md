@@ -252,3 +252,13 @@ User: continue on the gated route; avoid getting sidetracked perfecting the mask
 - Remaining Phase 2 blocker: the noise model. Next step: front end on the raw echoes of all 15 runs (`scripts/noise_survey_all.lsf`, no MP-PCA) and a table of per-echo noise ratios (`noise_survey.md`). Consistent ratios across runs would make the echo dependence a protocol/reconstruction property that can be set once.
 - A `mejoint preprocess` step (mbme_tedana's pairing and motion correction without tedana) is deferred to Phase 6; Phases 3-5 use 47159, which already has motion-corrected echoes.
 - Mask v3 contact sheet (15 runs, 2026-11-03): cerebellar hemispheres and orbitofrontal cortex inside the mask in every run; deep brain included. Volumes 1210-1789 ml (pipeline 963-1675). Small lateral islands in the lowest slice in a few runs (47527, 50666, 53870 at z = 3): inferior temporal/cerebellar tissue or some skull-base non-brain tissue; accepted for Phase 2, revisit with tissue masks at Phase 5.
+
+### 2026-11-03: traveling waves on hold (user)
+
+User added `docs/WAVES_BRIEF.md` and `docs/mockups/waves/`, and asked to hold all wave work until the decomposition of real data is reached. Nothing wave-related is built or branched before then.
+
+### 2026-11-03: overflow warnings in the mono-exponential fit (noise survey log)
+
+Cause: voxels with only one usable echo (< 1 % of the mask in 47159). Their Gauss-Newton system is singular; rounding left a tiny positive determinant and a runaway step. Their T2*/S0 were already NaN, and every voxel is fitted independently, so other voxels were unaffected (test: exact T2* in all well-posed voxels). The channels, sigma and per-echo noise ratios never use this fit, so the noise survey is unaffected.
+Fix: fit only voxels with >= 2 usable echoes, skip ill-conditioned steps, bound the steps and ln S0. Regression test with one-echo, rising, flat, very fast and non-monotonic decays runs with warnings treated as errors.
+Correction: T2* values near the 500 ms cap (e.g. a 90th percentile of 219 ms in the inferior third) come from rising or flat decays (CSF, inflow), not from this bug.
