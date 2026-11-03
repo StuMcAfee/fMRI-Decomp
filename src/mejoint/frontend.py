@@ -778,3 +778,80 @@ def render_summary(s: dict) -> str:
               f"{f(r.get('ratio_residual_over_mppca_quiet'))} | {r['ratio_corrected_for_simulated_bias']:.3f} |" for r in m["per_echo"]]
         L += ["", f"Verdict (tolerance {100 * m['tolerance']:.0f} %): **{m['verdict']}**"]
     return "\n".join(L) + "\n"
+
+
+# ======================================================================= all runs (noise survey)
+def run_all(pipeline_out, cfg: dict, out_root, source: str = "raw", mppca: bool = False, log=print) -> list[dict]:
+    """Front end on every mbme_tedana run (excluded subjects skipped), then one table of the per-echo
+    noise ratios and key numbers across runs (<out>/noise_survey.tsv / .md). Runs already done with the
+    same config are skipped; a failing run is recorded and the loop continues."""
+    import json
+    import traceback
+    from pathlib import Path
+
+    from . import io
+
+    out_root = Path(out_root)
+    chash = io.config_hash(cfg)
+    excluded = {str(k) for k in (cfg.get("subjects", {}).get("exclude") or {})}
+    rows = []
+    for rd in sorted(p.parent for p in Path(pipeline_out).glob("*/result.json")):
+        subj = rd.name.split("_")[0].replace("sub-", "")
+        if subj in excluded:
+            log(f"{rd.name}: excluded")
+            continue
+        od = out_root / rd.name / source
+        done = od / "done.json"
+        try:
+            if done.exists() and json.loads(done.read_text()).get("config_sha256") == chash and (od / "summary.json").exists():
+                log(f"{rd.name}: skipped (done)")
+            else:
+                run_subject(rd, cfg, od, source=source, mppca=mppca)
+                log(f"{rd.name}: ok")
+            s = json.loads((od / "summary.json").read_text())
+            pe = s.get("per_echo_noise") or {}
+            ld = pe.get("low_drift") or {}
+            rows.append({"run": rd.name, "n_voxels": s["n_voxels"], "mask_ml": (s.get("mask") or {}).get("volume_ml"),
+                         "ratio": pe.get("ratio"), "half_a": pe.get("ratio_half_a"), "half_b": pe.get("ratio_half_b"),
+                         "ratio_low_drift": ld.get("ratio"), "n_voxels_ratio": pe.get("n_voxels"),
+                         "sigma_median": round(s["sigma_median"], 2), "echo4_usable": s["usable_fraction_per_echo"][-1],
+                         "resid_vs_drift": s.get("frame_energy_vs_drift_spearman"),
+                         "t2s_median": s["t2s_ms_p10_50_90"][1]})
+        except Exception as exc:
+            io.write_text(od / "error.txt", traceback.format_exc())
+            rows.append({"run": rd.name, "error": f"{type(exc).__name__}: {exc}"})
+            log(f"{rd.name}: FAILED ({exc})")
+    write_noise_survey(rows, out_root, cfg)
+    return rows
+
+
+def write_noise_survey(rows: list[dict], out_root, cfg: dict) -> None:
+    from pathlib import Path
+
+    from . import io
+
+    out_root = Path(out_root)
+    good = [r for r in rows if "error" not in r and r.get("ratio")]
+    cols = ["run", "ratio", "ratio_low_drift", "half_a", "half_b", "n_voxels_ratio", "sigma_median", "echo4_usable",
+            "t2s_median", "resid_vs_drift", "mask_ml", "n_voxels", "error"]
+    fmt = lambda v: "[" + ", ".join(f"{x:.3f}" for x in v) + "]" if isinstance(v, list) else ("" if v is None else v)
+    io.write_tsv(out_root / "noise_survey.tsv", {c: [fmt(r.get(c)) for r in rows] for c in cols})
+    L = ["# Per-echo noise survey (front end on every run)", "",
+         "Ratios of thermal noise to echo 1, from the residual inside the brain. Equal noise (CLAUDE.md 5.3) = [1, 1, 1, 1].", "",
+         "| Run | All frames | Low-drift frames | Voxel halves | Echo-4 usable | Residual vs drift |", "|---|---|---|---|---|---|"]
+    for r in rows:
+        if "error" in r:
+            L.append(f"| {r['run']} | FAILED: {r['error']} | | | | |")
+        else:
+            L.append(f"| {r['run'].split('_acq')[0]} | {fmt(r['ratio'])} | {fmt(r['ratio_low_drift'])} | "
+                     f"{fmt(r['half_a'])} / {fmt(r['half_b'])} | {r['echo4_usable']:.2f} | {r['resid_vs_drift']} |")
+    if good:
+        A = np.array([r["ratio"] for r in good], float)
+        L += ["", f"Across {len(good)} runs, all frames: median {fmt(list(np.median(A, 0)))}, "
+              f"interquartile range {fmt(list(np.percentile(A, 25, 0)))} to {fmt(list(np.percentile(A, 75, 0)))}."]
+        lows = [r["ratio_low_drift"] for r in good if r.get("ratio_low_drift")]
+        if lows:
+            B = np.array(lows, float)
+            L.append(f"Low-drift frames: median {fmt(list(np.median(B, 0)))}.")
+    io.write_text(out_root / "noise_survey.md", "\n".join(L) + "\n")
+    io.write_json(out_root / "noise_survey_status.json", {"rows": rows, **io.provenance(cfg, {})})
