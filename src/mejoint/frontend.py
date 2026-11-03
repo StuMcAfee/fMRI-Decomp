@@ -14,6 +14,13 @@ Steps, in the non-circular order of CLAUDE.md 5.4:
      static-misfit (curvature) map, not for the channels.
 
 Sigma is never estimated from the temporal variance of the data (CLAUDE.md 5.4.7).
+
+Per-echo noise (user decision 2026-11-03, option A): thermal noise is sigma_ve = sigma_v * r_e with a
+study-wide ratio vector r (echo 1 = 1; `frontend.echo_noise_ratios`, from the 15-run noise survey).
+Everywhere the equal-sigma construction used the mean mu_e as the noise scale, it now uses the
+noise-scaled mean mu_e / r_e, so the residual stays sigma-free and sigma_v (the echo-1 noise) is
+estimated exactly as before. `frontend.weighting: equal` restores CLAUDE.md's original equal weights
+(sensitivity analysis; tedana-equivalence test).
 """
 from __future__ import annotations
 
@@ -149,10 +156,11 @@ def smooth_map(values: np.ndarray, weights: np.ndarray, mask3d: np.ndarray, fwhm
 
 
 # ======================================================================= static fit
-def fit_monoexp(mu: np.ndarray, te_ms, use: np.ndarray, n_iter: int = 15):
+def fit_monoexp(mu: np.ndarray, te_ms, use: np.ndarray, n_iter: int = 15, echo_ratios=None):
     """Non-linear least squares of mu_e = S0 exp(-TE_e / T2*) over the usable echoes, per voxel.
 
-    Equal sigma across echoes makes unweighted signal-domain LS the ML fit. Initialised by a
+    With per-echo noise ratios r_e, residuals are weighted by 1 / r_e (ML for Gaussian noise
+    sigma * r_e); without them, unweighted signal-domain LS (equal sigma). Initialised by a
     log-linear fit weighted by mu^2; Gauss-Newton on (ln S0, R2*). T2* in ms, capped to 1-500 ms.
     Only voxels with >= 2 usable echoes are fitted (with one echo the problem is undetermined and the
     normal equations are singular); the others get NaN.
@@ -163,10 +171,11 @@ def fit_monoexp(mu: np.ndarray, te_ms, use: np.ndarray, n_iter: int = 15):
     t2 = np.full(V, np.nan)
     ok = use.sum(1) >= 2
     if ok.any():
-        m, w = mu[ok], np.where(use[ok], 1.0, 0.0)
+        rr = np.ones(E) if echo_ratios is None else np.asarray(echo_ratios, float)
+        m, w = mu[ok], np.where(use[ok], 1.0, 0.0) / rr[None]               # sqrt-weights 1 / r_e
         lm = np.log(np.clip(m, 1e-12, None))
-        # weighted log-linear start: minimise sum w mu^2 (ln mu - (a - TE r))^2
-        ww = w * m ** 2
+        # weighted log-linear start: minimise sum (mu / r)^2 (ln mu - (a - TE r2))^2
+        ww = w ** 2 * m ** 2
         sw, st, stt = ww.sum(1), (ww * te).sum(1), (ww * te ** 2).sum(1)
         sy, sty = (ww * lm).sum(1), (ww * te * lm).sum(1)
         det = sw * stt - st ** 2
@@ -209,6 +218,13 @@ def run(S: np.ndarray, te_ms, cfg: dict, mask3d: np.ndarray | None = None, form:
         raise ValueError("mask3d is required (smooth sigma map)")
 
     mu = S.mean(axis=2, dtype=np.float64)                              # (V, E)
+    if F.get("weighting", "per_echo") == "equal":
+        ratios = np.ones(E)
+    else:
+        ratios = np.asarray(F["echo_noise_ratios"], float)
+        if ratios.size != E:
+            raise ValueError(f"echo_noise_ratios has {ratios.size} values for {E} echoes")
+    mur = mu / ratios[None, :]                    # noise-scaled mean: each echo's noise equals the echo-1 sigma
     nonpos = (S <= 0).any(axis=2)
     use0 = ~nonpos & (mu > 0)
     if F.get("nonpositive_policy", "exclude_echo") != "exclude_echo":
@@ -219,7 +235,7 @@ def run(S: np.ndarray, te_ms, cfg: dict, mask3d: np.ndarray | None = None, form:
         for i0 in range(0, V, chunk):
             sl = slice(i0, min(i0 + chunk, V))
             y = signal_form(S[sl], mu[sl], form)
-            pr = project(np.where(use[sl][:, :, None], y, 0.0), mu[sl], use[sl], te_ms)
+            pr = project(np.where(use[sl][:, :, None], y, 0.0), mur[sl], use[sl], te_ms)
             sig[sl] = sigma_from_residual(pr["r"], np.clip(use[sl].sum(1) - 2, 0, None))
         return sig
 
@@ -235,9 +251,9 @@ def run(S: np.ndarray, te_ms, cfg: dict, mask3d: np.ndarray | None = None, form:
     sigma_ref = smooth_map(sg3, np.isfinite(sg3).astype(float), mask3d, 2 * fwhm)
     with np.errstate(divide="ignore", invalid="ignore"):
         t4 = (np.clip(use0.sum(1) - 2, 0, None) >= 1) & np.isfinite(sg4) & \
-            (np.where(use0, mu, np.inf).min(1) / sigma_ref > thr)
+            (np.where(use0, mur, np.inf).min(1) / sigma_ref > thr)
         t3 = ~t4 & (first3.sum(1) == 3) & np.isfinite(sg3) & \
-            (np.where(first3, mu, np.inf).min(1) / sigma_ref > thr)
+            (np.where(first3, mur, np.inf).min(1) / sigma_ref > thr)
     sig0 = np.where(t4, sg4, np.where(t3, sg3, np.nan))
     trusted = t4 | t3
     n_min = int(F.get("sigma_init_min_voxels", 50))
@@ -247,14 +263,14 @@ def run(S: np.ndarray, te_ms, cfg: dict, mask3d: np.ndarray | None = None, form:
     sig_smooth = smooth_map(sig0, trusted.astype(float), mask3d, fwhm)
 
     # --- step 3: echo usability from the smooth map
-    snr = mu / sig_smooth[:, None]
+    snr = mur / sig_smooth[:, None]                                    # mu_e / (sigma_v r_e)
     use = use0 & (snr >= F["snr_min"])
     n_use = use.sum(1)
     df = np.clip(n_use - 2, 0, None)
 
     # --- step 4: per-voxel sigma with the usable echoes; smooth map where low SNR or df = 0
     sig_vox = residual_sigma(use)
-    mu_min = np.where(use, mu, np.inf).min(1)
+    mu_min = np.where(use, mur, np.inf).min(1)
     low = (df == 0) | ~np.isfinite(sig_vox) | (mu_min / sig_smooth < F["sigma_init_snr"])
     sigma = np.where(low, sig_smooth, sig_vox)
     if F.get("whiten_with", "voxel") == "smooth":
@@ -267,11 +283,11 @@ def run(S: np.ndarray, te_ms, cfg: dict, mask3d: np.ndarray | None = None, form:
     for i0 in range(0, V, chunk):
         sl = slice(i0, min(i0 + chunk, V))
         y = signal_form(S[sl], mu[sl], form)
-        pr = project(np.where(use[sl][:, :, None], y, 0.0), mu[sl] / sigma[sl, None], use[sl], te_ms)
+        pr = project(np.where(use[sl][:, :, None], y, 0.0), mur[sl] / sigma[sl, None], use[sl], te_ms)
         c[sl], r[sl], R[sl] = pr["c"], pr["r"], pr["R"]
 
     # --- step 6: static fit and diagnostics
-    s0, t2, muhat = fit_monoexp(mu, te_ms, use)
+    s0, t2, muhat = fit_monoexp(mu, te_ms, use, echo_ratios=ratios)
     with np.errstate(divide="ignore", invalid="ignore"), _quiet():
         lr = np.where(use, np.log(mu / muhat), np.nan)
         static_misfit = np.sqrt(np.nanmean(lr ** 2, axis=1))
@@ -299,7 +315,8 @@ def run(S: np.ndarray, te_ms, cfg: dict, mask3d: np.ndarray | None = None, form:
         if quiet_frames is not None and quiet_frames.sum() >= 100:   # frames nearest the median head position
             per_echo["low_drift"] = per_echo_noise(S[idx][:, :, quiet_frames], mu[idx], te_ms, form)
 
-    return {"mu": mu, "use": use, "n_use": n_use, "df": df, "nonpositive": nonpos, "snr": snr,
+    return {"mu": mu, "echo_noise_ratios": ratios, "weighting": F.get("weighting", "per_echo"),
+            "use": use, "n_use": n_use, "df": df, "nonpositive": nonpos, "snr": snr,
             "sigma": sigma, "sigma_voxel": sig_vox, "sigma_smooth": sig_smooth, "sigma_init": sig0,
             "sigma_low_snr": low, "trusted": trusted, "s0": s0, "t2s_ms": t2, "muhat": muhat,
             "static_misfit": static_misfit, "static_logres": lr, "static_curvature": static_curv,
@@ -633,7 +650,9 @@ def run_subject(run_dir, cfg: dict, out_dir, source: str = "raw", mppca: bool | 
     inf = inferior_third(mask3d, ref.affine)[mask3d]
     pct = lambda x, q=(10, 50, 90): [round(float(v), 4) for v in np.nanpercentile(x, q)]
     summ = {
-        "run_id": info["run_id"], "source": source, "mask_source": mask_source, "mask": mask_info, "n_voxels": int(V),
+        "run_id": info["run_id"], "source": source, "mask_source": mask_source, "mask": mask_info,
+        "weighting": fe["weighting"], "echo_noise_ratios_used": [round(float(x), 4) for x in fe["echo_noise_ratios"]],
+        "n_voxels": int(V),
         "n_voxels_pipeline_mask": int(pipe_mask.sum()) if pipe_mask is not None else None,
         "n_volumes": int(T), "te_ms": info["te_ms"],
         "inferior_third_note": "approximate posterior-fossa / skull-base level (inferior third of the brain mask)",
@@ -691,16 +710,17 @@ def run_subject(run_dir, cfg: dict, out_dir, source: str = "raw", mppca: bool | 
         rows = []
         for k in range(E):
             sel = np.isfinite(mp[k][mask3d])
-            ratio = float(np.nanmedian(fe["sigma"][sel]) / np.nanmedian(mp[k][mask3d][sel]))
+            sig_k = fe["sigma"] * fe["echo_noise_ratios"][k]                # residual-model sigma of echo k
+            ratio = float(np.nanmedian(sig_k[sel]) / np.nanmedian(mp[k][mask3d][sel]))
             row_q = {}
             if k in mpq:
                 selq = np.isfinite(mpq[k][mask3d])
                 row_q = {"mppca_sigma_median_quiet": float(np.nanmedian(mpq[k][mask3d][selq])),
-                         "ratio_residual_over_mppca_quiet": round(float(np.nanmedian(fe["sigma"][selq]) /
+                         "ratio_residual_over_mppca_quiet": round(float(np.nanmedian(fe["sigma"][selq] * fe["echo_noise_ratios"][k]) /
                                                                          np.nanmedian(mpq[k][mask3d][selq])), 4)}
             rows.append({"echo": k + 1, **row_q, "mu_median_same_voxels": float(np.nanmedian(fe["mu"][sel, k])),
                          "mppca_sigma_median": float(np.nanmedian(mp[k][mask3d][sel])),
-                         "residual_sigma_median_same_voxels": float(np.nanmedian(fe["sigma"][sel])),
+                         "residual_sigma_median_same_voxels": float(np.nanmedian(sig_k[sel])),
                          "ratio_residual_over_mppca": round(ratio, 4),
                          "ratio_corrected_for_simulated_bias": round(ratio / exp, 4)})
         worst = max(abs(r["ratio_corrected_for_simulated_bias"] - 1) for r in rows)
@@ -722,7 +742,8 @@ def render_summary(s: dict) -> str:
     L = [f"# Front end: {s['run_id']} ({s['source']} echoes, mask: {s.get('mask_source', 'pipeline')})", "",
          f"{s['n_voxels']} brain voxels in the analysis mask"
          + (f" (pipeline mask {s['n_voxels_pipeline_mask']})" if s.get('n_voxels_pipeline_mask') else "") + ", "
-         f"{s['n_volumes']} volumes, TE {s['te_ms']} ms. "
+         f"{s['n_volumes']} volumes, TE {s['te_ms']} ms. Weighting: {s.get('weighting', 'equal')}, "
+         f"echo noise ratios {s.get('echo_noise_ratios_used', [1.0] * len(s['te_ms']))} (sigma = echo-1 noise). "
          f"'Inferior third' = {s['inferior_third_note']} ({s['n_voxels_inferior_third']} voxels).", "",
          "| Quantity | Whole brain | Inferior third |", "|---|---|---|",
          f"| Usable fraction per echo | {s['usable_fraction_per_echo']} | {s['usable_fraction_per_echo_inferior']} |",
@@ -760,7 +781,7 @@ def render_summary(s: dict) -> str:
     if "per_echo_noise" in s:
         pe = s["per_echo_noise"]
         L += ["", "## Per-echo thermal noise from the residual, inside the brain (ratios to echo 1)", "",
-              f"Equal noise across echoes (CLAUDE.md 5.3) gives [1, 1, 1, 1]. Estimated: **{pe['ratio']}** "
+              f"Ratios used for whitening: {s.get('echo_noise_ratios_used')}. Estimated in this run: **{pe['ratio']}** "
               f"(two independent voxel halves: {pe['ratio_half_a']} / {pe['ratio_half_b']}; {pe['n_voxels']} voxels "
               f"with 4 usable echoes and echo-4 SNR >= 10; condition {pe['condition']:.0f}). The residual holds no BOLD or "
               "S0 signal, so physiology cannot inflate it; head motion and model violations can."]
@@ -775,7 +796,7 @@ def render_summary(s: dict) -> str:
               f"{b['sd_ratio_to_echo1']:.3f} | {b['n_voxels']} |" for b in s["background_noise"]]
     if "mppca_check" in s:
         m = s["mppca_check"]
-        L += ["", "## Sigma cross-check: residual vs MP-PCA (raw echoes)", "",
+        L += ["", "## Sigma cross-check per echo: residual model (sigma x ratio) vs MP-PCA (raw echoes)", "",
               f"MP-PCA on frames 0-{m.get('n_volumes', 100) - 1} and on the quietest window (start frame {m.get('quiet_window_start')}).", "",
               "| Echo | Mean signal | MP-PCA sigma | MP-PCA sigma (quiet) | Residual sigma | Ratio | Ratio (quiet) | Ratio / simulated bias |",
               "|---|---|---|---|---|---|---|---|"]
