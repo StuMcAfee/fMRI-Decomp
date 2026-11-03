@@ -132,7 +132,7 @@ What follows from this:
 
 ### 5.3 Front-end construction
 
-**Per-echo noise (user decision, 2026-11-03, option A).** The noise survey (15 runs) found echo 1 noisiest in 14 of 15 runs, so σ is **not** equal across echoes in this protocol. The front end uses σ_ve = σ_v·r_e with one study-wide ratio vector **r = [1, 0.761, 0.671, 0.602]** (`frontend.echo_noise_ratios`; median of the low-drift estimates; echo 1 = 1). Everywhere below, replace the mean μ_e used as the noise scale by the noise-scaled mean μ_e/r_e: `Xw = (m / (sigma * r))[:, None] * D`, `yw = (m / (sigma * r))[:, None] * y`, and the σ-free residual basis is built from (μ/r)∘D. σ_v is then the echo-1 noise, estimated exactly as in 5.4. `frontend.weighting: equal` restores the original equal weights; use it for the Phase 4 tedana-equivalence test (property 1 below holds only with equal weights) and as a sensitivity analysis of every main result. On simulated data with these ratios, per-echo weights whiten to within 1 % of I; equal weights miss by up to 65 %.
+**Per-echo noise (user decision, 2026-11-03, option A).** The noise survey (15 runs) found echo 1 noisiest in 14 of 15 runs, so σ is **not** equal across echoes in this protocol. The front end uses σ_ve = σ_v·r_e with one study-wide ratio vector **r = [1, 0.721, 0.631, 0.560]** (`frontend.echo_noise_ratios`; median over the 15 runs of the differenced-residual estimates, see 5.4 step 4; echo 1 = 1; user decision 2026-11-03, replacing the low-drift estimate [1, 0.761, 0.671, 0.602]). Everywhere below, replace the mean μ_e used as the noise scale by the noise-scaled mean μ_e/r_e: `Xw = (m / (sigma * r))[:, None] * D`, `yw = (m / (sigma * r))[:, None] * y`, and the σ-free residual basis is built from (μ/r)∘D. σ_v is then the echo-1 noise, estimated exactly as in 5.4. `frontend.weighting: equal` restores the original equal weights; use it for the Phase 4 tedana-equivalence test (property 1 below holds only with equal weights) and as a sensitivity analysis of every main result. On simulated data with these ratios, per-echo weights whiten to within 1 % of I; equal weights miss by up to 65 %.
 
 Batched over voxels, written here for equal σ across echoes (with per-echo noise, use m / r as above):
 
@@ -172,9 +172,11 @@ Do not add extra weighting by df or echo count. Whitening already gives unit noi
    - Magnitude noise is Rician/noncentral-χ, and in the simulation echo-4 means were biased up to 1.6× near μ/σ ≈ 1.
    - To break the chicken-and-egg loop (σ is needed to choose echoes, and echoes are needed for σ), first estimate σ only in voxels with μ_min/σ_init > ~10, using σ_init from a robust background or MP-PCA estimate.
 3. σ-free residual: build the residual basis from μ∘D only (with per-echo noise: from (μ/r)∘D). It is independent of σ_v. Then `Qperpᵀ((μ/r)∘y) = σ_v·r`.
-4. Estimate σ per voxel robustly over time:
-   - with df = 2: `σ² = median(Σ r²) / (2 ln 2)`;
-   - with df = 1: `σ² = median(r²) / 0.4549`.
+4. Estimate σ per voxel robustly over time, from **frame-to-frame differences** of the residual, Δr_t = r_t − r_(t−1) (user decision 2026-11-03; `frontend.sigma_estimator: differenced`). White thermal noise has variance 2σ² after differencing; slow, drift-paced model violations cancel. On 47159 they inflated the non-differenced σ by about 8 % (brain median).
+   - with df = 2: `σ² = median(Σ Δr²) / (2 · 2 ln 2)`;
+   - with df = 1: `σ² = median(Δr²) / (2 · 0.4549)`.
+   - The standard error is 1.10× (df = 1) and 1.12× (df = 2) that of the non-differenced form (simulation). Fast violations (e.g. respiration-paced) do not cancel.
+   - The non-differenced form (`median(Σ r²) / (2 ln 2)`, `median(r²) / 0.4549`; `sigma_estimator: residual`) is kept as a sensitivity analysis.
 5. Fit a smooth σ map (g-factor varies smoothly) and use it in low-SNR voxels and df = 0 voxels.
 6. Whiten using that σ.
 7. **Never estimate σ from temporal variance of the data.** Physiological noise scales with signal and TE, so that would be circular.
@@ -183,7 +185,7 @@ Do not add extra weighting by df or echo count. Whitening already gives unit noi
 - Motion correction resamples each volume. With trilinear interpolation, noise SD can drop to about 0.35× at half-voxel shifts. It varies frame by frame and becomes spatially correlated.
 - The ratio across echoes stays equal (the same transform is used for all echoes), so the weights remain valid.
 - Absolute σ and the unit-variance claims are approximate on motion-corrected data.
-- Run the dipy MP-PCA σ cross-check (`mppca(..., return_sigma=True)`, per echo) on **raw, non-motion-corrected** echoes. Compare it per echo with the residual model σ_v·r_e. If they differ by more than 20%, stop and report. (Under the original equal-σ model this check failed on 47159 with up to 70% disagreement; that led to the per-echo model above.)
+- Run the dipy MP-PCA σ cross-check (`mppca(..., return_sigma=True)`, per echo) on **raw, non-motion-corrected** echoes. Compare it per echo with the residual model σ_v·r_e. If they differ by more than 20%, stop and report. (Under the original equal-σ model this check failed on 47159 with up to 70% disagreement; that led to the per-echo model above. With per-echo weights and the non-differenced σ it failed again at 33–53%; that led to the differenced estimator in step 4.)
 
 ## 6. Architecture (build in this order)
 

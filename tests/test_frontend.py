@@ -179,7 +179,7 @@ def test_d_sigma_recovery(cfg, record_property):
     record_property("sigma_median_rel_err", float(np.median(err)))
     assert abs(np.median(err)) < 0.02
     vox = ok & ~fe["sigma_low_snr"]
-    se = frontend.sigma_rel_se(fe["df"][vox], sim.n_volumes) * true[vox]
+    se = frontend.sigma_rel_se(fe["df"][vox], sim.n_volumes, difference=fe["sigma_estimator"] == "differenced") * true[vox]
     within = np.mean(np.abs(fe["sigma"][vox] - true[vox]) < 3 * se)
     record_property("fraction_within_3SE", float(within))
     assert within >= 0.95
@@ -487,8 +487,8 @@ def test_differenced_residual_sigma_resists_slow_violations(cfg, record_property
     note(sim, record_property, f" (slow violation {'on' if slow else 'off'})")
     fe = run_fe(sim, cfg)
     true = sim.sigma[sim.mask]
-    ok = np.isfinite(fe["sigma_voxel"]) & np.isfinite(fe["sigma_diff"]) & ~fe["sigma_low_snr"]
-    med_vox = float(np.median(fe["sigma_voxel"][ok] / true[ok]))
+    ok = np.isfinite(fe["sigma_plain"]) & np.isfinite(fe["sigma_diff"]) & ~fe["sigma_low_snr"]
+    med_vox = float(np.median(fe["sigma_plain"][ok] / true[ok]))
     med_diff = float(np.median(fe["sigma_diff"][ok] / true[ok]))
     record_property("sigma_voxel_over_true", med_vox)
     record_property("sigma_diff_over_true", med_diff)
@@ -499,7 +499,7 @@ def test_differenced_residual_sigma_resists_slow_violations(cfg, record_property
         assert med_vox > 1.10                                          # the violation inflates the median-based estimate
     else:
         assert med_vox == pytest.approx(1.0, abs=0.03)
-    # the same data with the differenced estimator switched on for whitening
+    # the differenced estimator used for whitening (the configured default)
     fd = run_fe(sim, io.merge(cfg, {"frontend": {"sigma_estimator": "differenced"}}))
     okd = np.isfinite(fd["sigma"]) & ~fd["sigma_low_snr"]
     med_used = float(np.median(fd["sigma"][okd] / true[okd]))
@@ -507,3 +507,14 @@ def test_differenced_residual_sigma_resists_slow_violations(cfg, record_property
     assert fd["sigma_estimator"] == "differenced"
     assert np.array_equal(fd["sigma_voxel"], fd["sigma_diff"], equal_nan=True)
     assert med_used == pytest.approx(1.0, abs=0.03)
+
+
+@pytest.mark.parametrize("df", [1, 2])
+def test_differenced_sigma_se(df):
+    """The differenced estimator is unbiased for white noise and its spread matches sigma_rel_se(difference=True)."""
+    rng = np.random.default_rng(SEED + 31)
+    T, V = 400, 20000
+    u = rng.standard_normal((V, df, T))
+    s = frontend.sigma_from_residual(u, np.full(V, df), difference=True)
+    assert np.mean(s) == pytest.approx(1.0, abs=0.003)
+    assert np.std(s) / frontend.sigma_rel_se(df, T, difference=True) == pytest.approx(1.0, abs=0.04)

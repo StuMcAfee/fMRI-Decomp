@@ -115,11 +115,20 @@ def chi2_median(df) -> np.ndarray:
     return stats.chi2.median(np.asarray(df, float))
 
 
-def sigma_rel_se(df, n_frames: int) -> np.ndarray:
-    """Relative standard error of the median-based sigma: 1 / (4 sqrt(n) f(m) m), m the chi2 median."""
+# SE inflation of the differenced estimator: consecutive differences share a frame (correlation -0.5).
+# Measured by simulation (white noise, 40000 voxels, 400 frames, 2026-11-03): 1.103 (df 1), 1.124 (df 2).
+DIFF_SE_INFLATION = {1: 1.103, 2: 1.124}
+
+
+def sigma_rel_se(df, n_frames: int, difference: bool = False) -> np.ndarray:
+    """Relative standard error of the median-based sigma: 1 / (4 sqrt(n) f(m) m), m the chi2 median.
+    difference=True: the frame-to-frame differenced estimator (larger by DIFF_SE_INFLATION)."""
     df = np.asarray(df, float)
     m = stats.chi2.median(df)
-    return 1.0 / (4.0 * np.sqrt(n_frames) * stats.chi2.pdf(m, df) * m)
+    se = 1.0 / (4.0 * np.sqrt(n_frames) * stats.chi2.pdf(m, df) * m)
+    if difference:
+        se = se * np.where(df >= 2, DIFF_SE_INFLATION[2], DIFF_SE_INFLATION[1])
+    return se
 
 
 def sigma_from_residual(u: np.ndarray, df: np.ndarray, difference: bool = False) -> np.ndarray:
@@ -731,7 +740,7 @@ def run_subject(run_dir, cfg: dict, out_dir, source: str = "raw", mppca: bool | 
         rows = []
         for k in range(E):
             sel = np.isfinite(mp[k][mask3d])
-            sig_k = fe["sigma"] * fe["echo_noise_ratios"][k]                # residual-model sigma of echo k
+            sig_k = fe["sigma"] * fe["echo_noise_ratios"][k]                # model sigma of echo k (estimator in use)
             ratio = float(np.nanmedian(sig_k[sel]) / np.nanmedian(mp[k][mask3d][sel]))
             row_q = {}
             if k in mpq:
