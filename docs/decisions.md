@@ -418,7 +418,7 @@ Gate test: K = 30 planted components at 2-20x the noise edge.
   - index-by-index parallel analysis under-counts (22-26). The null inherits the components' power when rows share a spectrum.
   - deflated (sequential) parallel analysis over-counts (runs to k_max). Its null's top eigenvalue sits ~2 % below the data's first noise eigenvalue once the strong components are removed.
   - Mirror extension fixes the randomization itself (pure coloured noise: null within ~1 %). The deflation step is the open problem.
-- The colored-noise and projected-data cases are marked as known failures (strict xfail) until fixed.
+- The coloured-noise, pure-coloured-noise and projected-data cases are marked as known failures (strict xfail) until fixed. On pure coloured noise the deflated search also runs to k_max, so on real (coloured) data expect k deflated = k_max; the overnight rank step will be slow for that reason.
 
 **Gate not passed.** The overnight run on 47159 is exploratory: front end with the surrogate check, then all rank estimates and the real-data spectra. The spectra are required for the gate anyway and will show which estimator to fix.
 
