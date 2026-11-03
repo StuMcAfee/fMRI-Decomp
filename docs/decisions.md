@@ -318,3 +318,21 @@ Decision (user, 2026-11-03):
 (c) Rerun 47159 (raw with MP-PCA; mc for the maps). Rule fixed in advance: all four echoes within 20 % of MP-PCA (after the simulated 2 % bias) -> the MP-PCA check passes; otherwise stop, no further tuning of the noise model; the user decides whether the remaining gap is an accepted limitation.
 
 Standard error of the differenced estimator: 1.103x (df 1) and 1.124x (df 2) the non-differenced one (simulation, white noise; unbiased); `sigma_rel_se(..., difference=True)` and test (d) use it. 57 tests pass under seeds 0, 1 and 2.
+
+### 2026-11-03: MP-PCA check split into level and shape (user decision, before the 47159 rerun results)
+
+The single rule (every echo's model / MP-PCA sigma within 20 %) mixed two things with different consequences:
+- **Shape**, the echo ratios. Errors change the echo weighting. Worst case over sign patterns and T2* 20-70 ms: 5 % -> channel variances off by 10 %, c0-c1 noise correlation 0.05; 10 % -> 21 %, 0.11; 20 % -> 44 %, 0.22.
+- **Level**, the overall scale. It only rescales the channels and leaves the separation unchanged. It affects echo usability (snr_min), the noise-debiasing term of eta, and the residual-based thermal rank null. The gated rank estimate and the eta significance test use data-driven nulls.
+
+The 20 % figure was a planning-session choice, not derived.
+
+New rule:
+- **Shape**: each echo's ratio / echo 1's within 1 +/- 0.10 (`frontend.mppca_shape_tolerance`).
+- **Level**: echo-1 ratio after the simulated bias within 1 +/- 0.20 (`frontend.mppca_level_tolerance`; unchanged).
+
+The summary also reports the channel noise covariance implied if MP-PCA's echo ratios were the truth.
+
+This is stricter than before (the level limit is unchanged; shape is tightened). It was set before the rerun results, but after the approximate estimate (level ~1.10, shape within ~0.07). The reason for the change is the consequence analysis above, not the expected outcome. MP-PCA is not ground truth: a fail means the two estimators disagree, not which one is wrong.
+
+`mejoint mppca-recheck <summary.json>` re-evaluates outputs made before this rule. 62 tests pass under seeds 0 and 1.

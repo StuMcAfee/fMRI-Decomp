@@ -292,6 +292,18 @@ def test_run_subject_end_to_end(cfg, tmp_path, record_property):
     assert "Sigma cross-check" in (out / "summary.md").read_text()
     assert "frame_energy_vs_fd_spearman" in summ
     record_property("mppca_ratios", [r["ratio_residual_over_mppca"] for r in summ["mppca_check"]["per_echo"]])
+    # an output made under the old single 20 % rule is re-evaluated under the level/shape rule
+    import json
+    old_style = json.loads((out / "summary.json").read_text())
+    rows = old_style["mppca_check"]["per_echo"]
+    for r, c in zip(rows, [1.12, 1.09, 1.11, 1.20]):
+        r["ratio_corrected_for_simulated_bias"] = c
+    old_style["mppca_check"] = {"per_echo": rows, "tolerance": 0.2, "max_abs_deviation": 0.2, "verdict": "STOP: old rule"}
+    (out / "summary.json").write_text(json.dumps(old_style))
+    s2 = frontend.recheck_mppca(out / "summary.json", cfg)
+    assert s2["mppca_check"]["verdict"] == "OK" and s2["mppca_check"]["rechecked"]
+    assert s2["mppca_check"]["shape_max_deviation"] == pytest.approx(1.20 / 1.12 - 1, abs=1e-3)
+    assert "re-evaluated" in (out / "summary.md").read_text()
 
 
 def test_excluded_subject_is_refused(cfg, tmp_path):
@@ -518,3 +530,25 @@ def test_differenced_sigma_se(df):
     s = frontend.sigma_from_residual(u, np.full(V, df), difference=True)
     assert np.mean(s) == pytest.approx(1.0, abs=0.003)
     assert np.std(s) / frontend.sigma_rel_se(df, T, difference=True) == pytest.approx(1.0, abs=0.04)
+
+
+def _mp_rows(corr, mu=(10466.0, 7688.0, 5613.0, 3983.0)):
+    return [{"echo": k + 1, "ratio_corrected_for_simulated_bias": c, "mu_median_same_voxels": m}
+            for k, (c, m) in enumerate(zip(corr, mu))]
+
+
+@pytest.mark.parametrize("corr, verdict", [
+    ([1.10, 1.05, 1.13, 1.18], "OK"),                 # level 1.10, shape within 0.08
+    ([1.10, 1.10, 1.10, 1.10], "OK"),                 # pure level error: shape exactly 1
+    ([1.25, 1.25, 1.25, 1.25], "STOP: level"),        # level outside 1 +/- 0.20
+    ([1.00, 1.00, 1.00, 1.15], "STOP: shape"),        # echo 4 ratio 15 % off
+    ([0.93, 1.33, 1.45, 1.73], "STOP: shape"),        # the original equal-sigma failure: level fine, shape far off
+])
+def test_mppca_verdict_level_and_shape(cfg, corr, verdict):
+    out = frontend.mppca_verdict(_mp_rows(corr), cfg, cfg["acquisition"]["te_ms"], cfg["frontend"]["echo_noise_ratios"])
+    assert out["verdict"].startswith(verdict)
+    if corr == [1.10, 1.10, 1.10, 1.10]:              # equal shape: MP-PCA's ratios = ours, channels exactly white
+        assert out["implied_channel_variance_max_deviation"] < 1e-9
+        assert abs(out["implied_c0_c1_noise_correlation"]) < 1e-9
+    if corr[-1] == 1.15 and corr[0] == 1.0:
+        assert "shape" in out["verdict"] and "level" not in out["verdict"]

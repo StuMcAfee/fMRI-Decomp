@@ -56,6 +56,10 @@ def main(argv=None) -> int:
     fa.add_argument("--force", action="store_true", help="rerun runs already done with the same config (after a code change)")
     fa.add_argument("--config", help="config YAML (default: configs/default.yaml)")
 
+    rc = sub.add_parser("mppca-recheck", help="re-evaluate the MP-PCA verdict of existing front-end outputs (level/shape rule)")
+    rc.add_argument("summaries", nargs="+", help="summary.json file(s) of front-end runs on raw echoes")
+    rc.add_argument("--config", help="config YAML (default: configs/default.yaml)")
+
     mq = sub.add_parser("mask-qc", help="build the analysis mask for every run and tabulate it (raw echoes 1 and 4)")
     mq.add_argument("--pipeline-out", required=True, help="mbme_tedana --out folder")
     mq.add_argument("--out", required=True, help="output folder")
@@ -95,6 +99,15 @@ def main(argv=None) -> int:
                                force=args.force)
         print(f"Survey: {args.out}/noise_survey.md")
         return 1 if any("error" in r for r in rows) else 0
+    elif args.cmd == "mppca-recheck":
+        from . import frontend
+        status = 0
+        for f in args.summaries:
+            m = frontend.recheck_mppca(f, cfg)["mppca_check"]
+            print(f"{f}\n  level {m['level']}, shape {m['shape']}, implied c0-c1 noise corr "
+                  f"{m.get('implied_c0_c1_noise_correlation')}\n  verdict: {m['verdict']}")
+            status = status or (0 if m["verdict"] == "OK" else 3)
+        return status
     elif args.cmd == "mask-qc":
         from . import mask
         rows = mask.qc_all(args.pipeline_out, cfg, args.out)
