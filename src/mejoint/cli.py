@@ -72,6 +72,12 @@ def main(argv=None) -> int:
     dc.add_argument("--out", required=True, help="output folder (one subfolder per k)")
     dc.add_argument("--k", type=int, action="append", help="k (repeatable); default: MAPCA estimates from --rank-dir + decompose.k_sweep_fixed")
     dc.add_argument("--rank-dir", help="Phase 3 rank output (rank.json with the MAPCA estimates)")
+    dc.add_argument("--tissue-dir", help="tissue classes (mejoint tissue output) for eta by class and the partial-volume diagnostic")
+
+    ts = sub.add_parser("tissue", help="Phase 5 data-only tissue classes and partial-volume coupling from a front-end output")
+    ts.add_argument("--frontend-dir", required=True)
+    ts.add_argument("--out", required=True)
+    ts.add_argument("--config", help="config YAML (default: configs/default.yaml)")
     dc.add_argument("--config", help="config YAML (default: configs/default.yaml)")
 
     rk = sub.add_parser("rank", help="Phase 3 rank of the stacked channels of one front-end output folder")
@@ -134,8 +140,12 @@ def main(argv=None) -> int:
         print(open(f"{args.out}/nuisance_compare.md").read())
     elif args.cmd == "decompose":
         from . import decompose
-        rows = decompose.run_sweep(args.frontend_dir, cfg, args.out, rank_dir=args.rank_dir, ks=args.k)
+        rows = decompose.run_sweep(args.frontend_dir, cfg, args.out, rank_dir=args.rank_dir, ks=args.k, tissue_dir=args.tissue_dir)
         print(open(f"{args.out}/sweep.md").read())
+    elif args.cmd == "tissue":
+        from . import tissue
+        tissue.run_dir(args.frontend_dir, cfg, args.out)
+        print(open(f"{args.out}/tissue.md").read())
     elif args.cmd == "rank":
         from . import rank
         res = rank.run_dir(args.frontend_dir, cfg, args.out)

@@ -231,7 +231,94 @@ def bootstrap_norms(c0, c1, R, dec: dict, n_boot: int, block: int, rng) -> dict:
     return {"s_ci": np.percentile(NS, [2.5, 97.5], axis=0), "q_ci": np.percentile(NQ, [2.5, 97.5], axis=0)}
 
 
-def measure(dec: dict, c0, c1, R, cfg: dict, rng, Q=None, frames: dict | None = None) -> dict:
+def tissue_summary(m0, m1, vb, R, classes: np.ndarray, kappa: np.ndarray, q_full=None, q_full_sd=None,
+                   z_min: float = 2.5, min_s0_share: float = 0.05, consistent_margin: float = 0.10,
+                   f_long=None, f_long_max: float = 0.9) -> list[dict]:
+    """Per component (cross-fitted maps): eta and energy share within each data-only class, and the
+    partial-volume diagnostic (option c). Across tissue, mixed and CSF-dominated voxels with a long-T2*
+    fraction <= f_long_max (kappa diverges only near pure CSF; at fraction 0.7 the prediction matched the
+    observed dS0 within 2 % in simulation, so excluding CSF-dominated voxels lost the evidence), and where
+    the component is present (|q| of the
+    full-data map > z_min noise SDs; over the whole brain the noise of ~10^4 empty voxels dilutes beta
+    to ~0.1 even when partial volume explains the component), the dS0 map s is regressed on the map that
+    partial volume predicts, x = kappa q, with S0-energy weights ws = R01^2 + R11^2:
+        two explanations of the dS0 energy are compared in those voxels: the partial-volume prediction
+    s = kappa q (no free parameter) and the best constant ratio s = alpha q. pv_explained close to
+    ratio_explained: the dS0 is consistent with partial volume; pv_explained much lower (or negative): it
+    is not (e.g. a physiological dS0 with its own sign and size). A single free regression on kappa q could
+    not tell them apart (mixed source: beta -1.9), and a two-regressor fit was unstable because kappa varies
+    little within one footprint. eta_pv_removed = eta after subtracting exactly kappa q in those voxels. s = m1 / R11 and q = (m0 - R01 s) / R00 share channel noise:
+    var(s) = vb / R11^2, var(q) = vb (1 + R01^2 / R11^2) / R00^2, cov(s, q) = -R01 vb / (R11^2 R00)."""
+    from .tissue import CLASS_NAMES
+
+    R00, R01, R11 = R[:, 0, 0][:, None], R[:, 0, 1][:, None], R[:, 1, 1][:, None]
+    vb = np.asarray(vb, float)
+    vb = vb if vb.ndim == 2 else np.broadcast_to(vb.reshape(1, -1), m0.shape)
+    k_ms = (kappa * 1000.0)[:, None]                                    # per unit dR2* in 1/ms
+    base = np.isfinite(m0) & np.isfinite(m1) & (R11 > 0)
+    sel = base & np.isfinite(k_ms) & np.isin(classes, [1, 2, 3])[:, None]
+    if f_long is not None:                                   # kappa diverges only near pure CSF
+        sel &= (np.nan_to_num(f_long, nan=1.0) <= f_long_max)[:, None]
+    if q_full is not None:
+        with np.errstate(divide="ignore", invalid="ignore"):
+            sel &= np.abs(q_full) > z_min * q_full_sd
+    with np.errstate(divide="ignore", invalid="ignore"):
+        s = m1 / R11
+        q = (m0 - R01 * s) / R00                                        # 1/ms
+        var_s = vb / R11 ** 2
+        var_q = vb * (1 + R01 ** 2 / R11 ** 2) / R00 ** 2
+        cov = -R01 * vb / (R11 ** 2 * R00)
+        ws = R01 ** 2 + R11 ** 2
+        x = k_ms * q
+    z = lambda a, m: np.where(m, a, 0.0)
+    e_r2 = z((R00 * q) ** 2 - vb * (1 + R01 ** 2 / R11 ** 2), base).sum(0)
+    e_s0 = z(ws * (s ** 2 - var_s), base).sum(0)
+    # "eta if the predicted partial-volume dS0 were removed": s - kappa q in the selected voxels
+    with np.errstate(invalid="ignore"):
+        s_res = np.where(sel, s - x, s)
+        var_res = np.where(sel, var_s + k_ms ** 2 * var_q - 2 * k_ms * cov, var_s)
+    e_s0_res = z(ws * (s_res ** 2 - var_res), base).sum(0)
+    # two one-line explanations of the dS0 in the selected voxels (noise-debiased energies):
+    #   partial volume, s = kappa q (no free parameter), vs a free constant ratio, s = alpha q
+    e_none = z(ws * (s ** 2 - var_s), sel).sum(0)
+    e_r2_sel = z((R00 * q) ** 2 - vb * (1 + R01 ** 2 / R11 ** 2), sel).sum(0)
+    e_pv = z(ws * (s_res ** 2 - var_res), sel).sum(0)
+    S11 = z(ws * (q ** 2 - var_q), sel).sum(0)
+    b1 = z(ws * (q * s - cov), sel).sum(0)
+    n_sel = sel.sum(0)
+    out = []
+    for j in range(m0.shape[1]):
+        tot = e_s0[j] + e_r2[j]
+        row = {"pv_n_voxels": int(n_sel[j])}
+        share = e_none[j] / (e_none[j] + e_r2_sel[j]) if e_none[j] + e_r2_sel[j] > 0 else 0.0
+        row["s0_share_where_present"] = round(float(share), 4)
+        if n_sel[j] < 20 or S11[j] <= 0:
+            row["pv_verdict"] = "too few voxels with dR2*"
+        elif share < min_s0_share:
+            row["pv_verdict"] = "no dS0 to explain"
+        else:
+            alpha = b1[j] / S11[j]
+            pv = 1 - e_pv[j] / e_none[j]
+            ratio = alpha ** 2 * S11[j] / e_none[j]
+            row["pv_explained"] = round(float(pv), 4)                       # partial-volume prediction, no free parameter
+            row["ratio_explained"] = round(float(ratio), 4)                 # best constant s/q ratio
+            row["ratio_dS0_per_s"] = round(float(alpha) / 1000.0, 6)        # that ratio (dS0/S0 per s^-1)
+            row["pv_verdict"] = ("consistent with partial volume" if pv > 0 and pv >= ratio - consistent_margin
+                                 else "not partial volume")
+        if e_s0_res[j] + e_r2[j] > 0:
+            row["eta_pv_removed"] = round(float(e_s0_res[j] / (e_s0_res[j] + e_r2[j])), 4)
+        for c, name in CLASS_NAMES.items():
+            msk = (classes == c)
+            if msk.sum() < 20:
+                continue
+            en = energies(m0[msk][:, [j]], m1[msk][:, [j]], R[msk], vb[msk][:, [j]])
+            row[f"share_{name}"] = round(float(en["total"][0] / tot), 4) if tot > 0 else None
+            row[f"eta_{name}"] = round(float(en["eta"][0]), 4) if np.isfinite(en["eta"][0]) else None
+        out.append(row)
+    return out
+
+
+def measure(dec: dict, c0, c1, R, cfg: dict, rng, Q=None, frames: dict | None = None, tissue: dict | None = None) -> dict:
     """All per-component measurements for one decomposition."""
     Mc = cfg["metrics"]
     M = dec["time_courses"]
@@ -276,6 +363,18 @@ def measure(dec: dict, c0, c1, R, cfg: dict, rng, Q=None, frames: dict | None = 
                     row[f"corr_{key}"] = round(float(np.corrcoef(t, f)[0, 1]), 4)
                     row[f"corr_power_{key}"] = round(float(np.corrcoef(t ** 2, f)[0, 1]), 4)
         rows.append(row)
+    if tissue is not None:
+        R00, R01, R11 = R[:, 0, 0][:, None], R[:, 0, 1][:, None], R[:, 1, 1][:, None]
+        vbf = np.broadcast_to(np.asarray(dec["beta_noise_var"], float).reshape(1, -1), m0.shape)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            q_sd = np.sqrt(vbf * (1 + R01 ** 2 / R11 ** 2)) / R00 * 1000.0      # SD of the full-data q (s^-1)
+        ts = tissue_summary(m0, m1, vb, R, tissue["classes"], tissue["kappa"], q_full=dec["q_per_s"], q_full_sd=q_sd,
+                            z_min=float(cfg["metrics"].get("pv_z_min", 2.5)),
+                            min_s0_share=float(cfg["metrics"].get("pv_min_s0_share", 0.05)),
+                            consistent_margin=float(cfg["metrics"].get("pv_consistent_margin", 0.10)),
+                            f_long=tissue.get("f_long"), f_long_max=float(cfg["metrics"].get("pv_f_long_max", 0.9)))
+        for row, t in zip(rows, ts):
+            row.update(t)
     return {"components": rows, "null": {"threshold": float(thr), "quantile": qn, "family_wise": True,
                                          "threshold_first_pass": thr1, "n_removed_for_null": int(strong.sum()),
                                          "n_surrogates": int(pipe["total"].shape[0]),
