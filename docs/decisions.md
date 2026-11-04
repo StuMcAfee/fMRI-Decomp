@@ -593,3 +593,30 @@ Equivalence beyond the signal count: at k = 8 with 6 signals, the 6 signal compo
 
 Remaining for the gate: real-data run on 47159 across the sweep (MAPCA 13 / 24 / 28 and 50 / 70 / 90), with stability reported.
 User confirmed all three changes (cross-fitted eta; family-wise surrogate null with two passes; band margin), 2026-11-04. CLAUDE.md 7.1 updated. 47159 Phase 4 sweep submitted by the user.
+
+### 2026-11-04: Phase 4 sweep on 47159 (mc, 24 regressors): first real-data results
+
+| k | Restarts converged | Median stability | Variance in k dims | Labels |
+|---|---|---|---|---|
+| 13 | 30 / 30 | 1.000 | 34 % | all "mixed", all above null |
+| 24 | 30 / 30 | 1.000 | 39 % | all "mixed", all above null |
+| 28 | 30 / 30 | 1.000 | 40 % | all "mixed", all above null |
+| 50 | 30 / 30 | 0.999 | 44 % | all "mixed", all above null |
+| 70 | 30 / 30 | 0.997 | 47 % | all "mixed", all above null (energy / null 11-430) |
+| 90 | 30 / 30 | 0.999 | 50 % | all "mixed", all above null |
+
+**Component types** (figures at k = 24 and 70):
+- motion spikes (single large events, edge maps);
+- fast breathing-band oscillations with edge and posterior-fossa maps;
+- slow network-like fluctuations.
+
+**eta** orders them physically: slow network-like components 0.18-0.23 (the lowest), breathing-band and edge components ~0.43-0.47, motion-spike components up to ~0.6.
+
+**Problems found:**
+1. **||s||, ||q|| bootstrap intervals sat above their own estimates** (e.g. 1.17 [1.25, 1.81]). A plain map norm is biased upward by noise, and resampling frames adds noise. Fixed: the norms and every bootstrap replicate now use the cross-fitted maps with the expected noise removed, using the weighted-refit beta variance diag(G^-1 M^T W^2 M G^-1). Simulation: planted norms recovered within 2 % and inside their intervals (new test). The 47159 sweep needs a rerun for the corrected norms.
+2. **The energy null is uninformative on real data:** every component is above it at every k. Same root cause as Phase 3: coloured, nonstationary noise counts as structure for phase-randomized surrogates. The tests pass because simulated noise is stationary.
+3. **Labels are uninformative on real data:** all "mixed", because the matched-SNR bands contain thermal noise only and are +/- 0.002-0.02 wide for strong components. Real-data bands need injection (Phase 5). Until then eta is read as a continuous measure.
+
+**Open question:** eta ~0.2 for the most BOLD-like components. Candidates: real intravascular / inflow dS0 (CLAUDE.md 7.1), or partial volume with CSF. A voxel mixing tissue and CSF has a BOLD change that is not linear in TE, and a linear fit in TE then produces an apparent dS0 intercept. Unverified; testable with a two-compartment simulation.
+
+**Note on stability:** the 30 restarts use the same data, so stability measures how reproducibly ICA converges, not reliability. Split-half reliability is a Phase 5 test.

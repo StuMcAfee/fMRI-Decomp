@@ -208,3 +208,25 @@ def test_run_sweep_end_to_end(tmp_path):
                          text=True, env={**os.environ, "PYTHONPATH": os.path.join(os.path.dirname(__file__), "..", "src")})
     assert res.returncode == 0, res.stderr
     assert (tmp_path / "p4" / "k3" / "components.png").exists()
+
+
+def test_debiased_norms_recover_the_planted_norms_and_sit_inside_their_intervals(planted, record_property):
+    """||q|| for dR2* sources and ||s|| for dS0 sources (debiased, cross-fitted) match the planted map
+    norms, and each estimate lies inside its bootstrap interval (the undebiased version did not on
+    real data)."""
+    sim, fe, dec, me = planted[6]
+    m = sim.mask
+    out = {}
+    for src in sim.sources:
+        j = match(sim, dec, src)[0]
+        row = me["components"][j]
+        if src["kind"] == "r2":
+            true, est, ci = np.linalg.norm(src["q_map"][m]), row["norm_q_per_s"], row["norm_q_ci"]
+        elif src["kind"] == "s0":
+            true, est, ci = np.linalg.norm(src["s_map"][m]), row["norm_s"], row["norm_s_ci"]
+        else:
+            continue
+        out[src["name"]] = (round(float(true), 4), round(est, 4), [round(x, 4) for x in ci])
+        assert est == pytest.approx(true, rel=0.15), src["name"]
+        assert ci[0] <= est <= ci[1], src["name"]
+    record_property("norms_true_est_ci", out)

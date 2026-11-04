@@ -134,11 +134,13 @@ def glm_maps(X: np.ndarray, M: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 def crossfit_maps(X, S, M, voxel, half_vox) -> tuple[np.ndarray, np.ndarray]:
     """Betas of each row on time courses estimated from the OTHER half of the voxels.
     S: (n, k) spatial maps of the stacked rows; M: (T, k) full-data time courses (for sign alignment).
-    Returns betas (n, k) and their noise variance (n, k) for unit white noise."""
+    Returns betas (n, k), their noise variance (n, k) for unit white noise, and the two half time
+    courses: Ms[0] is estimated from half A (used for half-B voxels), Ms[1] from half B."""
     n, k = S.shape
     B = np.full((n, k), np.nan)
     VB = np.full((n, k), np.nan)
     in_a = half_vox[voxel]
+    Ms = []
     for est, use in ((in_a, ~in_a), (~in_a, in_a)):
         Se, Xe = S[est], X[est]
         Mh = np.linalg.solve(Se.T @ Se, Se.T @ Xe).T                    # (T, k) time courses from this half
@@ -147,7 +149,8 @@ def crossfit_maps(X, S, M, voxel, half_vox) -> tuple[np.ndarray, np.ndarray]:
         Mh = Mh * np.where(sg == 0, 1, sg)
         b, vb = glm_maps(X[use], Mh)
         B[use], VB[use] = b, vb[None, :]
-    return B, VB
+        Ms.append(Mh)
+    return B, VB, Ms
 
 
 def decompose(c0, c1, R, cfg: dict, k: int, seed_root, n_jobs: int | None = None, mask3d=None) -> dict:
@@ -189,7 +192,7 @@ def decompose(c0, c1, R, cfg: dict, k: int, seed_root, n_jobs: int | None = None
     else:
         half_vox = rng_h.permutation(V) < V // 2
     S_rows = pc["Y"] @ Wf.T                                            # (n, k) spatial maps of the stacked rows
-    Bcf, VBcf = crossfit_maps(X, S_rows, M, st["voxel"], half_vox)
+    Bcf, VBcf, Ms_cf = crossfit_maps(X, S_rows, M, st["voxel"], half_vox)
     m0_cf = np.full((V, M.shape[1]), np.nan)
     m1_cf = np.full((V, M.shape[1]), np.nan)
     vb_cf = np.full((V, M.shape[1]), np.nan)
@@ -206,6 +209,7 @@ def decompose(c0, c1, R, cfg: dict, k: int, seed_root, n_jobs: int | None = None
     stab = np.array(stab)                                              # (R, k)
     return {"k": int(k), "time_courses": M, "m0": m0, "m1": m1, "s": s, "q_per_s": q,
             "m0_cf": m0_cf, "m1_cf": m1_cf, "vb_cf": vb_cf,
+            "crossfit": {"half_vox": half_vox, "M_from_A": Ms_cf[0], "M_from_B": Ms_cf[1]},
             "beta_noise_var": vb, "iq": cl["iq"], "n_runs_in_cluster": cl["n_runs"], "cluster_size": cl["size"],
             "stability_median": np.median(stab, axis=0), "stability_p10": np.percentile(stab, 10, axis=0),
             "n_restarts": len(runs), "n_converged": int(sum(r["converged"] for r in runs)),
