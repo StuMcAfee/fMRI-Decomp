@@ -157,6 +157,22 @@ rank:                         # Phase 3: dimensionality of the stacked whitened 
   sweep_fixed: [50, 70, 90]     # fixed k always run in Phase 4 (CLAUDE.md), alongside the MAPCA estimates
   mapca: true                   # MAPCA AIC / KIC / MDL via the mapca package (tedana's estimator)
 
+decompose:                    # Phase 4 option 1: joint spatial ICA on [c0 | c1] (CLAUDE.md 7.1)
+  n_restarts: 30                # FastICA restarts (robustica-style clustering); >= 30 (CLAUDE.md)
+  max_iter: 1000
+  tol: 1.0e-6
+  fun: logcosh
+  k_sweep_fixed: [50, 70, 90]   # plus MAPCA AIC / KIC / MDL from the Phase 3 rank output (no gated k; user decision 2026-11-04)
+
+metrics:                      # Phase 4 per-component measurements
+  n_null: 200                   # single random Gaussian / phase-randomized time courses (reported only: they ignore that components are top-variance directions)
+  n_null_pipeline: 20           # energy null for significance: top-k PCA directions of phase-randomized surrogates (same selection as the components); family-wise (largest of k); their mean E_S0, E_R2 = selection bias removed before eta
+  eta_label_margin: 0.05        # decomposition cross-talk added to the matched-SNR (thermal-only) bands; simulation: pure S0 eta 0.971, pure R2* 0.018
+  null_quantile: 0.95
+  band_mc: 100                  # Monte Carlo draws per component for the matched-SNR eta bands
+  n_boot: 100                   # block bootstrap of frames for ||s||, ||q|| intervals
+  boot_block_frames: 20         # 15 s blocks at TR 0.75 s
+
 mask:                         # analysis mask built from the input echoes (mask.py); user decision 2026-11-02
   border_vox: 3               # image border used to measure the air (noise) level
   k_head: 4.0                 # head = echo-1 mean > 4 x air level (Rician noise mean ~1.25 sigma: ~5 sigma)

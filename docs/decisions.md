@@ -558,3 +558,37 @@ What the attempts established:
 - the index-by-index null inherits shared spectral power;
 - deflation depletes coloured noise;
 - phase-randomized nulls cannot represent nonstationary noise at this sample size.
+
+### 2026-11-04: Phase 4 built (option 1 + metrics); simulation gate passes
+
+**Implementation** (`decompose.py`, `metrics.py`, `mejoint decompose`, `scripts/phase4_subject.lsf`, `scripts/plot_components.py`):
+- Stacked [c0 | c1] rows; T x T Gram PCA in float64; reduce to k ourselves.
+  Verified in scikit-learn 1.9.1: with `whiten=False`, FastICA ignores `n_components` (with a warning) and treats the input as already whitened; `components_` is the unmixing matrix. The cluster's version is recorded in `done.json`.
+- 30 FastICA restarts in parallel (joblib; 1 BLAS thread each), clustered on |map correlation| (= |w_a . w_b| in the whitened space). Per cluster: centrotype, Iq, restarts present.
+- Joint GLM maps; back-substitution to s and q (s^-1); sign = positive skewness of [m0 | m1].
+- Stability across the 30 restarts: Hungarian on |corr|, median per component.
+
+**Metrics: three changes from CLAUDE.md 7.1 as written, each found in simulation:**
+1. **eta uses cross-fitted maps.** Each voxel's betas come from a time course estimated from the other voxel half (readout slabs). The fixed-regressor debiasing of 7.1 assumes the regressor was not chosen with the same noise. ICA time courses are, so a pure dR2* source showed E_S0 = 8.9 of 98 (eta 0.09, "mixed"). Subtracting a constant selection bias over-corrected strong components (eta 4.0).
+2. **Energy null through the same selection, family-wise.** Single random or phase-randomized time courses ignore that components are top-variance directions: on pure noise every component sat ~10x above that null. The null is now the top-k PCA directions of phase-randomized surrogates (20), and a component must beat the 0.95 quantile of the largest of the k.
+   - Two passes: components above a first, conservative null are removed before the final surrogates. Otherwise the surrogates inherit the strong components' power (threshold 154 rejected a 148-energy dS0 source).
+   - On pure noise nothing is removed, because removing selected noise directions depletes the null (a false positive when it was done).
+3. **Labels use matched-SNR bands plus a 0.05 cross-talk margin.** The bands hold thermal noise only, while ICA leaves a few % cross-talk (pure dS0 eta 0.971 against a band starting at 0.978). Real-data bands by injection belong to Phase 5.
+
+**Gate tests** (tests/test_decompose.py; seeds 0 and 1: 12 passed each; plus an end-to-end test). Simulation: 32 x 32 x 18 grid, 400 volumes, thermal SNR per echo 106 / 78 / 57 / 42, tSNR ~106 / 107 / 90 / 75.
+
+| Test | Result |
+|---|---|
+| Planted recovery: 2 dR2*-only (0.5 s^-1), 2 dS0-only (1.5 %), mixed same / opposite sign, at k = 6 and 10 | time courses |r| >= 0.976; q >= 0.976; s >= 0.966 (footprint + 2 voxels) |
+| eta bands | dR2* ~0.00 (R2*-dominant); dS0 0.97-1.01 (S0-dominant); mixed 0.36-0.38 (mixed) |
+| Pure noise (2 seeds) | no component above the null |
+| dR2*-only data | every significant component R2*-dominant (largest eta 0.075) |
+| Extra components at k = 10 | at most one just above the null |
+| tedana equivalence (linear form, equal weights, k = number of signals, 2 seeds) | matched |r| = 1.000 |
+| Stability across 30 restarts | all planted components > 0.95 |
+
+Detection limit: dS0 sources at 0.5 % (SD at peak) were barely above the null at these SNRs; hence 1.5 % in the tests (inside CLAUDE.md's 0.5-2 %).
+
+Equivalence beyond the signal count: at k = 8 with 6 signals, the 6 signal components still match at >= 0.997, and the noise directions are arbitrary (ICA cannot identify Gaussian directions).
+
+Remaining for the gate: real-data run on P04 across the sweep (MAPCA 13 / 24 / 28 and 50 / 70 / 90), with stability reported.
