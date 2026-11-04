@@ -315,6 +315,8 @@ Do **not** use either of these instead:
 
 **Gate:** simulated true rank recovered within ±10%, and real-data spectra plotted.
 
+**Outcome (user decision, 2026-11-04):** no gated k. The phase-randomized estimators either under-count (index by index) or run to their limit on real data (deflated, split-half), because the noise is coloured and nonstationary at a precision of tens of thousands of voxels (`docs/decisions.md`). Phase 4 runs on the fixed sweep (MAPCA AIC/KIC/MDL, 50, 70, 90) with every result reported across k; the other estimates are reported as descriptions.
+
 **Phase 4: joint ICA (option 1) and metrics.**
 
 Tests:

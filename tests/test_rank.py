@@ -20,13 +20,13 @@ def cfg():
     return io.merge(io.load_config(), {"rank": {"n_surrogates": 5, "split_n_surrogates": 10, "k_max": 120}})
 
 
-def _noise(rng, n, T, colored):
+def _noise(rng, n, T, colored, env=None):
     e = rng.standard_normal((n, T))
     if colored:                                         # AR(1), rho 0-0.6 per row
         rho = rng.uniform(0, 0.6, (n, 1))
         for i in range(1, T):
             e[:, i] = rho[:, 0] * e[:, i - 1] + np.sqrt(1 - rho[:, 0] ** 2) * e[:, i]
-    return e
+    return e if env is None else e * env
 
 
 def _maps(rng, n, K):
@@ -47,7 +47,7 @@ def planted(rng, n=6000, T=400, K=30, colored=True):
     return X + _noise(rng, n, T, colored)
 
 
-def planted_bb(rng, n=6000, T=400, K=30, colored=True):
+def planted_bb(rng, n=6000, T=400, K=30, colored=True, env=None):
     """As planted, with broadband 1/f-like (BOLD-like) time courses."""
     f = np.fft.rfftfreq(T, d=0.75)
     S = []
@@ -58,7 +58,13 @@ def planted_bb(rng, n=6000, T=400, K=30, colored=True):
         S.append((x - x.mean()) / x.std())
     edge = (1 + np.sqrt(T / n)) ** 2
     X = _maps(rng, n, K) * np.sqrt(np.geomspace(2, 20, K) * edge / T) @ np.array(S)
-    return X + _noise(rng, n, T, colored)
+    return X + _noise(rng, n, T, colored, env)
+
+
+def envelope(rng, T, sd):
+    """Shared slow modulation of the noise amplitude (same in every row), SD about `sd`."""
+    a = np.convolve(rng.standard_normal(T), np.ones(20) / np.sqrt(20), mode="same")
+    return np.clip(1 + sd * a / a.std(), 0.3, None)
 
 
 def split(X):
@@ -187,3 +193,27 @@ def test_alias_correlation_finds_mb_partner_shift():
     out = rank.alias_correlation(e.reshape(-1, T), mask, pe_axis=0, slice_axis=2, sep=8)
     assert out["dz8"]["peak_shift"] == 13 and out["dz8"]["peak_corr"] > 0.15
     assert abs(out["dz4"]["peak_corr"]) < 0.05
+
+
+@pytest.mark.xfail(reason="known limitation (2026-11-04): the split-half test counts shared time-varying noise "
+                          "amplitude as structure; dividing out the estimated envelope reduces but does not remove it "
+                          "(k 37 / 92 for SD 0.15 / 0.30)", strict=False)
+@pytest.mark.parametrize("sd", [0.15, 0.3])
+def test_rank_with_time_varying_noise_amplitude(cfg, record_property, sd):
+    rng = np.random.default_rng(SEED + 16)
+    env = envelope(np.random.default_rng(SEED + 17), 400, sd)
+    r = run(planted_bb(rng, K=30, colored=True, env=env), io.merge(cfg, {"rank": {"null_envelope": True}}))
+    record_property("k", {"gated": r["k_temporal"], "halves": r["k_split_halves"], "env_sd_est": r["noise_envelope_sd"]})
+    assert abs(r["k_temporal"] - 30) <= 3
+
+
+def test_noise_envelope_is_measured(cfg):
+    """The shared noise amplitude is recovered (shape; its SD is under-estimated by ~15-20 %)."""
+    env = envelope(np.random.default_rng(SEED + 17), 400, 0.3)
+    X = planted_bb(np.random.default_rng(SEED + 16), K=30, colored=True, env=env)
+    X -= X.mean(1, keepdims=True)
+    lam = rank.spectrum(X)
+    e = rank.noise_envelope(X, 20)
+    assert np.corrcoef(e, env)[0, 1] > 0.85 and 0.6 * env.std() < e.std() < 1.1 * env.std()
+    e0 = rank.noise_envelope(planted_bb(np.random.default_rng(SEED + 16), K=30, colored=True), 20)
+    assert e0.std() < 0.05
