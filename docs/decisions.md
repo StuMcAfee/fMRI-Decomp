@@ -482,3 +482,17 @@ Every set removes the residual's link to head drift (Spearman 0.86 -> -0.30 to -
 | 60 broadband components | over-count 10-37 % (known limitation, xfail) |
 
 A contamination diagnostic (shared-signal share of the median row variance) is reported with every run. Its validated range is being calibrated: the first estimate of 0.45 was too low, since a passing 30-component case scored 0.476.
+
+**Calibration of the contamination diagnostic (two seeds, coloured noise):**
+
+| Case | k found | Contamination |
+|---|---|---|
+| 30 components (narrowband or broadband) | 29-31 | 0.469-0.481 |
+| 60 narrowband | 60-61 | 0.665 |
+| 60 broadband | 64 and 74 | 0.680-0.692 |
+
+Validated limit set at **0.50**. Values from 0.50 to ~0.67 are untested and flagged. Gate tolerance: +/- 10 %, never finer than +/- 1. Each tested direction passes by chance with probability 5 %; observed K = 1 -> k = 2 once.
+
+**Phase 3 gate tests (simulation) pass under seeds 0-2:** 30 components (4 kinds), 1 component (4 kinds), pure coloured noise, projected data, spatial blocks, end-to-end. The slow 60-component checks: narrowband must pass; broadband is a known limitation (xfail, flagged by the diagnostic).
+
+The real-data part of the gate (spectra plotted) follows on 47159.
