@@ -715,3 +715,21 @@ Next step when resumed: weight voxels by the precision of kappa q, or fit in the
 5. **Channels:** no-regression channels as primary, motion-regressed as sensitivity (band overlap of the motion regressors with 0.01-0.10 Hz).
 6. **Modes:** `waves.n_modes` = 10 by default.
 7. **Labels file location and ID format:** later, with batch processing.
+
+### 2026-11-04: W1 gate passed: simulator extension
+
+`simulate.py`: `waves` (neural planar or radial, vascular, standing), `slice_timing` (multiband groups: slices z and z + n_groups acquired together; interleaved group order by default; an explicit SliceTiming list overrides) and `slice_leakage`.
+- Delays are applied exactly in the Fourier domain to a band-limited random time course.
+- Waves draw random numbers only when configured, so every other simulation is unchanged (existing simulator tests pass).
+
+Tests (tests/test_waves_sim.py, noise-free ground truth; 8 tests, 7-9 s per run; seeds 0-2):
+- planar delays = distance / speed (within 0.02 s);
+- radial delays = distance from the centre / speed;
+- pure dR2* waves have no echo-to-echo delay;
+- the standing wave has no lag;
+- with slice timing a later-acquired slice LEADS by its offset (the sign the correction must undo);
+- vascular: the dR2* part lags the dS0 part by the hemodynamic delay (2.00 s), the vessel's echoes disagree in timing, and tissue carries dR2* only;
+- leakage raises the correlation between slices acquired together;
+- invalid kinds and empty bands are rejected.
+
+**Flag (brief inconsistency):** brief 4.7 gives "lag = phase / (2 pi f_c)" but its gradient formula carries a minus sign. With analytic time courses ~ exp(+i w t), a voxel that lags by tau has map phase -w tau, so the implementation uses lag = -arg(q) / (2 pi f_c), consistent with the gradient formula, and the W2 tests verify the sign on simulated waves.

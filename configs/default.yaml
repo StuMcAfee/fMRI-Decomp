@@ -218,7 +218,10 @@ simulate:                     # Phase 1 ground-truth simulator; tests override p
     - {name: s0_diffuse, kind: s0, extent: diffuse, s: 0.0025}
   respiration: {enabled: true, freq_hz: 0.30, freq_jitter_hz: 0.03, q: 0.25}   # smooth global dR2* (SD at peak)
   spikes: {n: 3, s0: 0.05, echo_sd: 0.02, region: edge}   # model-violating frames (log-space, per echo)
-  csf_partial_volume: {enabled: false, fraction_max: 0.6, t2s_ms: 200.0, s0_ratio: 1.0}   # static long-T2* compartment without BOLD (Phase 5 partial-volume tests)
+  csf_partial_volume: {enabled: false, fraction_max: 0.6, t2s_ms: 200.0, s0_ratio: 1.0}
+  waves: []                     # W1 traveling waves, e.g. {name, kind: neural|vascular|standing, geometry: planar|radial, speed_mm_s, direction, q, s, support, band_hz}
+  slice_timing: {enabled: false, mb_factor: 6, order: interleaved}   # waves sampled at the multiband slice-group times (real data: SliceTiming from the JSON)
+  slice_leakage: {enabled: false, fraction: 0.05}                    # slices acquired together leak into each other (MB leakage proxy)   # static long-T2* compartment without BOLD (Phase 5 partial-volume tests)
   slow_violation: {enabled: false, amplitude: 0.01, cutoff_hz: 0.01}   # drift-paced curvature change (log units at the extreme echoes); off by default
   skull_base:                 # through-slice dephasing in the lowest brain slices: curvature in the decay
     enabled: true

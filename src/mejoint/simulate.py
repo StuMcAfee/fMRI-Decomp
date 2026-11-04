@@ -68,6 +68,107 @@ def _bandlimited(rng, T, tr, lo, hi):
     return (x - x.mean()) / x.std()
 
 
+# ============================================================================ traveling waves (W1)
+WAVE_KINDS = ("neural", "vascular", "standing")
+
+
+def slice_offsets(n_slices: int, tr: float, mb: int, order: str = "interleaved", explicit=None) -> np.ndarray:
+    """Acquisition time of each slice within the TR (s). Multiband: slices z and z + n_groups are acquired
+    together (n_groups = ceil(n_slices / mb)); the groups are acquired in `order` (ascending, or
+    interleaved: even groups then odd). `explicit` (a SliceTiming list) overrides."""
+    if explicit is not None:
+        off = np.asarray(explicit, float)
+        if off.size != n_slices:
+            raise ValueError(f"slice timing has {off.size} entries for {n_slices} slices")
+        return off
+    n_groups = int(np.ceil(n_slices / max(int(mb), 1)))
+    seq = list(range(0, n_groups, 2)) + list(range(1, n_groups, 2)) if order == "interleaved" else list(range(n_groups))
+    rank = {g: i for i, g in enumerate(seq)}
+    return np.array([rank[z % n_groups] * tr / n_groups for z in range(n_slices)])
+
+
+def _band_spectrum(rng, T, tr, lo, hi):
+    """Random band-limited spectrum (rfft bins) whose time course has unit SD; delays are applied exactly
+    in the Fourier domain (circular in time)."""
+    f = np.fft.rfftfreq(T, tr)
+    band = (f >= lo) & (f <= hi)
+    if band.sum() < 2:
+        raise ValueError(f"wave band {lo}-{hi} Hz holds fewer than 2 frequency bins for {T} volumes at TR {tr} s")
+    U = np.zeros(f.size, complex)
+    U[band] = rng.standard_normal(band.sum()) + 1j * rng.standard_normal(band.sum())
+    U /= np.fft.irfft(U, n=T).std()
+    return f, U
+
+
+def delayed(U, f, T, delay_s) -> np.ndarray:
+    """u(t - delay) for each delay (V,), from the spectrum U: (V, T)."""
+    return np.fft.irfft(U[None, :] * np.exp(-2j * np.pi * f[None, :] * np.asarray(delay_s, float)[:, None]), n=T, axis=1)
+
+
+def _build_waves(P, rng, shape, brain, voxel_mm, T, tr, sm):
+    """Ground-truth wave fields: per voxel a delay map (s) and amplitude maps for dS0 (fraction) and dR2*
+    (s^-1). Neural: planar (delay = distance along a direction / speed) or radial (distance from a centre
+    / speed). Vascular: a vessel-like tube carries fast dS0 inflow (delay = distance along the tube /
+    speed) and, after an extra hemodynamic delay, dR2*; tissue around the tube carries the delayed dR2*
+    only. Standing: zero delay everywhere."""
+    out = []
+    vox = np.asarray(voxel_mm, float)
+    grid = np.stack(np.meshgrid(*[np.arange(n) for n in shape], indexing="ij"), axis=-1) * vox   # mm
+    cen = (np.array(shape) - 1) / 2 * vox
+    shell = brain & ~ndimage.binary_erosion(brain, iterations=3)
+    for spec in P.get("waves") or []:
+        kind = spec["kind"]
+        if kind not in WAVE_KINDS:
+            raise ValueError(f"wave {spec.get('name')}: kind must be one of {WAVE_KINDS}")
+        lo, hi = spec.get("band_hz", P["band_hz"])
+        f, U = _band_spectrum(rng, T, tr, lo, hi)
+        support = {"brain": brain, "shell": shell}[spec.get("support", "brain")]
+        amp = np.where(support, 0.75 + 0.25 * np.clip(_smooth_field(rng, shape, sm, brain), -1, 1), 0.0)
+        q_amp = np.zeros(shape)
+        s_amp = np.zeros(shape)
+        delay = np.zeros(shape)
+        extra = np.zeros(shape)                                          # extra delay of the dR2* part (vascular)
+        w = {"name": spec.get("name", kind), "kind": kind, "f": f, "U": U, "band_hz": [lo, hi]}
+        if kind == "neural":
+            v = float(spec["speed_mm_s"])
+            if spec.get("geometry", "planar") == "planar":
+                d = np.asarray(spec.get("direction", [1, 0, 0]), float)
+                d = d / np.linalg.norm(d)
+                proj = (grid - cen) @ d
+                delay = np.where(brain, (proj - proj[brain].min()) / v, 0.0)
+                w.update(geometry="planar", direction=d.tolist())
+            else:
+                c0 = np.asarray(spec.get("center_vox", (np.array(shape) - 1) / 2), float) * vox
+                dist = np.linalg.norm(grid - c0, axis=-1)
+                delay = np.where(brain, dist / v, 0.0)
+                w.update(geometry="radial", center_mm=c0.tolist())
+            q_amp = float(spec.get("q", 0.5)) * amp
+            w["speed_mm_s"] = v
+        elif kind == "standing":
+            q_amp = float(spec.get("q", 0.5)) * amp
+            s_amp = float(spec.get("s", 0.0)) * amp
+            w["speed_mm_s"] = np.inf
+        else:                                                            # vascular
+            v = float(spec.get("speed_mm_s", 60.0))
+            a_ = np.asarray(spec.get("start_vox", [0.25 * shape[0], 0.5 * shape[1], 0.5 * shape[2]]), float) * vox
+            b_ = np.asarray(spec.get("end_vox", [0.75 * shape[0], 0.5 * shape[1], 0.5 * shape[2]]), float) * vox
+            ab = b_ - a_
+            tpar = np.clip(((grid - a_) @ ab) / (ab @ ab), 0, 1)
+            near = a_ + tpar[..., None] * ab
+            rdist = np.linalg.norm(grid - near, axis=-1)
+            tube = brain & (rdist <= float(spec.get("radius_mm", 4.0)))
+            tissue = brain & ~tube & (rdist <= float(spec.get("tissue_radius_mm", 12.0)))
+            delay = np.where(tube | tissue, tpar * np.linalg.norm(ab) / v, 0.0)
+            extra = np.where(tube | tissue, float(spec.get("tissue_delay_s", 2.0)), 0.0)
+            s_amp = np.where(tube, float(spec.get("s", 0.01)), 0.0)
+            q_amp = np.where(tube | tissue, float(spec.get("q", 0.5)) * amp, 0.0)
+            w.update(speed_mm_s=v, tube=tube, tissue=tissue, tissue_delay_s=float(spec.get("tissue_delay_s", 2.0)),
+                     start_mm=a_.tolist(), end_mm=b_.tolist())
+        w.update(delay_s=delay, extra_delay_s=extra, q_amp=q_amp, s_amp=s_amp)
+        out.append(w)
+    return out
+
+
 def _respiration(rng, T, tr, f0, jitter):
     """Quasi-periodic breathing trace: frequency and amplitude drift slowly. Unit SD."""
     slow = lambda: _bandlimited(rng, T, tr, 0.0, 0.02) if T > 30 else np.zeros(T)
@@ -305,6 +406,15 @@ def simulate(cfg: dict, seed=None, overrides: dict | None = None) -> Simulation:
     csf_sig = (float(pv.get("s0_ratio", 1.0)) * s0[..., None] * np.exp(-te_s * 1000.0 / float(pv.get("t2s_ms", 200.0)))
                if pv.get("enabled") else None)                                  # (X, Y, Z, E)
 
+    # traveling waves and slice timing (W1); random numbers are drawn only when waves are configured
+    waves = _build_waves(P, rng, shape, brain, voxel_mm, T, tr, sm) if P.get("waves") else []
+    st = P.get("slice_timing") or {"enabled": False}
+    if st.get("enabled"):
+        z_off = slice_offsets(shape[2], tr, int(st.get("mb_factor", 6)), st.get("order", "interleaved"), st.get("explicit"))
+    else:
+        z_off = np.zeros(shape[2])
+    off_map = np.broadcast_to(z_off[None, None, :], shape)              # each voxel is sampled at t_n + offset
+
     # ---------------------------------------------------------------- signal + noise, in voxel chunks
     flat = lambda a: a.reshape(-1, *a.shape[3:]) if a.ndim > 3 else a.reshape(-1)
     nvox = int(np.prod(shape))
@@ -328,6 +438,14 @@ def simulate(cfg: dict, seed=None, overrides: dict | None = None) -> Simulation:
         if inb.any():
             a = Smap[sl][inb] @ Xtc                                             # (v, T)
             b = Qmap[sl][inb] @ Xtc
+            for w in waves:                                                     # sampled at t_n + slice offset
+                off = flat(off_map)[sl][inb]
+                sa, qa = flat(w["s_amp"])[sl][inb], flat(w["q_amp"])[sl][inb]
+                dl = flat(w["delay_s"])[sl][inb] - off
+                if np.any(sa):
+                    a = a + sa[:, None] * delayed(w["U"], w["f"], T, dl)
+                if np.any(qa):
+                    b = b + qa[:, None] * delayed(w["U"], w["f"], T, dl + flat(w["extra_delay_s"])[sl][inb])
             logS = (np.log(s0_f[sl][inb])[:, None, None] + a[:, None, :]
                     - te_s[None, :, None] * (r2_f[sl][inb][:, None, None] + b[:, None, :]))
             dfv = df_f[sl][inb]
@@ -361,6 +479,18 @@ def simulate(cfg: dict, seed=None, overrides: dict | None = None) -> Simulation:
                      regions={"brain": brain, "interior": interior, "skull_base": skull, "spike": spike_region & brain},
                      spike_frames=spike_frames)
     sim.csf_fraction = fcsf
+    sim.waves = waves
+    sim.slice_offsets_s = z_off
+    lk = P.get("slice_leakage") or {"enabled": False}
+    if lk.get("enabled"):                                                # slices acquired together leak into each other
+        n_groups = int(np.ceil(shape[2] / int(st.get("mb_factor", 6))))
+        eps = float(lk.get("fraction", 0.05))
+        src_ = data.copy()
+        for z in range(shape[2]):
+            for zz_ in (z - n_groups, z + n_groups):
+                if 0 <= zz_ < shape[2]:
+                    data[:, :, z] += eps * src_[:, :, zz_]
+        sim.meta_leakage = {"fraction": eps, "separation_slices": n_groups}
     sim.meta = {"params": P, "te_ms": te_ms.tolist(), "tr_s": tr, "n_coils": L, "echo_sigma_scale": esc.tolist(),
                 "seed": {"entropy": int(ss.entropy), "spawn_key": list(ss.spawn_key)},
                 "spike_frames": spike_frames.tolist(), "focal_centers": {s["name"]: s["center"] for s in sources if s["center"]},
