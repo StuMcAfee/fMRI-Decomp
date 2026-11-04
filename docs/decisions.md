@@ -680,3 +680,25 @@ Validation:
 - Test marked xfail (not strict) and paused by the user's request to start the wave extension.
 
 Next step when resumed: weight voxels by the precision of kappa q, or fit in the CSF fraction domain.
+
+## Wave extension (branch claude/waves)
+
+### 2026-11-04: W0: brief and mock-ups read; branch created; conflicts flagged; questions asked
+
+- Branch `claude/waves` created from `claude/beautiful-hamilton-141ubf` at 90f5730. The mock-ups (`docs/mockups/waves/`) existed only on `main` (uploaded 2026-11-03) and were copied into this branch.
+- `make_wave_figures.py` was checked: plotting code with simulated maps, no decomposition. It is used for style only (palette, layout). No earlier CPCA code is used or consulted (user decision 2026-11-03).
+
+**Conflicts with the current code** (the brief was written at Phase 2):
+1. **decompose exists now.** `--waves` / `--wave-figures` go straight into `mejoint decompose` (brief 6.2), alongside the standalone `mejoint waves`. One code path.
+2. **Per-echo noise.** The front end whitens with per-echo weights (r = [1, 0.721, 0.631, 0.560]), and R comes from those weights. The wave code takes R from the front end, as the brief requires, and back-substitution stays exact. But the c0-only equivalence with OC (brief 4.6) holds only with equal weights (CLAUDE.md 5.3 property 1), so that test runs with `frontend.weighting: equal`, as in Phase 4.
+3. **Nuisance projection.** The cached channels already have the 24-regressor projection applied. On 47159 it removed about half of c0's energy, ~25 % by chance overlap with slow signal, which is exactly the 0.01-0.10 Hz wave band. Whether waves use the regressed or the no-regression channels is a user decision.
+4. **Selection bias in eta and in the energy null** (Phase 4 findings): modes are top-variance directions, so
+   - eta uses cross-fitted complex maps;
+   - the null uses the top-n directions of surrogates, family-wise.
+   Phase-randomized surrogates are uninformative on real data here (coloured, nonstationary noise; Phases 3-4), so "above null" will need the bootstrap / split-half evidence on real data.
+5. **Partial volume** (Phase 5): CSF partial volume inflates eta with an apparent dS0 that is in phase with q, so it does not create a TE-dependent lag. TE lag is robust to it; eta is not. Report both, with the PV diagnostic.
+6. **Gray matter** is not available data-only. The data-only classes are tissue / mixed / CSF / short T2* / few echoes. The phase convention ("q in gray matter") and the speed statistics use the data-only tissue class until the T1 option exists.
+7. **Slice timing** is not in the front-end cache. It is read from the JSON sidecar of the raw echo 1 (found through result.json), and recorded.
+8. **ANTs:** the brief's path is under `rhel7_apps`, but the cluster is RHEL8. To verify at W5.
+9. **Atlases** (Schaefer-400; Ren et al. 2019) must be downloaded and checked (space, licence, labels). Unverified; W5.
+10. Bolt et al. (2022) is cited as a conceptual reference only; details not verified.
