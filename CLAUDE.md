@@ -259,7 +259,7 @@ Do **not** use either of these instead:
 - **The raw channel-energy fraction φ = ‖m1‖²/(‖m0‖² + ‖m1‖²).** A pure-S0 component gives only φ ≈ 0.15–0.21 at these TEs (lower in 3-echo voxels), while pure noise gives φ ≈ 0.5.
 - **E_S0 divided by total channel energy.** It is unbounded for mixed sources, because ΔS0 and ΔR2* can cancel in c0.
 
-**Reference bands.** Define η bands by simulation: pure-R2*-only, pure-S0-only and noise-only components at **matched component SNR**, run through the same pipeline. Real-data nulls come from random and phase-randomized time courses.
+**Reference bands.** Define η bands by simulation: pure-R2*-only, pure-S0-only and noise-only components at **matched component SNR**, run through the same pipeline. Real-data nulls come from phase-randomized surrogates through the same selection (see Implementation above); single random time courses are reported for reference only.
 
 **Also report for each component:**
 - ‖s‖ and ‖q‖ with bootstrap intervals;
