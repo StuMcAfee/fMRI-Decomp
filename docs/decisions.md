@@ -702,3 +702,16 @@ Next step when resumed: weight voxels by the precision of kappa q, or fit in the
 8. **ANTs:** the brief's path is under `rhel7_apps`, but the cluster is RHEL8. To verify at W5.
 9. **Atlases** (Schaefer-400; Ren et al. 2019) must be downloaded and checked (space, licence, labels). Unverified; W5.
 10. Bolt et al. (2022) is cited as a conceptual reference only; details not verified.
+
+### 2026-11-04: W0 gate passed: user answers
+
+1. **Hierarchy / parcels:** impose parcels as little as possible; individualized and data-driven. Waves should be shown as gradient-like phase lag across voxels. Consequences:
+   - the individual stage centres on voxelwise lag maps, lag gradients and the fitted propagation axis;
+   - the group stage's parcel-based correspondence (brief 7.2) will be revisited at W4 in a data-driven form;
+   - the hierarchy-order lag profile is replaced by the subject's own path profile.
+2. **Labels:** none until the batch stage.
+3. **Brainstem / deep cerebellar nuclei:** leave out.
+4. **Flatmaps / surface views:** later.
+5. **Channels:** no-regression channels as primary, motion-regressed as sensitivity (band overlap of the motion regressors with 0.01-0.10 Hz).
+6. **Modes:** `waves.n_modes` = 10 by default.
+7. **Labels file location and ID format:** later, with batch processing.
