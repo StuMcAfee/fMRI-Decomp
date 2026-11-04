@@ -202,3 +202,22 @@ def test_phase_randomized_surrogate_keeps_spectrum():
     assert abs(np.mean(r)) < 0.15                                    # timing scrambled: no correlation on average
     cx, cy = np.corrcoef(x.T), np.corrcoef(y.T)
     assert np.abs(cx - cy).max() < 0.35                             # cross-correlations roughly kept (shared phases)
+
+
+def test_compare_expansions_on_a_no_regression_output(cfg, tmp_path):
+    from test_frontend import make_run_folder
+    c = io.merge(cfg, {"simulate": {"echo_sigma_scale": cfg["frontend"]["echo_noise_ratios"]},
+                       "frontend": {"mppca": {"enabled": False}}, "nuisance": {"n_surrogates": 2}})
+    sim = simulate.simulate(c, seed=SEED * 100 + 42, overrides={"grid": [20, 20, 12], "n_volumes": 240})
+    rd = make_run_folder(sim, tmp_path)
+    np.savetxt(rd / "motion" / "mcflirt.par", fake_par(240, np.random.default_rng(SEED + 8))[0])
+    frontend.run_subject(rd, c, tmp_path / "noreg", source="raw", nuisance=False)
+    rows = nuisance.compare_expansions(tmp_path / "noreg", rd, c, tmp_path / "cmp")
+    assert [r["expansion"] for r in rows] == [0, 6, 12, 18, 24]
+    assert [r["rank"] for r in rows] == [1, 7, 13, 19, 25]
+    for r in rows[1:]:        # no motion effect simulated: real and surrogate regressors remove about the df share
+        assert abs(r["kept"]["r0"] - r["kept_surrogates_mean"]["r0"]) < 0.03
+    assert (tmp_path / "cmp" / "nuisance_compare.md").exists()
+    with pytest.raises(ValueError, match="WITH nuisance"):
+        frontend.run_subject(rd, c, tmp_path / "reg", source="raw")
+        nuisance.compare_expansions(tmp_path / "reg", rd, c, tmp_path / "cmp2")

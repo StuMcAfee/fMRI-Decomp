@@ -117,19 +117,24 @@ def filter_motion(par: np.ndarray, tr: float, N: dict, segs: list[slice]) -> tup
 
 
 def motion_regressors(par: np.ndarray, segs: list[slice], expansion: int = 24) -> tuple[np.ndarray, list[str]]:
-    """6: parameters; 12: + frame-to-frame changes (0 at segment starts); 24: + squares of both
-    (of the demeaned columns). Columns are demeaned; the projector adds the segment constants."""
+    """6: parameters; 12: + frame-to-frame changes (0 at segment starts); 18: 12 + squares of the
+    parameters only (position-dependent effects, without the spiky squared changes); 24: + squares of
+    both (of the demeaned columns). Columns are demeaned; the projector adds the segment constants."""
     names6 = ["rot_x", "rot_y", "rot_z", "trans_x", "trans_y", "trans_z"]
     p = par[:, :6] - par[:, :6].mean(0)
     cols, names = [p], list(names6)
-    if expansion not in (6, 12, 24):
-        raise ValueError("nuisance.expansion must be 6, 12 or 24")
+    if expansion not in (6, 12, 18, 24):
+        raise ValueError("nuisance.expansion must be 6, 12, 18 or 24")
     if expansion >= 12:
         d = np.zeros_like(p)
         for s in segs:
             d[s.start + 1:s.stop] = np.diff(p[s], axis=0)
         cols.append(d)
         names += [f"d_{n}" for n in names6]
+    if expansion == 18:
+        sq = p ** 2
+        cols.append(sq - sq.mean(0))
+        names += [f"{n}_sq" for n in names6]
     if expansion == 24:
         sq = np.concatenate(cols, axis=1) ** 2
         cols.append(sq - sq.mean(0))
@@ -235,3 +240,90 @@ def build(par: np.ndarray, tr: float, cfg: dict, volumes=None) -> tuple[Projecto
             "fd_p95_filtered": round(float(np.percentile(fd_f, 95)), 4)}
     return P, {"info": info, "X": X, "names": names, "fd_filtered": fd_f, "fd_unfiltered": fd_raw,
                "par_filtered": pf, "segments": segs}
+
+
+def compare_expansions(frontend_dir, run_dir, cfg: dict, out_dir, expansions=(6, 12, 18, 24), n_sur: int | None = None) -> list[dict]:
+    """Which regressor set? On a NO-regression front-end output (channel cache c0/c1/r0/r1.npy), for each
+    expansion: energy kept with the real regressors and with phase-randomized surrogates built the same
+    way (chance overlap), the motion-specific share (surrogate mean - real), and the frame-wise residual
+    energy (per-frame leverage corrected) with its Spearman correlation with head drift."""
+    import json
+    from pathlib import Path
+
+    from scipy.stats import spearmanr
+
+    from . import io
+    from .frontend import drift_mm
+
+    fd, rd, out_dir = Path(frontend_dir), Path(run_dir), Path(out_dir)
+    fs = json.loads((fd / "summary.json").read_text())
+    if (fs.get("nuisance") or {}).get("enabled"):
+        raise ValueError(f"{fd} was made WITH nuisance regression; use a no-regression output (e.g. mc_noreg)")
+    ch = {k: np.load(fd / f"{k}.npy") for k in ("c0", "c1", "r0", "r1")}
+    par = np.loadtxt(rd / "motion" / "mcflirt.par", ndmin=2)
+    vu = rd / "volumes_used.tsv"
+    vols = np.loadtxt(vu, skiprows=1, ndmin=2).astype(int)[:, 0] if vu.exists() else None
+    T = ch["c0"].shape[1]
+    if len(par) != T:
+        raise ValueError(f"{len(par)} motion rows for {T} frames")
+    tr = float(cfg["acquisition"]["tr_s"])
+    n_sur = int(cfg["nuisance"].get("n_surrogates", 5) if n_sur is None else n_sur)
+    drift = drift_mm(par)
+
+    def demeaned(a):
+        a = a.astype(np.float64)
+        return a - np.nanmean(a, axis=1, keepdims=True)
+
+    def kept(P):
+        out = {}
+        for k, a in ch.items():
+            ok = np.isfinite(a).all(1)
+            x = demeaned(a[ok])
+            out[k] = float((P.apply(x) ** 2).sum() / (x ** 2).sum())
+        return out
+
+    def frame_energy(P):
+        e = []
+        for k in ("r0", "r1"):
+            a = ch[k]
+            ok = np.isfinite(a).all(1)
+            e.append((P.apply(demeaned(a[ok])) ** 2).mean(0))
+        return np.mean(e, axis=0) / np.clip(P.kept_per_frame(), 1e-3, None)
+
+    rows = []
+    base = Projector(np.zeros((T, 0)), segments(vols, T), T)        # constants only (= no regression)
+    fe0 = frame_energy(base)
+    rows.append({"expansion": 0, "rank": base.rank, "kept": kept(base), "kept_surrogates_mean": None,
+                 "frame_energy_median": round(float(np.median(fe0)), 4),
+                 "frame_energy_vs_drift": round(float(spearmanr(fe0, drift)[0]), 4)})
+    for ex in expansions:
+        c = io.merge(cfg, {"nuisance": {"expansion": int(ex)}})
+        P, rec = build(par, tr, c, vols)
+        ss = io.seed_sequence(c, 0, 0, 22, int(ex))
+        S = surrogate_projectors(par, tr, c, vols, n_sur, ss)
+        ks = [kept(sp) for sp in S]
+        fe = frame_energy(P)
+        rows.append({"expansion": int(ex), "rank": P.rank, "kept": kept(P),
+                     "kept_surrogates_mean": {k: float(np.mean([d[k] for d in ks])) for k in ch},
+                     "kept_surrogates_range": {k: [float(np.min([d[k] for d in ks])), float(np.max([d[k] for d in ks]))] for k in ch},
+                     "frame_energy_median": round(float(np.median(fe)), 4),
+                     "frame_energy_vs_drift": round(float(spearmanr(fe, drift)[0]), 4)})
+    out_dir.mkdir(parents=True, exist_ok=True)
+    io.write_json(out_dir / "nuisance_compare.json", {"rows": rows, "frontend_dir": str(fd), "run_dir": str(rd),
+                                                      "n_surrogates": n_sur, **io.provenance(cfg, {})})
+    L = [f"# Regressor sets compared: {fs.get('run_id')} ({fs.get('source')}; {n_sur} surrogate sets each)", "",
+         "Energy kept after projection. Chance = 1 - kept with surrogates (same spectrum, scrambled timing); "
+         "motion-specific = kept with surrogates - kept with the real regressors. Frame energy: residual, per-frame "
+         "leverage corrected (1 = white noise).", "",
+         "| Set | Rank | c0 kept | c0 chance | c0 motion-specific | c1 kept | c1 chance | c1 motion-specific | "
+         "Residual frame energy (median) | vs head drift (Spearman) |", "|---|---|---|---|---|---|---|---|---|---|"]
+    for r in rows:
+        kp = r["kept"]
+        if r["kept_surrogates_mean"] is None:
+            L.append(f"| none | {r['rank']} | 1 | - | - | 1 | - | - | {r['frame_energy_median']} | {r['frame_energy_vs_drift']} |")
+            continue
+        sm = r["kept_surrogates_mean"]
+        L.append(f"| {r['expansion']} | {r['rank']} | {kp['c0']:.3f} | {1 - sm['c0']:.3f} | {sm['c0'] - kp['c0']:.3f} | "
+                 f"{kp['c1']:.3f} | {1 - sm['c1']:.3f} | {sm['c1'] - kp['c1']:.3f} | {r['frame_energy_median']} | {r['frame_energy_vs_drift']} |")
+    io.write_text(out_dir / "nuisance_compare.md", "\n".join(L) + "\n")
+    return rows
