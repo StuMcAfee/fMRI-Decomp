@@ -12,6 +12,7 @@ acquisition:
   mb_factor: 6                           # derived from SliceTiming (not in the JSON)
   slice_stack_separation: 8              # slices acquired together are 8 apart (48 / 6)
   phase_encoding: i                      # left-right; CAIPI shift unknown
+  slice_axis: 2                          # axial slices along array axis 2 (48 slices; Phase 0)
 
 subjects:
   exclude:                               # user decision 2026-11-02
@@ -144,7 +145,8 @@ rank:                         # Phase 3: dimensionality of the stacked whitened 
   n_surrogates: 20              # phase-randomized surrogates for the index-by-index null (reported) and spectra plot
   split_n_surrogates: 10        # gated estimator (split-half deflated, whitened): surrogates per tested block of k
   split_step: 3                 # directions tested per block (one null shared by the block)
-  split_block_vox: 4            # spatial blocks (voxels per side) assigned whole to one half
+  split_mode: readout_slab      # halves = alternating slabs along the readout axis, so MB / GRAPPA alias partners (same readout coordinate) share a half; "cubes" = random 4^3 blocks (the first real run: k ran to k_max)
+  split_block_vox: 4            # slab thickness (or cube side) in voxels
   whiten_max_lag: 40            # common noise-whitening filter: median autocovariance tapered to 0 at this lag (frames)
   contamination_validated_max: 0.50   # validated range of the contamination diagnostic (shared-signal share of the median row variance): passing 30-component cases 0.469-0.481, 60-component cases 0.665-0.692 (broadband over-counts)
   old_deflated: false           # also run the old unsplit deflated search (over-counts with coloured noise; slow)
