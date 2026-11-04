@@ -246,21 +246,43 @@ def complex_energies(m0, m1, R, vb):
 # ============================================================================ driver
 
 
+def _n_workers() -> int:
+    """Threads for the per-voxel preprocessing: LSF's core count inside a job (CLAUDE.md 3), else OMP_NUM_THREADS."""
+    import os
+    for key in ("LSB_DJOB_NUMPROC", "OMP_NUM_THREADS"):
+        try:
+            return max(1, int(os.environ[key]))
+        except (KeyError, ValueError):
+            pass
+    return 1
+
+
 def prepare(c0, c1, vox_slice_offset_s, tr, W: dict, blk: dict, Q=None):
     """Contiguous time, slice-timing correction, band-pass, analytic signal and scaling of both channels.
     Returns complex (V, T) arrays and the per-voxel scale (1 for whitened units)."""
     out = []
     offs = np.broadcast_to(np.asarray(vox_slice_offset_s, float), (c0.shape[0],))
-    CH = 20000                                                          # rows per chunk (memory)
+    CH = 5000                                                           # rows per chunk (memory per thread)
+
+    def chunk(c, A, i):
+        X = apply_block(np.nan_to_num(np.asarray(c[i:i + CH], np.float64)), blk)
+        if W.get("slice_timing_correction", True):
+            # a slice acquired delta into the TR samples u(t + delta): delay it by +delta (exp(-i 2 pi f delta));
+            # verified in simulation (lag vs slice-time slope -1 uncorrected, 0 corrected; -2 with the wrong sign)
+            X = fractional_delay(X, offs[i:i + CH], tr)
+        A[i:i + CH] = bandpass_analytic(X, tr, W["band_hz"], int(W.get("filter_order", 4)))
+
     for c in (c0, c1):
         A = np.empty((c.shape[0], blk["grid"].size), np.complex128)
-        for i in range(0, c.shape[0], CH):
-            X = apply_block(np.nan_to_num(np.asarray(c[i:i + CH], np.float64)), blk)
-            if W.get("slice_timing_correction", True):
-                # a slice acquired delta into the TR samples u(t + delta): delay it by +delta (exp(-i 2 pi f delta));
-                # verified in simulation (lag vs slice-time slope -1 uncorrected, 0 corrected; -2 with the wrong sign)
-                X = fractional_delay(X, offs[i:i + CH], tr)
-            A[i:i + CH] = bandpass_analytic(X, tr, W["band_hz"], int(W.get("filter_order", 4)))
+        starts = range(0, c.shape[0], CH)
+        nw = _n_workers()
+        if nw > 1 and len(starts) > 1:                                  # FFTs and the filter release the GIL
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(nw) as ex:
+                list(ex.map(lambda i: chunk(c, A, i), starts))
+        else:
+            for i in starts:
+                chunk(c, A, i)
         out.append(A)
     a0, a1 = out
     a1[~np.isfinite(c1).all(1)] = np.nan
@@ -356,7 +378,7 @@ def run(c0, c1, R, mask3d, voxel_mm, te_ms, tr, cfg: dict, slice_offsets_s=None,
     c0_energy = np.sum(np.abs(a0) ** 2)
     out["var_frac_c0"] = np.array([np.sum(np.abs(m0[:, k]) ** 2) * Tg / c0_energy for k in range(K)])
     # per-mode measures
-    out["_offsets"] = offs if out["slice_timing_corrected"] or slice_offsets_s is not None else None
+    out["_offsets"] = offs if slice_offsets_s is not None else None
     out["measures"] = [mode_measures(out, k, mask3d, x_mm, voxel_mm, te_ms, R, refv, vb, cfg, rng) for k in range(K)]
     # energy null: phase-randomized surrogates through the same pipeline, family-wise (largest eigenvalue)
     n_sur = int(W.get("surrogates", 200) if surrogates is None else surrogates)
@@ -710,15 +732,14 @@ def run_dir(frontend_dir, cfg: dict, out_dir, tissue_dir=None, figures: bool = T
     tr = float(cfg["acquisition"]["tr_s"])
     m = re.match(r"sub-(\d+)", str(fs.get("run_id") or ""))
     subj = int(m.group(1)) if m else 0
+    # slice times are always passed when found (the lag vs slice-time check needs them); the config switch
+    # decides only whether the correction is applied
     offsets, st_src = find_slice_timing(fd)
-    if W.get("slice_timing_correction", True):
-        if offsets is None:
-            raise FileNotFoundError("slice-timing correction is on but no SliceTiming was found for this run "
-                                    "(echo-1 JSON sidecar); use --no-slice-timing to run without it")
-        if offsets.size != mask3d.shape[2]:
-            raise ValueError(f"SliceTiming has {offsets.size} entries but the volume has {mask3d.shape[2]} slices")
-    else:
-        offsets = None
+    if offsets is None and W.get("slice_timing_correction", True):
+        raise FileNotFoundError("slice-timing correction is on but no SliceTiming was found for this run "
+                                "(echo-1 JSON sidecar); use --no-slice-timing to run without it")
+    if offsets is not None and offsets.size != mask3d.shape[2]:
+        raise ValueError(f"SliceTiming has {offsets.size} entries but the volume has {mask3d.shape[2]} slices")
     volumes = find_volumes(fd, c0.shape[1])
     ref, ref_name = None, "analysis mask"
     if tissue_dir is not None and (Path(tissue_dir) / "classes.npy").exists():
@@ -751,8 +772,15 @@ def run_dir(frontend_dir, cfg: dict, out_dir, tissue_dir=None, figures: bool = T
                                                   "time courses ~ exp(+i 2 pi f t); lag = -arg(q) / (2 pi f_c)"))
     rows = mode_rows(out)
     io.write_tsv(out_dir / "modes.tsv", {c: [r.get(c) for r in rows] for c in rows[0]})
-    meta = {"participant": fs.get("run_id"), "data_type": data_type or ("simulated data" if "sim" in str(fs.get("source", "")) else
-                                                                        f"real data ({fs.get('source')} echoes)"),
+    simulated = False
+    if st_src:
+        try:
+            simulated = bool(json.loads(Path(st_src).read_text()).get("Simulated"))
+        except (OSError, ValueError):
+            pass
+    meta = {"participant": fs.get("run_id"),
+            "data_type": data_type or (f"simulated data ({fs.get('source')} layout)" if simulated else
+                                       f"real data ({fs.get('source')} echoes)"),
             "tr_s": tr, "te_ms": te_ms.tolist(), "band_hz": W["band_hz"],
             "nuisance": "motion regression" if Q is not None else "no motion regression"}
     figs = []
