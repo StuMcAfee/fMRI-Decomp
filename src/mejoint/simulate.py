@@ -294,6 +294,17 @@ def simulate(cfg: dict, seed=None, overrides: dict | None = None) -> Simulation:
         mv = 0.5 + 0.5 * np.clip(_smooth_field(rng, shape, sm, brain), -1, 1)
         slow = {"timecourse": d, "pattern": pe, "map": mv, "amplitude": float(sv.get("amplitude", 0.01))}
 
+    # optional CSF partial volume: a static long-T2* compartment that carries no BOLD; the tissue
+    # compartment (with all sources) is scaled by (1 - f). Random numbers are drawn only when enabled,
+    # so every other simulation is unchanged.
+    pv = P.get("csf_partial_volume") or {"enabled": False}
+    fcsf = np.zeros(shape)
+    if pv.get("enabled"):
+        fld = _smooth_field(rng, shape, sm, brain)
+        fcsf = np.where(brain, float(pv.get("fraction_max", 0.6)) * np.clip(0.5 + 0.5 * fld, 0, 1), 0.0)
+    csf_sig = (float(pv.get("s0_ratio", 1.0)) * s0[..., None] * np.exp(-te_s * 1000.0 / float(pv.get("t2s_ms", 200.0)))
+               if pv.get("enabled") else None)                                  # (X, Y, Z, E)
+
     # ---------------------------------------------------------------- signal + noise, in voxel chunks
     flat = lambda a: a.reshape(-1, *a.shape[3:]) if a.ndim > 3 else a.reshape(-1)
     nvox = int(np.prod(shape))
@@ -330,6 +341,9 @@ def simulate(cfg: dict, seed=None, overrides: dict | None = None) -> Simulation:
                 mv = flat(slow["map"])[sl][inb]
                 logS += slow["amplitude"] * mv[:, None, None] * slow["pattern"][None, :, None] * slow["timecourse"][None, None, :]
             S[inb] = np.exp(logS)
+            if csf_sig is not None:
+                fv = flat(fcsf)[sl][inb]
+                S[inb] = S[inb] * (1 - fv)[:, None, None] + (fv[:, None] * flat(csf_sig)[sl][inb])[:, :, None]
         if sigma0 > 0:
             sg = sig_f[sl][:, None, None] * esc[None, :, None]           # per-echo noise scale (1 = equal)
             M2 = (S + sg * rng.standard_normal((n, E, T))) ** 2 + (sg * rng.standard_normal((n, E, T))) ** 2
@@ -340,10 +354,13 @@ def simulate(cfg: dict, seed=None, overrides: dict | None = None) -> Simulation:
     data = data.reshape(*shape, E, T)
 
     mu_base = s0[..., None] * np.exp(-te_s * r2s[..., None]) * np.abs(np.sinc(df0[..., None] * te_s))
+    if csf_sig is not None:
+        mu_base = mu_base * (1 - fcsf[..., None]) + fcsf[..., None] * csf_sig
     sim = Simulation(data=data, te_ms=te_ms, tr_s=tr, voxel_mm=voxel_mm, mask=brain, s0=s0, t2s_ms=t2,
                      sigma=sigma, mu_base=mu_base, dephasing_hz=df0, sources=sources,
                      regions={"brain": brain, "interior": interior, "skull_base": skull, "spike": spike_region & brain},
                      spike_frames=spike_frames)
+    sim.csf_fraction = fcsf
     sim.meta = {"params": P, "te_ms": te_ms.tolist(), "tr_s": tr, "n_coils": L, "echo_sigma_scale": esc.tolist(),
                 "seed": {"entropy": int(ss.entropy), "spawn_key": list(ss.spawn_key)},
                 "spike_frames": spike_frames.tolist(), "focal_centers": {s["name"]: s["center"] for s in sources if s["center"]},

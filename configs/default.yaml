@@ -157,6 +157,12 @@ rank:                         # Phase 3: dimensionality of the stacked whitened 
   sweep_fixed: [50, 70, 90]     # fixed k always run in Phase 4 (CLAUDE.md), alongside the MAPCA estimates
   mapca: true                   # MAPCA AIC / KIC / MDL via the mapca package (tedana's estimator)
 
+tissue:                       # Phase 5 data-only tissue classes (two-compartment fit of the mean decay)
+  csf_t2s_ms: 200.0             # fixed long (CSF-like) T2*; sensitivity to be reported
+  tissue_max: 0.10              # f_long below this: tissue
+  csf_min: 0.50                 # f_long at or above this: CSF-dominated
+  short_t2s_ms: 20.0            # tissue-compartment T2* below this: short-T2* class (veins / sinuses or susceptibility; ambiguous)
+
 decompose:                    # Phase 4 option 1: joint spatial ICA on [c0 | c1] (CLAUDE.md 7.1)
   n_restarts: 30                # FastICA restarts (robustica-style clustering); >= 30 (CLAUDE.md)
   max_iter: 1000
@@ -167,6 +173,10 @@ decompose:                    # Phase 4 option 1: joint spatial ICA on [c0 | c1]
 metrics:                      # Phase 4 per-component measurements
   n_null: 200                   # single random Gaussian / phase-randomized time courses (reported only: they ignore that components are top-variance directions)
   n_null_pipeline: 20           # energy null for significance: top-k PCA directions of phase-randomized surrogates (same selection as the components); family-wise (largest of k); their mean E_S0, E_R2 = selection bias removed before eta
+  pv_z_min: 2.5                 # partial-volume diagnostic: voxels where the component's |q| exceeds 2.5 noise SDs
+  pv_min_s0_share: 0.05         # judge only when dS0 holds >= 5 % of the energy in those voxels ("no dS0 to explain" otherwise; 2 % judged noise)
+  pv_f_long_max: 0.9            # partial-volume diagnostic excludes near-pure CSF only (kappa diverges as the tissue share -> 0)
+  pv_consistent_margin: 0.10    # "consistent with partial volume": the zero-parameter prediction explains > 0 and within 0.10 of the best constant ratio
   eta_label_margin: 0.05        # decomposition cross-talk added to the matched-SNR (thermal-only) bands; simulation: pure S0 eta 0.971, pure R2* 0.018
   null_quantile: 0.95
   band_mc: 100                  # Monte Carlo draws per component for the matched-SNR eta bands
@@ -208,6 +218,7 @@ simulate:                     # Phase 1 ground-truth simulator; tests override p
     - {name: s0_diffuse, kind: s0, extent: diffuse, s: 0.0025}
   respiration: {enabled: true, freq_hz: 0.30, freq_jitter_hz: 0.03, q: 0.25}   # smooth global dR2* (SD at peak)
   spikes: {n: 3, s0: 0.05, echo_sd: 0.02, region: edge}   # model-violating frames (log-space, per echo)
+  csf_partial_volume: {enabled: false, fraction_max: 0.6, t2s_ms: 200.0, s0_ratio: 1.0}   # static long-T2* compartment without BOLD (Phase 5 partial-volume tests)
   slow_violation: {enabled: false, amplitude: 0.01, cutoff_hz: 0.01}   # drift-paced curvature change (log units at the extreme echoes); off by default
   skull_base:                 # through-slice dephasing in the lowest brain slices: curvature in the decay
     enabled: true

@@ -660,3 +660,23 @@ Options, for the user:
 - (a) report eta stratified by CSF partial volume (T1 segmentation, or data-only from the static decay);
 - (b) model correction: a per-voxel two-compartment design, -TE w_v(TE) with w_v the tissue signal fraction from a bi-exponential fit of the mean decay or from T1 partial-volume maps (changes the model; needs validation);
 - (c) a coupling diagnostic: partial volume predicts s anti-correlated with q within a component, with a ratio set by each voxel's static decay.
+
+### 2026-11-04: Phase 5 data-only tissue classes built; partial-volume diagnostic is work in progress
+
+Built:
+- `tissue.py` and `mejoint tissue`: a two-compartment fit of the mean decay (fixed long T2* 200 ms), the long-T2* fraction f_long, the coupling kappa, and data-only classes (tissue / mixed / CSF-dominated / short T2* / few echoes).
+- Simulator option `csf_partial_volume`.
+- Per-component eta and energy share by class (option a).
+
+Validation:
+- f_long recovered within +/- 0.01 (0-0.8);
+- concave (dephased) decays give 0;
+- kappa matches the direct two-compartment projection within 1 %;
+- in a partial-volume simulation, f_long vs the true CSF fraction has r = 1.00.
+
+**Option c (coupling diagnostic) is not finished.** It compares the zero-parameter prediction s = kappa q with the best constant s/q ratio.
+- It correctly calls the mixed source (ratio 0.031-0.034 vs true 0.030) and the dS0 source "not partial volume".
+- For dR2* sources in strong partial volume, kappa q in voxels with f_long 0.5-0.9 is large and multiplied by a noisy q, which swamps the debiased energies (pv_explained -2.6 although the per-class medians matched the prediction within 2 %).
+- Test marked xfail (not strict) and paused by the user's request to start the wave extension.
+
+Next step when resumed: weight voxels by the precision of kappa q, or fit in the CSF fraction domain.

@@ -252,7 +252,7 @@ def single_channel_ica(X: np.ndarray, k: int, seeds, max_iter: int = 1000, tol: 
 
 
 # ============================================================================ real-data runner
-def run_dir(frontend_dir, cfg: dict, out_dir, k: int, n_jobs: int | None = None) -> dict:
+def run_dir(frontend_dir, cfg: dict, out_dir, k: int, n_jobs: int | None = None, tissue_dir=None) -> dict:
     """Option 1 at one k on a front-end output folder (channel cache c0/c1.npy, R.npy, analysis mask,
     nuisance_Q.npy if projected, frames.tsv). Writes maps (s, q in s^-1, m0, m1) as 4D NIfTI,
     time_courses.tsv, components.tsv / .json, decompose.md and done.json."""
@@ -284,7 +284,13 @@ def run_dir(frontend_dir, cfg: dict, out_dir, k: int, n_jobs: int | None = None)
             if key in (fr.dtype.names or ()):
                 frames[key] = fr[key]
     rng = np.random.default_rng(io.seed_sequence(cfg, subj, 0, 5, int(k)))   # stage 5 = metrics
-    me = metrics.measure(dec, c0, c1, R, cfg, rng, Q=Q, frames=frames)
+    tis = None
+    if tissue_dir is not None and (Path(tissue_dir) / "classes.npy").exists():
+        tis = {"classes": np.load(Path(tissue_dir) / "classes.npy"), "kappa": np.load(Path(tissue_dir) / "kappa.npy"),
+               "f_long": np.load(Path(tissue_dir) / "f_long.npy") if (Path(tissue_dir) / "f_long.npy").exists() else None}
+    me = metrics.measure(dec, c0, c1, R, cfg, rng, Q=Q, frames=frames, tissue=tis)
+    for name in ("m0_cf", "m1_cf", "vb_cf"):                            # for post-hoc stratification
+        np.save(out_dir / f"{name}.npy", dec[name].astype(np.float32))
     for name, arr in (("s", dec["s"]), ("q_per_s", dec["q_per_s"]), ("m0", dec["m0"]), ("m1", dec["m1"])):
         io.save_map(arr, mask3d, mimg, out_dir / f"{name}.nii.gz")
     T = dec["time_courses"].shape[0]
@@ -328,7 +334,7 @@ def render(s: dict) -> str:
     return "\n".join(L) + "\n"
 
 
-def run_sweep(frontend_dir, cfg: dict, out_root, rank_dir=None, ks=None, n_jobs: int | None = None) -> list[dict]:
+def run_sweep(frontend_dir, cfg: dict, out_root, rank_dir=None, ks=None, n_jobs: int | None = None, tissue_dir=None) -> list[dict]:
     """The fixed k sweep (Phase 3 outcome): MAPCA AIC / KIC / MDL from rank.json (if given) plus
     decompose.k_sweep_fixed. One folder per k and a sweep summary (sweep.md / sweep.json)."""
     import json
@@ -346,7 +352,7 @@ def run_sweep(frontend_dir, cfg: dict, out_root, rank_dir=None, ks=None, n_jobs:
     ks = sorted(set(ks))
     rows = []
     for k in ks:
-        s = run_dir(frontend_dir, cfg, out_root / f"k{k}", k, n_jobs=n_jobs)
+        s = run_dir(frontend_dir, cfg, out_root / f"k{k}", k, n_jobs=n_jobs, tissue_dir=tissue_dir)
         rows.append({"k": k, **s["label_counts"], "stability": s["stability_median_of_components"],
                      "explained": s["explained_variance"]})
     io.write_json(out_root / "sweep.json", {"rows": rows, **io.provenance(cfg, {})})
