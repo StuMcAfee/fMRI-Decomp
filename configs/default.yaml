@@ -141,6 +141,34 @@ nuisance:                     # Phase 2b: one projector over time, applied to th
   poly_order: 0                 # Legendre drift terms per segment (0 = constants only)
   n_surrogates: 5               # diagnostic: projectors from phase-randomized motion parameters (chance overlap with signal); 0 = off
 
+waves:                        # traveling-wave extension, individual stage (docs/WAVES_BRIEF.md; branch claude/waves)
+  band_hz: [0.01, 0.10]
+  filter_order: 4               # Butterworth band-pass, applied forwards and backwards (zero phase)
+  min_contiguous_volumes: 400
+  max_interp_gap: 2
+  slice_timing_correction: true # exact Fourier fractional delay by the slice's acquisition offset (SliceTiming)
+  voxel_scaling: whitened       # or zscore_c0 (Bolt-style: both channels / SD of the voxel's c0)
+  n_modes: 10                   # user decision 2026-11-04
+  plot_modes: 3
+  bootstrap_modes: 3            # modes that get bootstrap intervals (the plotted ones; cost)
+  channels: both                # both = stacked [c0 | c1] (the method); c0 = c0 only (the OC-like equivalence path)
+  amp_z: 3.0                    # a voxel "has" the mode where |q| exceeds this many noise SDs of q
+  band_mc: 50                   # Monte Carlo draws for the matched-SNR eta bands per mode
+  eta_display_fwhm_mm: 6.0      # smoothing of the debiased energies for the voxelwise eta map (display only)
+  gradient_smooth_mm: 4.0
+  path_bin_mm: 6.0
+  bootstrap: 200                # circular block bootstrap over time (blocks >= one cycle of the slowest reported mode)
+  surrogates: 200               # phase-randomized surrogates for the family-wise mode-energy null
+  null_quantile: 0.95
+  noise_mc_rows: 2000           # Monte Carlo rows of unit white noise through the same preprocessing: complex beta noise variance (eta debiasing)
+  te_lag_null_draws: 20         # per-voxel noise draws for the TE4 - TE1 lag null
+  channels_primary: noreg       # user decision 2026-11-04: no-regression channels primary, motion-regressed as sensitivity
+  group:
+    reference: control
+    template_from: all
+    common_volumes: null
+    n_perm: 10000
+
 rank:                         # Phase 3: dimensionality of the stacked whitened channels [c0 | c1]
   n_surrogates: 20              # phase-randomized surrogates for the index-by-index null (reported) and spectra plot
   split_n_surrogates: 10        # gated estimator (split-half deflated, whitened): surrogates per tested block of k

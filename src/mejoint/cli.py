@@ -1,7 +1,7 @@
 """Command-line entry point: `mejoint <command> ...`.
 
-Commands so far:
-  inventory   Phase 0 audit of one subject (writes inventory.md, inventory.json, volume_means.tsv, done.json)
+Commands: inventory, inventory-all, inventory-summary, frontend, frontend-all, mppca-recheck, nuisance-compare,
+rank, tissue, decompose (optionally --waves), waves, mask-qc. `mejoint <command> --help` lists the options.
 """
 from __future__ import annotations
 
@@ -74,6 +74,20 @@ def main(argv=None) -> int:
     dc.add_argument("--rank-dir", help="Phase 3 rank output (rank.json with the MAPCA estimates)")
     dc.add_argument("--tissue-dir", help="tissue classes (mejoint tissue output) for eta by class and the partial-volume diagnostic")
 
+    dc.add_argument("--waves", action="store_true", help="also run the individual traveling-wave stage (writes <out>/waves/)")
+    dc.add_argument("--wave-figures", action="store_true", help="with --waves: also write the two wave figures per plotted mode")
+    dc.add_argument("--waves-frontend-dir", help="with --waves: front-end folder for the wave stage (default --frontend-dir; "
+                    "waves.channels_primary is noreg, so pass the no-regression front end here)")
+    _wave_args(dc, standalone=False)
+
+    wv = sub.add_parser("waves", help="individual traveling-wave stage on a front-end output (docs/WAVES_BRIEF.md 6.1)")
+    wv.add_argument("--frontend-dir", required=True, help="front-end output folder (channel cache)")
+    wv.add_argument("--out", required=True, help="output folder (modes, maps, figures, summary)")
+    wv.add_argument("--tissue-dir", help="tissue classes: the 'tissue' class becomes the reference voxels")
+    wv.add_argument("--no-figures", action="store_true")
+    wv.add_argument("--config", help="config YAML (default: configs/default.yaml)")
+    _wave_args(wv, standalone=True)
+
     ts = sub.add_parser("tissue", help="Phase 5 data-only tissue classes and partial-volume coupling from a front-end output")
     ts.add_argument("--frontend-dir", required=True)
     ts.add_argument("--out", required=True)
@@ -142,6 +156,20 @@ def main(argv=None) -> int:
         from . import decompose
         rows = decompose.run_sweep(args.frontend_dir, cfg, args.out, rank_dir=args.rank_dir, ks=args.k, tissue_dir=args.tissue_dir)
         print(open(f"{args.out}/sweep.md").read())
+        if args.waves:
+            from pathlib import Path
+
+            from . import waves
+            waves.run_dir(args.waves_frontend_dir or args.frontend_dir, _wave_cfg(cfg, args), Path(args.out) / "waves",
+                          tissue_dir=args.tissue_dir, figures=args.wave_figures)
+            print(open(Path(args.out) / "waves" / "waves_summary.md").read())
+    elif args.cmd == "waves":
+        from pathlib import Path
+
+        from . import waves
+        waves.run_dir(args.frontend_dir, _wave_cfg(cfg, args), args.out, tissue_dir=args.tissue_dir,
+                      figures=not args.no_figures)
+        print(open(Path(args.out) / "waves_summary.md").read())
     elif args.cmd == "tissue":
         from . import tissue
         tissue.run_dir(args.frontend_dir, cfg, args.out)
@@ -159,6 +187,32 @@ def main(argv=None) -> int:
         inventory.write_summary(args.out, cfg)
         print(f"Summary: {args.out}/phase0_summary.md")
     return 0
+
+
+def _wave_args(p, standalone: bool) -> None:
+    """Wave-stage overrides shared by `mejoint waves` and `mejoint decompose --waves` (one code path)."""
+    pre = "" if standalone else "wave-"
+    p.add_argument(f"--{pre}band", type=float, nargs=2, metavar=("LOW", "HIGH"), dest="w_band", help="band (Hz)")
+    p.add_argument(f"--{pre}n-modes", type=int, dest="w_n_modes")
+    p.add_argument(f"--{pre}plot-modes", type=int, dest="w_plot_modes")
+    p.add_argument(f"--{pre}voxel-scaling", choices=["whitened", "zscore_c0"], dest="w_voxel_scaling")
+    p.add_argument(f"--{pre}channels", choices=["both", "c0"], dest="w_channels")
+    p.add_argument(f"--{pre}bootstrap", type=int, dest="w_bootstrap")
+    p.add_argument(f"--{pre}surrogates", type=int, dest="w_surrogates")
+    p.add_argument("--no-slice-timing", action="store_true", dest="w_no_stc",
+                   help="wave stage without slice-timing correction (a sensitivity check; the artifact is inferior-superior)")
+
+
+def _wave_cfg(cfg: dict, args) -> dict:
+    over = {"band_hz": args.w_band, "n_modes": args.w_n_modes, "plot_modes": args.w_plot_modes,
+            "voxel_scaling": args.w_voxel_scaling, "channels": args.w_channels, "bootstrap": args.w_bootstrap,
+            "surrogates": args.w_surrogates}
+    over = {k: (list(v) if isinstance(v, tuple) else v) for k, v in over.items() if v is not None}
+    if args.w_no_stc:
+        over["slice_timing_correction"] = False
+    if "plot_modes" in over:
+        over.setdefault("bootstrap_modes", over["plot_modes"])
+    return io.merge(cfg, {"waves": over})
 
 
 if __name__ == "__main__":
