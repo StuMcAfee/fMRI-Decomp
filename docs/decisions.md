@@ -443,3 +443,16 @@ The real data behave as the simulation predicted:
 New finding: the residual channels are not a pure thermal reference. Their top eigenvalues are ~27, ~10, ~8, i.e. a few strong components shared across voxels that lie outside span{1, TE}. Candidates: TE-nonlinear respiratory B0 / dephasing (the frame-wise residual tracks unfiltered FD), echo-specific ghosting, MB leakage. Not verified. Their bulk is ~1.1-1.2. The "thermal" estimate (k = 3) compares against the residual's top eigenvalue and is therefore not a thermal null. It should use the residual's bulk, after the residual's own structured components are removed.
 
 Gate still not passed.
+
+### 2026-11-04: surrogate-regressor check on 47159 (mc)
+
+Share of energy kept after projection (5 surrogate sets: same spectrum and cross-spectra as the motion parameters, scrambled timing):
+
+| Channel | Real regressors | Surrogates, mean [range] | Removed by chance | Motion-specific (extra) |
+|---|---|---|---|---|
+| c0 | 0.50 | 0.72 [0.68-0.76] | 28 % | ~22 % |
+| c1 | 0.71 | 0.84 [0.82-0.86] | 16 % | ~13 % |
+| r0 | 0.78 | 0.87 [0.85-0.89] | 13 % | ~9 % |
+| r1 | 0.84 | 0.90 [0.89-0.91] | 10 % | ~6 % |
+
+The real regressors remove more than any surrogate, so part of the removal is motion-specific. But regressors of this spectrum also remove ~28 % of c0 by chance: slow signal, which includes scanner drift and possibly neural slow fluctuations. The df share alone is ~3 %. This is a cost of the 24-parameter set. A lighter set (6 or 12 terms; fewer slow regressors) has not been compared yet.
