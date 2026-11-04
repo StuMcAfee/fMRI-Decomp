@@ -174,35 +174,61 @@ def label(eta, significant, band, margin: float = 0.0) -> str:
     return "mixed"
 
 
-def bootstrap_norms(c0, c1, R, M, n_boot: int, block: int, rng) -> dict:
-    """||s|| and ||q|| (q in s^-1) with block-bootstrap (frames) intervals: the GLM is refitted with
-    frame weights = how often each frame was drawn (no data copies)."""
+def debiased_norms(m0, m1, R, vb) -> tuple[np.ndarray, np.ndarray]:
+    """||s|| and ||q|| (s^-1) with the expected noise removed: sqrt(max(sum x^2 - sum var(x), 0)).
+    var(s_v) = vb / R11^2; var(q_v) = vb (1 + R01^2 / R11^2) / R00^2 (x 1e6 for s^-1).
+    A plain norm of a noisy map is biased upward, and resampling frames adds noise, so undebiased
+    bootstrap intervals sat above their own estimate on real data (2026-11-04)."""
     from .decompose import backsub
 
-    T, k = M.shape
+    R00, R01, R11 = _R(R)
+    s, q = backsub(m0, m1, R)
+    vb = np.asarray(vb, float)
+    vb = vb if vb.ndim == 2 else np.broadcast_to(vb.reshape(1, -1), m0.shape)
+    ok = np.isfinite(s) & np.isfinite(q)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        var_s = vb / R11 ** 2
+        var_q = vb * (1 + R01 ** 2 / R11 ** 2) / R00 ** 2 * 1e6
+    z = lambda a: np.where(ok, a, 0.0)
+    ns = np.sqrt(np.maximum(z(s ** 2 - var_s).sum(0), 0))
+    nq = np.sqrt(np.maximum(z(q ** 2 - var_q).sum(0), 0))
+    return ns, nq
+
+
+def bootstrap_norms(c0, c1, R, dec: dict, n_boot: int, block: int, rng) -> dict:
+    """Debiased ||s|| and ||q|| (s^-1) of the cross-fitted maps, with block-bootstrap (frames)
+    intervals. Each half's voxels are refitted on the other half's time course with frame weights w
+    (how often each frame was drawn); beta noise variance diag(G^-1 M^T W^2 M G^-1), G = M^T W M."""
+    cf = dec["crossfit"]
+    V = c0.shape[0]
     X0 = np.nan_to_num(c0.astype(np.float64))
     X1 = np.nan_to_num(c1.astype(np.float64))
     bad0 = ~np.isfinite(c0).all(1)
     bad1 = ~np.isfinite(c1).all(1)
+    halves = [(~cf["half_vox"], cf["M_from_A"]), (cf["half_vox"], cf["M_from_B"])]
+    T, k = cf["M_from_A"].shape
     nb = int(np.ceil(T / block))
-    norms_s, norms_q = [], []
+    NS, NQ = [], []
     for _ in range(int(n_boot)):
-        starts = rng.integers(0, T - block + 1, nb)
         w = np.zeros(T)
-        for s0 in starts:
+        for s0 in rng.integers(0, T - block + 1, nb):
             w[s0:s0 + block] += 1
-        w = w[:T]
-        Mw = M * w[:, None]
-        Gi = np.linalg.inv(M.T @ Mw)
-        m0 = X0 @ Mw @ Gi
-        m1 = X1 @ Mw @ Gi
+        m0 = np.full((V, k), np.nan)
+        m1 = np.full((V, k), np.nan)
+        vb = np.full((V, k), np.nan)
+        for use, Mh in halves:
+            Gi = np.linalg.inv(Mh.T @ (Mh * w[:, None]))
+            H = Gi @ (Mh.T @ (Mh * (w ** 2)[:, None])) @ Gi
+            P = (Mh * w[:, None]) @ Gi
+            m0[use], m1[use] = X0[use] @ P, X1[use] @ P
+            vb[use] = np.diag(H)[None, :]
         m0[bad0] = np.nan
         m1[bad1] = np.nan
-        s, q = backsub(m0, m1, R)
-        norms_s.append(np.sqrt(np.nansum(s ** 2, 0)))
-        norms_q.append(np.sqrt(np.nansum(q ** 2, 0)))
-    S, Q = np.array(norms_s), np.array(norms_q)
-    return {"s_ci": np.percentile(S, [2.5, 97.5], axis=0), "q_ci": np.percentile(Q, [2.5, 97.5], axis=0)}
+        ns, nq = debiased_norms(m0, m1, R, vb)
+        NS.append(ns)
+        NQ.append(nq)
+    NS, NQ = np.array(NS), np.array(NQ)
+    return {"s_ci": np.percentile(NS, [2.5, 97.5], axis=0), "q_ci": np.percentile(NQ, [2.5, 97.5], axis=0)}
 
 
 def measure(dec: dict, c0, c1, R, cfg: dict, rng, Q=None, frames: dict | None = None) -> dict:
@@ -228,7 +254,8 @@ def measure(dec: dict, c0, c1, R, cfg: dict, rng, Q=None, frames: dict | None = 
     thr = float(np.quantile(pipe["total"].max(axis=1), qn))          # family-wise: largest of k per surrogate
     sig = single > thr
     bands = reference_bands(m0, m1, R, vb, en["total"], rng, int(Mc["band_mc"]))
-    boot = bootstrap_norms(c0, c1, R, M, int(Mc["n_boot"]), int(Mc["boot_block_frames"]), rng)
+    boot = bootstrap_norms(c0, c1, R, dec, int(Mc["n_boot"]), int(Mc["boot_block_frames"]), rng)
+    ns_hat, nq_hat = debiased_norms(m0, m1, R, vb)
     s, qq = dec["s"], dec["q_per_s"]
     rows = []
     for j in range(M.shape[1]):
@@ -238,8 +265,9 @@ def measure(dec: dict, c0, c1, R, cfg: dict, rng, Q=None, frames: dict | None = 
                "energy_single": float(single[j]), "energy_null_threshold": float(thr), "above_null": bool(sig[j]),
                "band_R2": [round(x, 4) for x in bands[j]["R2"]], "band_S0": [round(x, 4) for x in bands[j]["S0"]],
                "label": label(en["eta"][j], sig[j], bands[j], float(Mc.get("eta_label_margin", 0.0))),
-               "norm_s": float(np.sqrt(np.nansum(s[:, j] ** 2))), "norm_s_ci": [float(x) for x in boot["s_ci"][:, j]],
-               "norm_q_per_s": float(np.sqrt(np.nansum(qq[:, j] ** 2))), "norm_q_ci": [float(x) for x in boot["q_ci"][:, j]]}
+               "norm_s": float(ns_hat[j]), "norm_s_ci": [float(x) for x in boot["s_ci"][:, j]],
+               "norm_q_per_s": float(nq_hat[j]), "norm_q_ci": [float(x) for x in boot["q_ci"][:, j]],
+               "norm_s_raw": float(np.sqrt(np.nansum(s[:, j] ** 2))), "norm_q_raw_per_s": float(np.sqrt(np.nansum(qq[:, j] ** 2)))}
         if frames:
             t = M[:, j]
             for key, f in frames.items():
