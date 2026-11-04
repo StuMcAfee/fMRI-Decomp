@@ -1,0 +1,25 @@
+#!/bin/bash
+# Phase 4 on one subject: joint ICA (option 1) across the fixed k sweep (MAPCA AIC/KIC/MDL from the
+# Phase 3 rank output + decompose.k_sweep_fixed), per-component metrics, figures.
+#   bsub -q standard -n 8 -R "rusage[mem=2500] span[hosts=1]" -env "all" -o phase4_%J.log \
+#        "bash scripts/phase4_subject.lsf '<front-end folder>' '<rank folder>'"
+set -euo pipefail
+PY="$HOME/miniconda3_new/envs/mejoint/bin/python"
+FE="${1:-}"; RK="${2:-}"
+REPO=""
+for cand in "$(dirname "${BASH_SOURCE[0]:-.}")/.." "$PWD" "${LS_SUBCWD:-}"; do
+    if [ -n "$cand" ] && [ -f "$cand/src/mejoint/__init__.py" ]; then REPO="$(cd "$cand" && pwd)"; break; fi
+done
+[ -n "$REPO" ] || { echo "Cannot find the fMRI-Decomp folder (src/mejoint). Run from inside it." >&2; exit 2; }
+cd "$REPO"
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONUNBUFFERED=1
+export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1   # parallelism comes from joblib restarts
+[ -n "$FE" ] && [ -f "$FE/c0.npy" ] || { echo "first argument must be a front-end output folder (with c0.npy)" >&2; exit 2; }
+NAME="$(basename "$(dirname "$FE")")"; SRC="$(basename "$FE")"
+OUT="outputs/phase4/$NAME/$SRC"
+echo "== mejoint phase 4 | $(date) | host $(hostname) | job ${LSB_JOBID:-interactive} | cores ${LSB_DJOB_NUMPROC:-?} | git $(git rev-parse --short HEAD 2>/dev/null || echo '?')"
+mkdir -p "$OUT"
+"$PY" -m mejoint.cli decompose --frontend-dir "$FE" ${RK:+--rank-dir "$RK"} --out "$OUT"
+for d in "$OUT"/k*/; do "$PY" scripts/plot_components.py "$d" "$FE" || echo "figure failed for $d"; done
+echo "== done | $(date) | $PWD/$OUT/sweep.md"

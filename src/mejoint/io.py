@@ -77,7 +77,8 @@ def git_sha(repo: Path = REPO_ROOT) -> str:
         return "unknown"
 
 
-def package_versions(names=("numpy", "scipy", "nibabel", "pyyaml", "pydicom", "mejoint")) -> dict:
+def package_versions(names=("numpy", "scipy", "nibabel", "pyyaml", "pydicom", "scikit-learn", "joblib", "threadpoolctl",
+                                  "dipy", "mapca", "tedana", "mejoint")) -> dict:
     out = {"python": platform.python_version()}
     for n in names:
         try:
