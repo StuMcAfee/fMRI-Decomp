@@ -4,14 +4,24 @@ Spectrum: eigenvalues of the T x T Gram matrix of the stacked, time-demeaned cha
 by the number of rows, so unit white noise sits in the Marchenko-Pastur band (1 +/- sqrt(T_eff / n))^2.
 
 Nulls (the same nuisance projection and demeaning as the data):
-- temporal (gated): every row phase-randomized independently. Each row keeps its own power spectrum
-  (signal and coloured noise included), but structure shared across rows is destroyed. Because rows keep
-  the power of the shared components, an index-by-index comparison (classic parallel analysis; reported)
-  hides weak components when the rows share a spectrum (narrowband, or 1/f like BOLD). The gated estimator
-  is therefore deflated (sequential) parallel analysis (Buja & Eyuboglu 1992, from memory): component k
-  passes if the data's k-th eigenvalue exceeds the chosen quantile of the top eigenvalue of
-  phase-randomized data with the top k-1 components removed (the removed components and the nuisance
-  basis are projected out of the null too). The search steps one component at a time from the index-by-index estimate.
+- temporal, GATED (user decision 2026-11-04): split-half deflated parallel analysis on noise-whitened
+  channels. (1) One common temporal whitening filter C^(-1/2) for all rows, C = Toeplitz of the median
+  (across rows) autocovariance, tapered beyond max_lag: shared components keep their rank, the average
+  noise spectrum becomes flat. (2) Voxels are split into two halves by spatial blocks (neighbouring voxels,
+  whose noise can be correlated, stay together; c0 and c1 rows of a voxel stay together). (3) Temporal
+  directions u_1, u_2, ... come from half A; the statistic for u_k is half B's variance along u_k (no
+  selection bias: B's noise did not choose u_k). (4) Its null: half B with u_1..u_(k-1) removed,
+  phase-randomized per row (mirror-extended), the same projections applied, variance rescaled, then
+  measured along u_k. k = the last direction before the first failure; the two halves swap roles and
+  k_temporal is their mean.
+  Why: index-by-index parallel analysis inherits the shared components' spectral power and under-counts;
+  plain deflation is biased by selection and, with coloured noise, by spectral depletion (it over-counts).
+  Simulation (gate tests): 30 components, narrowband or broadband, white or coloured noise: within +/- 1;
+  1 component: exact; 60 narrowband: 60-66; 60 broadband: over-counts 10-37 % because the many shared
+  components contaminate the median noise spectrum. The contamination diagnostic reports this: validated
+  up to ~0.45 (the 30-component cases score ~0.44; the failing 60-component cases ~0.63).
+- temporal, reported: index-by-index parallel analysis (under-counts); the old unsplit deflated search
+  (over-counts with coloured noise; off by default, slow).
 - thermal: the residual channels r0, r1, which hold thermal noise and violations but no signal in
   span{1, TE}. The data rows are subsampled to the residual's row count (same aspect ratio).
   Physiological noise lies inside span{1, TE}, so this edge sits low and pushes k up (CLAUDE.md caveat);
@@ -133,6 +143,82 @@ def deflated_k(X, lam, V, Q, n_sur: int, q: float, rng, k_max: int, k_start: int
     return k, tested
 
 
+def orthonormal(M: np.ndarray, tol: float = 1e-10) -> np.ndarray:
+    U, sv, _ = np.linalg.svd(M, full_matrices=False)
+    return U[:, sv > tol * max(sv.max(), 1e-300)]
+
+
+def noise_whitener(X: np.ndarray, max_lag: int = 40, chunk: int = 20000) -> dict:
+    """One temporal filter for all rows: W = C^(-1/2), C = Toeplitz of the median (across rows) linear
+    autocovariance (zero-padded FFT, so not circular), Tukey-tapered to 0 at max_lag. Also returns
+    C^(1/2), which maps the removed subspace (nuisance, mean) into the whitened domain."""
+    from scipy.linalg import toeplitz
+
+    n, T = X.shape
+    acs = []
+    for i in range(0, n, chunk):
+        F = np.fft.rfft(X[i:i + chunk], n=2 * T, axis=1)
+        acs.append(np.fft.irfft(np.abs(F) ** 2, axis=1)[:, :T] / T)
+    med = np.median(np.concatenate(acs, axis=0), axis=0)
+    lag = np.arange(T)
+    taper = np.where(lag <= max_lag, 0.5 * (1 + np.cos(np.pi * lag / max_lag)), 0.0)
+    w, V = np.linalg.eigh(toeplitz(med * taper))
+    w = np.maximum(w, 1e-3 * w.max())
+    return {"W": (V / np.sqrt(w)) @ V.T, "C_half": (V * np.sqrt(w)) @ V.T, "median_lag0": float(med[0]),
+            "median_autocov": med}
+
+
+def split_halves(idx: np.ndarray, mask3d, block: int, rng) -> np.ndarray:
+    """Half membership per stacked row. Rows map to voxels (idx modulo V); voxels are grouped in
+    block^3 spatial blocks and whole blocks go to one half at random. Without a mask: random voxels."""
+    if mask3d is None:
+        V = int(idx.max()) + 1
+        lab = rng.permutation(V) < V // 2
+        return lab[idx % V] if idx.max() >= V else lab[idx]
+    coords = np.argwhere(mask3d)
+    V = coords.shape[0]
+    b = coords // int(block)
+    bid = np.unique(b, axis=0, return_inverse=True)[1].ravel()
+    lab_block = rng.random(bid.max() + 1) < 0.5
+    return lab_block[bid][idx % V]
+
+
+def split_deflated(Xw: np.ndarray, Qw: np.ndarray, half: np.ndarray, n_sur: int, q: float, k_max: int,
+                   step: int, rng) -> dict:
+    """Split-half deflated parallel analysis on whitened rows (see module docstring)."""
+    res = {}
+    for name, a, b in (("A_to_B", half, ~half), ("B_to_A", ~half, half)):
+        _, U = spectrum(Xw[a], vectors=True)
+        U = U[:, :k_max + step]
+        B = Xw[b]
+        stat = ((B @ U) ** 2).mean(axis=0)
+        tot_b = float((B ** 2).sum())
+        k, trace = 0, []
+        while k < k_max:
+            Uk = U[:, :k]
+            Y = B - (B @ Uk) @ Uk.T if k else B
+            tot = float((Y ** 2).sum())
+            idx = list(range(k, min(k + step, k_max)))
+            nulls = []
+            for _ in range(int(n_sur)):
+                Z = phase_randomize_rows(Y, rng)
+                Z = Z - (Z @ Qw) @ Qw.T
+                if k:
+                    Z = Z - (Z @ Uk) @ Uk.T
+                Z *= np.sqrt(tot / (Z ** 2).sum())
+                nulls.append(((Z @ U[:, idx]) ** 2).mean(axis=0))
+            thr = np.quantile(nulls, q, axis=0)
+            passed = stat[idx] > thr
+            trace += [{"k": i + 1, "stat": round(float(stat[i]), 5), "threshold": round(float(t), 5), "pass": bool(p)}
+                      for i, t, p in zip(idx, thr, passed)]
+            if not passed.all():
+                k += int(np.argmin(passed))
+                break
+            k += len(idx)
+        res[name] = {"k": int(k), "trace": trace, "row_variance_total": tot_b}
+    return res
+
+
 def mp_edge(n: int, t_eff: int) -> float:
     return float((1 + np.sqrt(t_eff / n)) ** 2)
 
@@ -184,7 +270,23 @@ def estimate(c0, c1, r0, r1, cfg: dict, Q=None, seed=None, mask3d=None, with_map
     thr = np.quantile(null, q, axis=0)
     k_classic = k_above(lam, thr)
     k_max = min(int(Rk.get("k_max", 300)), t_eff - 1)
-    k_temporal, tested = deflated_k(X, lam, V, Q, int(Rk["deflated_n_surrogates"]), q, rng, k_max, k_start=max(k_classic, 1))
+    tested, k_old = {}, None
+    if Rk.get("old_deflated", False):
+        k_old, tested = deflated_k(X, lam, V, Q, int(Rk["deflated_n_surrogates"]), q, rng, k_max, k_start=max(k_classic, 1))
+    # gated: split-half deflated parallel analysis on noise-whitened rows
+    wh = noise_whitener(X, int(Rk.get("whiten_max_lag", 40)))
+    Xw = X @ wh["W"]
+    Q0 = np.ones((T, 1)) / np.sqrt(T) if Q is None else np.column_stack([Q, np.ones(T) / np.sqrt(T)])
+    Qw = orthonormal(wh["C_half"] @ Q0)
+    Xw = Xw - (Xw @ Qw) @ Qw.T                                 # exact: rows already lie outside this subspace
+    Xw /= np.sqrt((Xw ** 2).mean())
+    _, idx_rows = stack(c0, c1)
+    half = split_halves(idx_rows, mask3d, int(Rk.get("split_block_vox", 4)), rng)
+    sp = split_deflated(Xw, Qw, half, int(Rk.get("split_n_surrogates", 10)), q, k_max, int(Rk.get("split_step", 3)), rng)
+    kA, kB = sp["A_to_B"]["k"], sp["B_to_A"]["k"]
+    k_temporal = int(round(0.5 * (kA + kB)))
+    bulk = lam[k_temporal:t_eff]
+    contamination = float(1 - bulk.mean() / wh["median_lag0"]) if bulk.size and wh["median_lag0"] > 0 else None
     # thermal null: residual rows; data rows subsampled to the same aspect ratio
     Rr, _ = stack(r0, r1)
     n_r = Rr.shape[0]
@@ -198,7 +300,12 @@ def estimate(c0, c1, r0, r1, cfg: dict, Q=None, seed=None, mask3d=None, with_map
     edge = mp_edge(n, t_eff)
     out = {"n_rows": int(n), "n_frames": int(T), "t_eff": int(t_eff), "eigenvalues": lam,
            "null_quantile": q, "null_threshold": thr, "null_mean": null.mean(0), "n_surrogates": int(null.shape[0]),
-           "k_temporal": k_temporal, "k_temporal_classic": k_classic, "k_max": k_max,
+           "k_temporal": k_temporal, "k_split_halves": [kA, kB], "k_temporal_classic": k_classic, "k_max": k_max,
+           "k_old_deflated": k_old,
+           "split_trace": {k: v["trace"] for k, v in sp.items()},
+           "contamination": None if contamination is None else round(contamination, 4),
+           "contamination_validated_max": float(Rk.get("contamination_validated_max", 0.45)),
+           "eigenvalues_whitened": spectrum(Xw),
            "deflated_tests": {int(k): {"pass": v[0], "threshold": round(v[1], 5), "eigenvalue": round(float(lam[k - 1]), 5)}
                               for k, v in sorted(tested.items())},
            "k_thermal": k_thermal, "mp_edge": edge, "k_mp_edge": int((lam > edge).sum()),
@@ -236,7 +343,8 @@ def run_dir(frontend_dir, cfg: dict, out_dir) -> dict:
     io.write_tsv(out_dir / "spectrum.tsv", {"index": list(range(1, T + 1)), "eigenvalue": col(res["eigenvalues"]),
                                             "null_mean": col(res["null_mean"]), "null_threshold": col(res["null_threshold"]),
                                             "eigenvalue_subsampled": col(res["eigenvalues_subsampled"]),
-                                            "residual_eigenvalue": col(res["residual_eigenvalues"])})
+                                            "residual_eigenvalue": col(res["residual_eigenvalues"]),
+                                            "eigenvalue_whitened": col(res["eigenvalues_whitened"])})
     keep = {k: v for k, v in res.items() if not isinstance(v, np.ndarray) and k not in ("eigenvalues_subsampled", "residual_eigenvalues")}
     keep.update(run_id=fs.get("run_id"), source=fs.get("source"), nuisance=Q is not None,
                 nuisance_rank=None if Q is None else int(Q.shape[1]), frontend_dir=str(fd))
@@ -248,20 +356,25 @@ def run_dir(frontend_dir, cfg: dict, out_dir) -> dict:
 
 
 def render(r: dict) -> str:
-    L = ["**EXPLORATORY: the Phase 3 rank gate has not passed (no estimator yet recovers the simulated rank within 10 % "
-         "with coloured noise; docs/decisions.md). Do not use these k as final.**", "",
-         f"# Rank: {r.get('run_id')} ({r.get('source')} echoes, nuisance projection: "
+    c, cmax = r.get("contamination"), r.get("contamination_validated_max", 0.45)
+    inside = c is not None and c <= cmax
+    L = [f"# Rank: {r.get('run_id')} ({r.get('source')} echoes, nuisance projection: "
          f"{'yes, rank ' + str(r['nuisance_rank']) if r.get('nuisance') else 'no'})", "",
          f"Stacked channels [c0 | c1]: {r['n_rows']} rows x {r['n_frames']} frames (effective {r['t_eff']} after projection "
          "and demeaning).", "",
-         "| Estimate | k | Note |", "|---|---|---|",
-         f"| Temporal null, deflated (intended gate; over-counts with coloured noise) | {r['k_temporal']} | each component above the {r['null_quantile']:.2f} "
-         "quantile of the top eigenvalue of phase-randomized data with the stronger components removed |",
-         f"| Temporal null, index by index | {r['k_temporal_classic']} | {r['n_surrogates']} surrogates; conservative "
-         "when rows share a spectrum (under-counts) |",
-         f"| Thermal null (residual) | {r['k_thermal']} | above the top residual eigenvalue, {r['n_residual_rows']} rows "
-         "(aspect matched); sits low (physiology is inside span{1, TE}) |",
-         f"| Marchenko-Pastur edge | {r['k_mp_edge']} | edge {r['mp_edge']:.3f} for unit noise; sigma level uncertain by ~20 % |"]
+         f"**Gated k = {r['k_temporal']}** (split-half deflated parallel analysis on noise-whitened channels; halves "
+         f"{r['k_split_halves'][0]} and {r['k_split_halves'][1]}).",
+         f"Contamination of the noise spectrum by shared signal: {c} (validated up to {cmax}: "
+         + ("**inside** the validated range)." if inside else "**OUTSIDE** the validated range: k may be over-counted; see docs/decisions.md)."),
+         "", "| Estimate | k | Note |", "|---|---|---|",
+         f"| **Split-half deflated, whitened (gated)** | **{r['k_temporal']}** | simulation: within +/- 1 of 30 (white or coloured, "
+         "narrowband or broadband); over-counts 10-37 % with 60 broadband components |",
+         f"| Index by index | {r['k_temporal_classic']} | {r['n_surrogates']} surrogates; under-counts when rows share a spectrum |",
+         f"| Thermal null (residual) | {r['k_thermal']} | above the top residual eigenvalue; the residual holds a few structured "
+         "components, so this is not a thermal null (reported only) |",
+         f"| Marchenko-Pastur edge | {r['k_mp_edge']} | edge {r['mp_edge']:.3f} for unit white noise; counts coloured noise |"]
+    if r.get("k_old_deflated") is not None:
+        L.append(f"| Unsplit deflated (old) | {r['k_old_deflated']} | over-counts with coloured noise |")
     mp = r.get("mapca") or {}
     if mp.get("available"):
         L += [f"| MAPCA AIC / KIC / MDL | {mp['aic']} / {mp['kic']} / {mp['mdl']} | tedana's estimator (mapca "

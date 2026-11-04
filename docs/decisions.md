@@ -456,3 +456,29 @@ Share of energy kept after projection (5 surrogate sets: same spectrum and cross
 | r1 | 0.84 | 0.90 [0.89-0.91] | 10 % | ~6 % |
 
 The real regressors remove more than any surrogate, so part of the removal is motion-specific. But regressors of this spectrum also remove ~28 % of c0 by chance: slow signal, which includes scanner drift and possibly neural slow fluctuations. The df share alone is ~3 %. This is a cost of the 24-parameter set. A lighter set (6 or 12 terms; fewer slow regressors) has not been compared yet.
+
+### 2026-11-04: regressor set kept at 24 (from the comparison); Phase 3 gated estimator replaced (user: option 1)
+
+**Regressor sets on P04 (mc), share of c0 energy:**
+
+| Set | Removed by chance | Motion-specific | Residual frame energy |
+|---|---|---|---|
+| 6 | 0.27 | 0.17 | 1.109 |
+| 12 | 0.23 | 0.23 | 1.102 |
+| 18 | 0.28 | 0.21 | 1.088 |
+| 24 | 0.26 | 0.24 | 1.085 |
+
+Every set removes the residual's link to head drift (Spearman 0.86 -> -0.30 to -0.41). Chance removal is the same for all sets, within the surrogate spread (~ +/- 0.04): it comes from the 6 slow parameters themselves. The 24-term set removes the most motion-specific energy and leaves the cleanest residual. Kept at 24 (user deferred to the recommendation). The ~25 % chance removal of slow signal is a limitation of any motion regression here; the no-regression arm stays as the comparison.
+
+**Phase 3 gated estimator:** split-half deflated parallel analysis on noise-whitened channels (rank.py docstring).
+
+| Simulated case (gate tests) | Result |
+|---|---|
+| 30 components, narrowband or broadband, white or coloured noise | within +/- 1 |
+| 1 component | exact |
+| pure coloured noise | 0-1 |
+| projected data (24 regressors) | within 10 % |
+| 60 narrowband components | 60-66 |
+| 60 broadband components | over-count 10-37 % (known limitation, xfail) |
+
+A contamination diagnostic (shared-signal share of the median row variance) is reported with every run. Its validated range is being calibrated: the first estimate of 0.45 was too low, since a passing 30-component case scored 0.476.
