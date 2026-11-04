@@ -509,3 +509,24 @@ A flat, non-decaying excess suggests noise shared between the halves rather than
 Change (no new tuning of thresholds): halves are now alternating 4-voxel slabs along the readout axis (`rank.split_mode: readout_slab`). Every MB / GRAPPA partner shares the readout coordinate, so it stays in its partner's half whatever the CAIPI shift.
 
 New diagnostic: correlation of the residual r0 between voxels 8 slices apart (MB partners) vs 4 slices apart (control), at every circular PE shift, plus the GRAPPA half-FOV partner. If MB noise correlation exists, its peak estimates the CAIPI shift (to be checked against the protocol; unverified). Tests: planted partner at (shift 13, dz 8) found, control flat; readout slabs keep slice + 8 and any PE shift in one half.
+
+### 2026-11-04: readout-slab rerun on P04: k still 300; MB-alias hypothesis rejected (STOP, user decides)
+
+Result: gated k = 300 (both halves), the same as with cubes.
+
+Noise correlation in r0:
+- MB partners (slice + 8): peak -0.007 at any PE shift; control (slice + 4): 0.001. No MB alias noise correlation, so no CAIPI shift can be inferred.
+- GRAPPA half-FOV partner: 0.077, real but modest (the slabs already keep these together).
+- Neighbour along PE (shift 1): 0.19, likely from motion-correction interpolation (not checked on raw data).
+
+New candidate, with simulation support: noise whose amplitude varies over time in the same way in every voxel (e.g. breathing depth, CO2 or arousal modulating physiological noise; motion periods). The phase-randomized null assumes stationary noise and cannot reproduce this, so many directions pass. Simulation (30 broadband components, coloured noise):
+
+| Shared noise-amplitude envelope (SD) | Gated k | Halves |
+|---|---|---|
+| none | 32 | 31 / 32 |
+| 0.14 | 31 | 30 / 32 |
+| 0.28 | 68 | 49 / 86 |
+
+The size of such an envelope in the real c0 noise is unknown.
+
+Third failed attempt on real data for the Phase 3 gate (CLAUDE.md section 2: stop and ask).
