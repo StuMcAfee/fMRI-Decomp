@@ -635,3 +635,28 @@ Phase 5 order (proposed):
 2. Tissue classes, data-only first, then T1-based (needs the T1w location).
 3. Injection into raw echoes through the full pipeline (eta bands on real data).
 4. Arms A-G; motion check; MB-leakage test; split-half reliability.
+
+### 2026-11-04: Phase 5 step 1: partial volume with CSF creates apparent dS0 for BOLD (our derivation, numerical)
+
+Two-compartment voxel: tissue T2* 45 ms carries a pure dR2* change of 0.5 s^-1; CSF T2* 200 ms does not. Passed through the real front-end projection and back-substitution (per-echo weights, echo-1 SNR 100).
+
+eta of the voxel's change:
+
+| Tissue fraction | CSF / tissue S0 = 0.5 | 1.0 | 2.0 |
+|---|---|---|---|
+| 0.9 | 0.003 | 0.012 | 0.039 |
+| 0.8 | 0.015 | 0.047 | 0.127 |
+| 0.7 | 0.037 | 0.104 | 0.231 |
+| 0.6 | 0.073 | 0.179 | 0.331 |
+| 0.5 | 0.127 | 0.266 | 0.419 |
+
+- The apparent dS0/S0 is negative (-0.09 to -0.27 %), opposite in sign to the signal change, and the apparent dR2* is diluted (e.g. 0.13 instead of 0.5 s^-1).
+- Whitened energy of the change at tissue fraction 0.6: c0 98.1 %, c1 1.6 %, r0 0.3 %, r1 ~0. It is invisible per frame in the residual.
+- Its static fingerprint is a convex mean decay (curvature about +0.015). P04's static curvature has its 90th percentile at +0.074, so many voxels have convex, partial-volume-like decays.
+
+Consequence: eta ~0.2 for BOLD-like components on P04 is explained by partial volume alone. eta in mixed-tissue voxels is not evidence of physiological dS0. This changes how eta must be read (CLAUDE.md 7.1, "do not hard-label dS0 as noise", also means "do not read dS0 as physiological without partial-volume control").
+
+Options, for the user:
+- (a) report eta stratified by CSF partial volume (T1 segmentation, or data-only from the static decay);
+- (b) model correction: a per-voxel two-compartment design, -TE w_v(TE) with w_v the tissue signal fraction from a bi-exponential fit of the mean decay or from T1 partial-volume maps (changes the model; needs validation);
+- (c) a coupling diagnostic: partial volume predicts s anti-correlated with q within a component, with a ratio set by each voxel's static decay.
