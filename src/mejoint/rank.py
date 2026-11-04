@@ -201,9 +201,25 @@ def split_halves(idx: np.ndarray, mask3d, block: int, rng, slab_axis: int | None
     return lab_block[bid][idx % V]
 
 
+def noise_envelope(Xw: np.ndarray, n_remove: int) -> np.ndarray:
+    """Shared time-varying noise amplitude a(t) (mean a^2 = 1): sqrt of the median across rows of the
+    squared data at each frame, after removing the n_remove strongest temporal directions (so strong
+    components do not set it). Stationary noise gives a(t) ~ 1."""
+    if n_remove > 0:
+        _, U = spectrum(Xw, vectors=True)
+        Uk = U[:, :n_remove]
+        R = Xw - (Xw @ Uk) @ Uk.T
+    else:
+        R = Xw
+    e = np.median(R ** 2, axis=0)
+    e = e / e.mean()
+    return np.sqrt(np.maximum(e, 1e-6))
+
+
 def split_deflated(Xw: np.ndarray, Qw: np.ndarray, half: np.ndarray, n_sur: int, q: float, k_max: int,
-                   step: int, rng) -> dict:
-    """Split-half deflated parallel analysis on whitened rows (see module docstring)."""
+                   step: int, rng, envelope: np.ndarray | None = None) -> dict:
+    """Split-half deflated parallel analysis on whitened rows (see module docstring). envelope: shared
+    noise amplitude a(t); the null is then PR(Y / a) * a, so it keeps the time-varying noise level."""
     res = {}
     for name, a, b in (("A_to_B", half, ~half), ("B_to_A", ~half, half)):
         _, U = spectrum(Xw[a], vectors=True)
@@ -219,7 +235,10 @@ def split_deflated(Xw: np.ndarray, Qw: np.ndarray, half: np.ndarray, n_sur: int,
             idx = list(range(k, min(k + step, k_max)))
             nulls = []
             for _ in range(int(n_sur)):
-                Z = phase_randomize_rows(Y, rng)
+                if envelope is None:
+                    Z = phase_randomize_rows(Y, rng)
+                else:
+                    Z = phase_randomize_rows(Y / envelope, rng) * envelope
                 Z = Z - (Z @ Qw) @ Qw.T
                 if k:
                     Z = Z - (Z @ Uk) @ Uk.T
@@ -337,11 +356,17 @@ def estimate(c0, c1, r0, r1, cfg: dict, Q=None, seed=None, mask3d=None, with_map
     tested, k_old = {}, None
     if Rk.get("old_deflated", False):
         k_old, tested = deflated_k(X, lam, V, Q, int(Rk["deflated_n_surrogates"]), q, rng, k_max, k_start=max(k_classic, 1))
-    # gated: split-half deflated parallel analysis on noise-whitened rows
-    wh = noise_whitener(X, int(Rk.get("whiten_max_lag", 40)))
-    Xw = X @ wh["W"]
+    # gated: split-half deflated parallel analysis on noise-whitened rows. First every frame is divided by
+    # the shared noise amplitude a(t) (a common temporal transform: shared components keep their rank;
+    # the noise becomes stationary), then one common whitening filter.
     Q0 = np.ones((T, 1)) / np.sqrt(T) if Q is None else np.column_stack([Q, np.ones(T) / np.sqrt(T)])
-    Qw = orthonormal(wh["C_half"] @ Q0)
+    env = noise_envelope(X, k_classic)                     # diagnostic: shared time-varying noise amplitude
+    use_env = bool(Rk.get("null_envelope", False))
+    Xs = X / env if use_env else X
+    Q0 = Q0 * env[:, None] if use_env else Q0              # removed subspace after dividing by a(t)
+    wh = noise_whitener(Xs, int(Rk.get("whiten_max_lag", 40)))
+    Xw = Xs @ wh["W"]
+    Qw = orthonormal(wh["C_half"] @ orthonormal(Q0))
     Xw = Xw - (Xw @ Qw) @ Qw.T                                 # exact: rows already lie outside this subspace
     Xw /= np.sqrt((Xw ** 2).mean())
     _, idx_rows = stack(c0, c1)
@@ -371,6 +396,8 @@ def estimate(c0, c1, r0, r1, cfg: dict, Q=None, seed=None, mask3d=None, with_map
            "contamination": None if contamination is None else round(contamination, 4),
            "contamination_validated_max": float(Rk.get("contamination_validated_max", 0.50)),
            "eigenvalues_whitened": spectrum(Xw),
+           "noise_envelope": env,
+           "noise_envelope_sd": round(float(np.std(env)), 4), "noise_envelope_applied": use_env,
            "deflated_tests": {int(k): {"pass": v[0], "threshold": round(v[1], 5), "eigenvalue": round(float(lam[k - 1]), 5)}
                               for k, v in sorted(tested.items())},
            "k_thermal": k_thermal, "mp_edge": edge, "k_mp_edge": int((lam > edge).sum()),
@@ -416,6 +443,8 @@ def run_dir(frontend_dir, cfg: dict, out_dir) -> dict:
                                             "eigenvalue_subsampled": col(res["eigenvalues_subsampled"]),
                                             "residual_eigenvalue": col(res["residual_eigenvalues"]),
                                             "eigenvalue_whitened": col(res["eigenvalues_whitened"])})
+    if res.get("noise_envelope") is not None:
+        io.write_tsv(out_dir / "noise_envelope.tsv", {"frame": list(range(T)), "amplitude": col(res["noise_envelope"])})
     keep = {k: v for k, v in res.items() if not isinstance(v, np.ndarray) and k not in ("eigenvalues_subsampled", "residual_eigenvalues")}
     keep.update(run_id=fs.get("run_id"), source=fs.get("source"), nuisance=Q is not None,
                 nuisance_rank=None if Q is None else int(Q.shape[1]), frontend_dir=str(fd))
@@ -435,6 +464,8 @@ def render(r: dict) -> str:
          "and demeaning).", "",
          f"**Gated k = {r['k_temporal']}** (split-half deflated parallel analysis on noise-whitened channels; halves "
          f"{r['k_split_halves'][0]} and {r['k_split_halves'][1]}).",
+         f"Shared time-varying noise amplitude (envelope SD; 0 = stationary): {r.get('noise_envelope_sd')}; "
+         + ("frames divided by it before testing." if r.get("noise_envelope_applied") else "measured only (not applied)."),
          f"Contamination of the noise spectrum by shared signal: {c} (validated up to {cmax}: "
          + ("**inside** the validated range)." if inside else "**OUTSIDE** the validated range: k may be over-counted; see docs/decisions.md)."),
          "", "| Estimate | k | Note |", "|---|---|---|",

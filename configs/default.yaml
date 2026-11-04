@@ -149,6 +149,7 @@ rank:                         # Phase 3: dimensionality of the stacked whitened 
   split_block_vox: 4            # slab thickness (or cube side) in voxels
   whiten_max_lag: 40            # common noise-whitening filter: median autocovariance tapered to 0 at this lag (frames)
   contamination_validated_max: 0.50   # validated range of the contamination diagnostic (shared-signal share of the median row variance): passing 30-component cases 0.469-0.481, 60-component cases 0.665-0.692 (broadband over-counts)
+  null_envelope: false          # last attempt (2026-11-04): divide every frame by the shared noise amplitude a(t) before whitening. Failed in simulation (k 37 / 92 for envelope SD 0.15 / 0.30; stationary 34), so off; a(t) is still measured and reported
   old_deflated: false           # also run the old unsplit deflated search (over-counts with coloured noise; slow)
   deflated_n_surrogates: 10     # surrogates per tested k in the old unsplit deflated search
   null_quantile: 0.95           # data eigenvalue must exceed this quantile of the null

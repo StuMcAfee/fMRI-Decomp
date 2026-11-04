@@ -530,3 +530,31 @@ New candidate, with simulation support: noise whose amplitude varies over time i
 The size of such an envelope in the real c0 noise is unknown.
 
 Third failed attempt on real data for the Phase 3 gate (CLAUDE.md section 2: stop and ask).
+
+### 2026-11-04: last attempt (user) failed in simulation; Phase 3 closes on the fixed sweep (agreed fallback)
+
+Attempt: divide every frame by the shared noise amplitude a(t) before whitening. a(t) is the median squared data after removing the index-by-index components; dividing is a common temporal transform, so ranks are kept.
+
+| Simulated case (30 broadband components, coloured noise) | Gated k | Envelope SD, true / estimated |
+|---|---|---|
+| envelope SD 0.15 | 37 (halves 42 / 32) | 0.15 / 0.13 |
+| envelope SD 0.30 | 92 (halves 120 / 64) | 0.30 / 0.24 |
+| stationary | 34 (32 without the correction, i.e. slightly worse) | 0 / 0.03 |
+
+An earlier variant (envelope re-applied to the null after whitening) did not help either (107 vs 120); the order was wrong, since the whitening filter mixes frames.
+
+Conclusion:
+- With tens of thousands of voxels the split-half test is precise enough that any departure from its null (here, residual nonstationarity) counts as shared structure.
+- A single "true rank" is probably not well defined for these data: shared structure exists at all scales. The user's framing applies: we are near the limit of what physics, measurement and analysis can provide.
+- The correction is off (`rank.null_envelope: false`). a(t) is measured and reported as a diagnostic of noise nonstationarity, and the time-varying-amplitude case is a documented limitation (xfail).
+
+**Decision (user, agreed in advance as the fallback): Phase 3 closes without a gated k.** Phase 4 uses the fixed sweep: MAPCA AIC / KIC / MDL (13 / 24 / 28 on 47159) and k = 50, 70, 90. Every result is reported across k. The split-half estimator, the index-by-index count, the whitened Marchenko-Pastur crossing (~55 on 47159) and the envelope SD are reported for each subject as descriptions, not as gates.
+
+What the attempts established:
+- no MB-alias noise correlation;
+- GRAPPA half-FOV correlation 0.08;
+- neighbour correlation 0.19 (interpolation);
+- structured components in the residual channels;
+- the index-by-index null inherits shared spectral power;
+- deflation depletes coloured noise;
+- phase-randomized nulls cannot represent nonstationary noise at this sample size.
