@@ -733,3 +733,34 @@ Tests (tests/test_waves_sim.py, noise-free ground truth; 8 tests, 7-9 s per run;
 - invalid kinds and empty bands are rejected.
 
 **Flag (brief inconsistency):** brief 4.7 gives "lag = phase / (2 pi f_c)" but its gradient formula carries a minus sign. With analytic time courses ~ exp(+i w t), a voxel that lags by tau has map phase -w tau, so the implementation uses lag = -arg(q) / (2 pi f_c), consistent with the gradient formula, and the W2 tests verify the sign on simulated waves.
+
+### 2026-11-04: W2: individual wave stage built; simulation tests pass (slow set: see below)
+
+`src/mejoint/waves.py` (fresh implementation), `src/mejoint/wave_figures.py`, `mejoint waves`, `mejoint decompose --waves [--wave-figures] [--waves-frontend-dir]` (the same `waves.run_dir`), `scripts/waves_overnight.lsf`.
+
+Simulations (tests/test_waves.py): 32 x 32 x 24 grid, 3.28 x 3.28 x 3.3 mm, 600 volumes, TR 0.75 s, real TEs, per-echo noise ratios, MB 6 slice timing; tSNR per echo [87, 66, 47, 36]; waves band-limited to 0.03-0.05 Hz; seed 0.
+
+| Test | Result |
+|---|---|
+| planar neural wave, 6 mm/s along +x | speed 5.94 mm/s, direction error < 0.03 degrees, R = 0.98, fit quality 1.00, lag vs slice-time slope after correction ~0 |
+| lag sign (lag = -arg(q) / (2 pi f_c)) | later voxels have larger lag; SD of (lag - planted delay) < 1 s |
+| standing wave, slice-timing correction on | lag vs slice-time slope -0.013, no propagation (speed > 1000 mm/s) |
+| standing wave, correction off | slope -1.009 (the artifact, with the sign the correction undoes) |
+| eta | neural ~0 (inside its matched-SNR dR2* band); vascular 0.145, above the band |
+| TE4 - TE1 lag (95 % bootstrap interval of the median beyond the null) | neural [-0.27, 0.33] s (includes 0); vascular [0.52, 0.81] s (excludes 0, positive) |
+| c0 only, equal weights, linear form, z-scored vs an independent reference (SVD of the band-passed analytic OC signal, written separately) | Hungarian-matched complex |r| = 1.000 for the top 3 modes |
+| `mejoint waves` / `decompose --waves` on a real-layout folder | SliceTiming read from the echo-1 sidecar; modes, maps, both figures, summary, done.json written |
+
+Fixes found on the way (each verified by the tests above):
+- **Slice-timing correction sign.** A slice acquired delta into the TR samples the signal delta later, so it must be delayed by +delta. The first version advanced it (slope -1.95 "corrected"); fixed (slope 0.017).
+- **Equivalence test.** The test conjugated the time courses before matching; the analytic time courses of both codes are already the same (the right singular vectors' rows). The code was right, the test was wrong.
+- **"Voxels where the mode is present"** is now |q| above 3 noise SDs of q (from the calibrated complex beta noise), not a fraction of the median amplitude, which diluted focal modes.
+
+**Flags (please review):**
+1. **TE-dependent lag needs s and -TE q of the same sign.** z_e = s - TE_e q. For BOLD-positive hyperaemia (inflow raises S0, dR2* falls) the two parts add and the TE lag is well defined. If they have opposite signs (dS0 up while dR2* rises), z_e passes near zero at TE = s/q, the phase jumps by about half a cycle between echoes, and the unwrapped TE lag is arbitrary. The vascular test therefore simulates the BOLD-positive case (q = -0.5 s^-1). The first version of the test used q = +0.5 and failed for this reason. On real data, a half-period TE lag in a voxel means "sign-opposed mixture", not a timing difference; the phasor panel (diagnostics E) shows which case applies.
+2. **Fast waves are weakly constrained.** A 60 mm/s wave crosses this 105 mm field in 1.7 s: 0.43 rad of phase at 0.04 Hz. In one vascular simulation the speed was 66.9 mm/s [62.2, 71.8], missing 60; in the test seed it was 58.7-62.9. Speeds well above (field size x f_c) should be read as "fast", not as numbers.
+3. **The plane-wave fit does not see the slice-timing artifact** of interleaved MB acquisition (the standing wave without correction still fits as "fast", 6839 mm/s): the artifact is not a smooth gradient. The lag vs slice-time slope is the check, and it is reported for every mode.
+4. **Below-null modes** have meaningless TE lags (60-90 % of voxels "beyond the null"). Interpret every per-mode measure only for modes above the energy null; the summary table carries the eigenvalue / null ratio first.
+5. **Voxelwise eta** in figure 1 C is computed from debiased energies smoothed by 6 mm (display only, `waves.eta_display_fwhm_mm`); per-mode eta uses unsmoothed energies.
+6. **Orientation.** Figures are shown in RAS (participant's right on the right of the image) from the header's orientation codes; checked on a simulated LPS header (the wave appears mirrored, as it should). Not yet seen on a real header.
+7. **Runtime.** 32 x 32 x 24 grid, 600 volumes: about 2 min with 30 bootstrap resamples and 10 surrogates (4 cores). At real size (benchmark, 2 shared cores): complex PCA of 200k stacked rows x 800 frames about 15 s; band-pass + slice-timing correction of 100k voxels x 2 channels about 55 s single-threaded, now threaded over voxel chunks (LSB_DJOB_NUMPROC threads; identical results, 2x on 3 shared cores). Expected on 8 cores: primary run (200 bootstrap, 200 surrogates) about 2-3 h, the sensitivity runs about 1 h together. Not yet measured on the cluster.

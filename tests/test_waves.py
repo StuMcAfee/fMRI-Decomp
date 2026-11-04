@@ -218,6 +218,12 @@ def test_waves_command_writes_outputs_and_figures(tmp_path):
     summ = json.loads((w / "waves.json").read_text())
     assert summ["slice_timing_corrected"] and summ["slice_timing_source"].endswith("sim_e1.json")
     assert summ["modes"][0]["speed_mm_s"] == pytest.approx(6.0, rel=0.15)
+    # without the correction the slice times are still used for the check (slope ~ -1 would flag the artifact)
+    assert cli.main(["waves", "--frontend-dir", str(tmp_path / "fe"), "--out", str(tmp_path / "w_nostc"), "--config",
+                     str(cpath), "--n-modes", "2", "--bootstrap", "0", "--surrogates", "0", "--no-figures",
+                     "--no-slice-timing"]) == 0
+    s2 = json.loads((tmp_path / "w_nostc" / "waves.json").read_text())
+    assert not s2["slice_timing_corrected"] and np.isfinite(s2["modes"][0]["lag_vs_slice_time_slope"])
     # the decompose flag runs the same function into <out>/waves
     assert cli.main(["decompose", "--frontend-dir", str(tmp_path / "fe"), "--out", str(tmp_path / "p4"), "--config",
                      str(cpath), "--k", "3", "--waves", "--wave-n-modes", "2", "--wave-bootstrap", "0",
