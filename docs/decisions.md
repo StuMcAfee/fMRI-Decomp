@@ -423,3 +423,23 @@ Gate test: K = 30 planted components at 2-20x the noise edge.
 **Gate not passed.** The overnight run on P04 is exploratory: front end with the surrogate check, then all rank estimates and the real-data spectra. The spectra are required for the gate anyway and will show which estimator to fix.
 
 Candidate fixes for the next session (not yet tested): AR(p) surrogates per row instead of phase randomization; deflation with the null's own top directions matched; or a noise reference from the residual channels after rescaling by their measured coloured spectrum.
+
+### 2026-11-04: exploratory rank on P04 (mc, 24 regressors)
+
+78569 rows x 800 frames; effective 774 frames. The full spectrum drops to ~1e-15 after index 774, so the 25 projected dimensions plus the mean are removed exactly.
+
+| Estimate | k |
+|---|---|
+| deflated | 168 |
+| index by index | 17 |
+| residual ("thermal") | 3 |
+| Marchenko-Pastur edge | 147 |
+| MAPCA AIC / KIC / MDL | 28 / 24 / 13 |
+
+The real data behave as the simulation predicted:
+- The index-by-index null sits far above the data beyond k ~ 17 (it inherits shared spectral power).
+- The deflated null tracks just below the data from k ~ 17 to 168, a small systematic gap like the ~2 % seen with coloured noise. It does stop (at 168, not k_max = 300), where the data are already below the white-noise edge (1.21).
+
+New finding: the residual channels are not a pure thermal reference. Their top eigenvalues are ~27, ~10, ~8, i.e. a few strong components shared across voxels that lie outside span{1, TE}. Candidates: TE-nonlinear respiratory B0 / dephasing (the frame-wise residual tracks unfiltered FD), echo-specific ghosting, MB leakage. Not verified. Their bulk is ~1.1-1.2. The "thermal" estimate (k = 3) compares against the residual's top eigenvalue and is therefore not a thermal null. It should use the residual's bulk, after the residual's own structured components are removed.
+
+Gate still not passed.
