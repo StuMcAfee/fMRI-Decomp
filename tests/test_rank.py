@@ -160,3 +160,30 @@ def test_run_dir_on_front_end_output(cfg, tmp_path):
         assert (tmp_path / "rank" / f).exists()
     assert res["nuisance"] and res["nuisance_rank"] == 25
     assert 1 <= res["k_temporal"] <= 30 and "contamination" in res and "mapca" in res
+
+
+def test_readout_slabs_keep_alias_partners_together(cfg):
+    """MB partners (slice + 8, any PE shift) and GRAPPA partners (PE + half FOV) share the readout
+    coordinate, so they land in the same half."""
+    mask = np.ones((52, 16, 48), bool)
+    V = int(mask.sum())
+    ax = rank.acquisition_axes(cfg)
+    assert ax == {"pe": 0, "slice": 2, "readout": 1}
+    h = rank.split_halves(np.arange(V), mask, 4, np.random.default_rng(0), slab_axis=ax["readout"]).reshape(mask.shape)
+    assert np.array_equal(h[:, :, :40], h[:, :, 8:])                 # slice + 8
+    assert np.array_equal(h, np.roll(h, 13, axis=0)) and np.array_equal(h, np.roll(h, 26, axis=0))   # any PE shift
+    assert 0.4 < h.mean() < 0.6
+
+
+def test_alias_correlation_finds_mb_partner_shift():
+    """Noise shared between (x, y, z) and (x + 13, y, z + 8) is found at dz = 8, shift 13, not in the control."""
+    rng = np.random.default_rng(SEED + 20)
+    shape, T = (26, 6, 24), 200
+    e = rng.standard_normal((*shape, T)).astype(np.float32)
+    shared = rng.standard_normal((*shape, T)).astype(np.float32)
+    e[:, :, :16] += 0.6 * shared[:, :, :16]
+    e[:, :, 8:] += 0.6 * np.roll(shared, 13, axis=0)[:, :, :16]
+    mask = np.ones(shape, bool)
+    out = rank.alias_correlation(e.reshape(-1, T), mask, pe_axis=0, slice_axis=2, sep=8)
+    assert out["dz8"]["peak_shift"] == 13 and out["dz8"]["peak_corr"] > 0.15
+    assert abs(out["dz4"]["peak_corr"]) < 0.05

@@ -496,3 +496,16 @@ Validated limit set at **0.50**. Values from 0.50 to ~0.67 are untested and flag
 **Phase 3 gate tests (simulation) pass under seeds 0-2:** 30 components (4 kinds), 1 component (4 kinds), pure coloured noise, projected data, spatial blocks, end-to-end. The slow 60-component checks: narrowband must pass; broadband is a known limitation (xfail, flagged by the diagnostic).
 
 The real-data part of the gate (spectra plotted) follows on P04.
+
+### 2026-11-04: Phase 3 on P04 with the new estimator: k ran to k_max = 300; split changed to readout slabs
+
+Result:
+- gated k = 300 in both halves; contamination 0.22 (inside the validated range);
+- index by index 17; MAPCA 28 / 24 / 13;
+- beyond ~100 directions, half B's variance along half A's directions stays a constant ~7 % above its null (0.70 vs 0.65) up to 300.
+
+A flat, non-decaying excess suggests noise shared between the halves rather than 300 components. Not verified. Plausible cause in this acquisition: MB-6 and GRAPPA-2 unaliasing correlates thermal noise between voxels acquired together (slice + 8, shifted along PE by the unknown CAIPI shift; and PE + half FOV). The 4^3 cube split put these partners in different halves, breaking the split's assumption of independent noise.
+
+Change (no new tuning of thresholds): halves are now alternating 4-voxel slabs along the readout axis (`rank.split_mode: readout_slab`). Every MB / GRAPPA partner shares the readout coordinate, so it stays in its partner's half whatever the CAIPI shift.
+
+New diagnostic: correlation of the residual r0 between voxels 8 slices apart (MB partners) vs 4 slices apart (control), at every circular PE shift, plus the GRAPPA half-FOV partner. If MB noise correlation exists, its peak estimates the CAIPI shift (to be checked against the protocol; unverified). Tests: planted partner at (shift 13, dz 8) found, control flat; readout slabs keep slice + 8 and any PE shift in one half.

@@ -169,15 +169,32 @@ def noise_whitener(X: np.ndarray, max_lag: int = 40, chunk: int = 20000) -> dict
             "median_autocov": med}
 
 
-def split_halves(idx: np.ndarray, mask3d, block: int, rng) -> np.ndarray:
-    """Half membership per stacked row. Rows map to voxels (idx modulo V); voxels are grouped in
-    block^3 spatial blocks and whole blocks go to one half at random. Without a mask: random voxels."""
+def acquisition_axes(cfg: dict) -> dict:
+    """Array axes of phase encoding, slice and readout (CLAUDE.md section 4: PE = i, axial slices on
+    axis 2). Multiband and GRAPPA aliasing partners differ only along PE and slice."""
+    A = cfg["acquisition"]
+    pe = "ijk".index(str(A.get("phase_encoding", "i"))[0])
+    sl = int(A.get("slice_axis", 2))
+    ro = ({0, 1, 2} - {pe, sl}).pop()
+    return {"pe": pe, "slice": sl, "readout": ro}
+
+
+def split_halves(idx: np.ndarray, mask3d, block: int, rng, slab_axis: int | None = None) -> np.ndarray:
+    """Half membership per stacked row. Rows map to voxels (idx modulo V).
+    slab_axis given (default in estimate: the readout axis): voxels are grouped in slabs `block` voxels
+    thick along that axis, alternating between halves (random start). Every MB slice-alias and GRAPPA
+    partner shares the readout coordinate, so aliasing partners, whose unaliased noise is correlated,
+    always fall in the same half whatever the (unknown) CAIPI shift.
+    slab_axis None: block^3 cubes assigned at random. Without a mask: random voxels."""
     if mask3d is None:
         V = int(idx.max()) + 1
         lab = rng.permutation(V) < V // 2
         return lab[idx % V] if idx.max() >= V else lab[idx]
     coords = np.argwhere(mask3d)
     V = coords.shape[0]
+    if slab_axis is not None:
+        slab = coords[:, int(slab_axis)] // int(block)
+        return ((slab + int(rng.integers(2))) % 2 == 0)[idx % V]
     b = coords // int(block)
     bid = np.unique(b, axis=0, return_inverse=True)[1].ravel()
     lab_block = rng.random(bid.max() + 1) < 0.5
@@ -218,6 +235,52 @@ def split_deflated(Xw: np.ndarray, Qw: np.ndarray, half: np.ndarray, n_sur: int,
             k += len(idx)
         res[name] = {"k": int(k), "trace": trace, "row_variance_total": tot_b}
     return res
+
+
+def alias_correlation(r: np.ndarray, mask3d: np.ndarray, pe_axis: int, slice_axis: int, sep: int) -> dict:
+    """Noise correlation between voxels acquired together. r: (V, T) residual channel (thermal noise
+    plus TE-nonlinear violations; no BOLD/S0 signal). For slice offsets dz = sep (MB partners), sep // 2
+    (control) and 0, and every circular shift along phase encoding (aliases wrap around the FOV), the
+    mean correlation over voxel pairs inside the mask. MB partners at (pe + CAIPI shift, slice + sep)
+    show up as a peak at dz = sep that the control lacks; dz = 0 at half the PE matrix = GRAPPA R = 2."""
+    shape = mask3d.shape
+    T = r.shape[1]
+    ok = np.isfinite(r).all(1)
+    z = np.zeros((*shape, T), np.float32)
+    m = np.zeros(shape, bool)
+    rr = r[ok].astype(np.float64)
+    rr = (rr - rr.mean(1, keepdims=True)) / np.maximum(rr.std(1, keepdims=True), 1e-12)
+    co = np.argwhere(mask3d)[ok]
+    z[tuple(co.T)] = rr.astype(np.float32)
+    m[tuple(co.T)] = True
+    n_pe = shape[pe_axis]
+    out = {}
+    for dz in (int(sep), int(sep) // 2, 0):
+        prof = []
+        for sh in range(n_pe):
+            if dz == 0 and sh == 0:
+                prof.append(np.nan)
+                continue
+            z2 = np.roll(z, sh, axis=pe_axis)
+            m2 = np.roll(m, sh, axis=pe_axis)
+            a = [slice(None)] * 3
+            b = [slice(None)] * 3
+            if dz:
+                a[slice_axis] = slice(0, shape[slice_axis] - dz)
+                b[slice_axis] = slice(dz, None)
+            a, b = tuple(a), tuple(b)
+            both = m[a] & m2[b]
+            if both.sum() < 100:
+                prof.append(np.nan)
+                continue
+            prof.append(float((z[a][both] * z2[b][both]).sum(1).mean() / T))
+        prof = np.array(prof)
+        j = int(np.nanargmax(np.abs(prof)))
+        out[f"dz{dz}"] = {"profile": [None if not np.isfinite(v) else round(float(v), 5) for v in prof],
+                          "peak_shift": j, "peak_corr": round(float(prof[j]), 5),
+                          "median_abs_corr": round(float(np.nanmedian(np.abs(prof))), 5)}
+    out["grappa_half_fov"] = out["dz0"]["profile"][n_pe // 2]
+    return out
 
 
 def mp_edge(n: int, t_eff: int) -> float:
@@ -282,7 +345,8 @@ def estimate(c0, c1, r0, r1, cfg: dict, Q=None, seed=None, mask3d=None, with_map
     Xw = Xw - (Xw @ Qw) @ Qw.T                                 # exact: rows already lie outside this subspace
     Xw /= np.sqrt((Xw ** 2).mean())
     _, idx_rows = stack(c0, c1)
-    half = split_halves(idx_rows, mask3d, int(Rk.get("split_block_vox", 4)), rng)
+    slab_axis = acquisition_axes(cfg)["readout"] if Rk.get("split_mode", "readout_slab") == "readout_slab" else None
+    half = split_halves(idx_rows, mask3d, int(Rk.get("split_block_vox", 4)), rng, slab_axis=slab_axis)
     sp = split_deflated(Xw, Qw, half, int(Rk.get("split_n_surrogates", 10)), q, k_max, int(Rk.get("split_step", 3)), rng)
     kA, kB = sp["A_to_B"]["k"], sp["B_to_A"]["k"]
     k_temporal = int(round(0.5 * (kA + kB)))
@@ -339,6 +403,12 @@ def run_dir(frontend_dir, cfg: dict, out_dir) -> dict:
     subj = int(m.group(1)) if m else 0
     ss = io.seed_sequence(cfg, subj, 0, 3)                     # stage 3 = rank nulls
     res = estimate(ch["c0"], ch["c1"], ch["r0"], ch["r1"], cfg, Q=Q, seed=ss, mask3d=mask3d)
+    ax = acquisition_axes(cfg)
+    try:
+        res["alias_correlation_r0"] = alias_correlation(ch["r0"], mask3d, ax["pe"], ax["slice"],
+                                                        int(cfg["acquisition"]["slice_stack_separation"]))
+    except Exception as exc:                                     # diagnostic only
+        res["alias_correlation_r0"] = {"error": f"{type(exc).__name__}: {exc}"}
     T = res["n_frames"]
     col = lambda a: [float(x) for x in a] if a is not None else ["n/a"] * T
     io.write_tsv(out_dir / "spectrum.tsv", {"index": list(range(1, T + 1)), "eigenvalue": col(res["eigenvalues"]),
@@ -382,5 +452,19 @@ def render(r: dict) -> str:
               f"{mp['mapca_version']}, normalize=True) on the stacked channel maps |"]
     elif mp:
         L += [f"| MAPCA | n/a | {mp.get('reason')} |"]
+    ac = r.get("alias_correlation_r0") or {}
+    if "dz0" in ac:
+        sep = [k for k in ac if k.startswith("dz") and k != "dz0"]
+        L += ["", "## Noise correlation between voxels acquired together (residual r0)", "",
+              "| Slice offset | Peak correlation | At PE shift (voxels) | Median abs. correlation over shifts |", "|---|---|---|---|"]
+        for k in sorted(sep, key=lambda x: -int(x[2:])) + ["dz0"]:
+            d = ac[k]
+            L.append(f"| {k[2:]} | {d['peak_corr']} | {d['peak_shift']} | {d['median_abs_corr']} |")
+        L.append(f"| 0, half the PE matrix (GRAPPA R = 2) | {ac.get('grappa_half_fov')} | | |")
+        L.append("")
+        L.append("A peak at the MB slice offset that the half-offset control lacks means the unaliased noise is correlated "
+                 "between MB partners; its PE shift estimates the CAIPI shift (unverified until checked against the protocol).")
+    elif ac:
+        L += ["", f"Alias-correlation diagnostic failed: {ac.get('error')}"]
     L += ["", f"Fixed sweep for Phase 4: MAPCA estimates and k = {r['sweep_fixed']}."]
     return "\n".join(L) + "\n"
