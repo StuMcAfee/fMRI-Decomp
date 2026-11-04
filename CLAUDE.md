@@ -248,7 +248,12 @@ E_R2 = Σ_v R00²·q_v²           −  Σ_v (1 + R01²/R11²)/‖t‖²
 eta  = E_S0 / (E_S0 + E_R2)     (≈ 0 pure R2*, ≈ 1 pure S0, bounded and sign-symmetric for mixed)
 ```
 
-A simulation check in the planning session gave η = 0.003 (pure R2*), 1.000 (pure S0) and 0.18–0.98 for mixed sources of either relative sign. For pure noise η is arbitrary, so **interpret η only when E_S0 + E_R2 exceeds its null** (random/phase-randomized time courses).
+A simulation check in the planning session gave η = 0.003 (pure R2*), 1.000 (pure S0) and 0.18–0.98 for mixed sources of either relative sign. For pure noise η is arbitrary, so **interpret η only when E_S0 + E_R2 exceeds its null.**
+
+**Implementation (user decision, 2026-11-04; found in Phase 4 simulations, `docs/decisions.md`):**
+- **Cross-fitted maps for η.** The debiasing above holds for a fixed regressor. ICA time courses are chosen from the same noise (a pure-ΔR2* source showed η = 0.09). Each voxel's betas come from a time course estimated from the other voxel half (readout slabs), which makes the debiasing exact.
+- **Null through the same selection, family-wise.** Random or phase-randomized single time courses ignore that components are top-variance directions (on pure noise every component exceeded them about 10×). The null is the top-k PCA directions of phase-randomized surrogates, and a component must beat the 0.95 quantile of the largest of the k. Components above a first, conservative pass are removed before the final surrogates, so strong signals do not inflate the null.
+- **Label margin.** Matched-SNR bands hold thermal noise only; a 0.05 margin covers ICA cross-talk. Real-data bands by injection come in Phase 5.
 
 Do **not** use either of these instead:
 - **The raw channel-energy fraction φ = ‖m1‖²/(‖m0‖² + ‖m1‖²).** A pure-S0 component gives only φ ≈ 0.15–0.21 at these TEs (lower in 3-echo voxels), while pure noise gives φ ≈ 0.5.

@@ -592,3 +592,4 @@ Detection limit: dS0 sources at 0.5 % (SD at peak) were barely above the null at
 Equivalence beyond the signal count: at k = 8 with 6 signals, the 6 signal components still match at >= 0.997, and the noise directions are arbitrary (ICA cannot identify Gaussian directions).
 
 Remaining for the gate: real-data run on 47159 across the sweep (MAPCA 13 / 24 / 28 and 50 / 70 / 90), with stability reported.
+User confirmed all three changes (cross-fitted eta; family-wise surrogate null with two passes; band margin), 2026-11-04. CLAUDE.md 7.1 updated. 47159 Phase 4 sweep submitted by the user.
