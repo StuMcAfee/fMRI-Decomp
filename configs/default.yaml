@@ -142,7 +142,13 @@ nuisance:                     # Phase 2b: one projector over time, applied to th
 
 rank:                         # Phase 3: dimensionality of the stacked whitened channels [c0 | c1]
   n_surrogates: 20              # phase-randomized surrogates for the index-by-index null (reported) and spectra plot
-  deflated_n_surrogates: 10     # surrogates per tested k in the deflated (gated) estimator (~10 values of k by bisection)
+  split_n_surrogates: 10        # gated estimator (split-half deflated, whitened): surrogates per tested block of k
+  split_step: 3                 # directions tested per block (one null shared by the block)
+  split_block_vox: 4            # spatial blocks (voxels per side) assigned whole to one half
+  whiten_max_lag: 40            # common noise-whitening filter: median autocovariance tapered to 0 at this lag (frames)
+  contamination_validated_max: 0.45   # simulation-validated range of the contamination diagnostic (shared-signal share of the median row variance)
+  old_deflated: false           # also run the old unsplit deflated search (over-counts with coloured noise; slow)
+  deflated_n_surrogates: 10     # surrogates per tested k in the old unsplit deflated search
   null_quantile: 0.95           # data eigenvalue must exceed this quantile of the null
   k_max: 300                    # upper end of the bisection search
   sweep_fixed: [50, 70, 90]     # fixed k always run in Phase 4 (CLAUDE.md), alongside the MAPCA estimates
