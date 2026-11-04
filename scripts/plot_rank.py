@@ -50,7 +50,7 @@ axes[0].set_ylabel("eigenvalue / variance (whitened units)")
 
 mp = r.get("mapca") or {}
 mtxt = f"; MAPCA AIC/KIC/MDL {mp.get('aic')}/{mp.get('kic')}/{mp.get('mdl')}" if mp.get("available") else ""
-c, cmax = r.get("contamination"), r.get("contamination_validated_max", 0.45)
+c, cmax = r.get("contamination"), r.get("contamination_validated_max", 0.50)
 flag = "inside validated range" if c is not None and c <= cmax else "OUTSIDE validated range"
 fig.suptitle(f"Phase 3 rank: {r.get('run_id')} ({r.get('source')}); gated k {r['k_temporal']} (contamination {c}, {flag}); "
              f"index-by-index {r['k_temporal_classic']}, MP {r['k_mp_edge']}{mtxt}", fontsize=8, x=0.01, ha="left")
