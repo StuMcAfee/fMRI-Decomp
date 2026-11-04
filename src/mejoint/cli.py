@@ -61,6 +61,12 @@ def main(argv=None) -> int:
     rc.add_argument("summaries", nargs="+", help="summary.json file(s) of front-end runs on raw echoes")
     rc.add_argument("--config", help="config YAML (default: configs/default.yaml)")
 
+    nc = sub.add_parser("nuisance-compare", help="compare regressor sets (6/12/18/24) on a no-regression front-end output")
+    nc.add_argument("--frontend-dir", required=True, help="front-end output made WITHOUT regression (e.g. .../mc_noreg)")
+    nc.add_argument("--run-dir", required=True, help="mbme_tedana run folder (motion/mcflirt.par, volumes_used.tsv)")
+    nc.add_argument("--out", required=True, help="output folder")
+    nc.add_argument("--config", help="config YAML (default: configs/default.yaml)")
+
     rk = sub.add_parser("rank", help="Phase 3 rank of the stacked channels of one front-end output folder")
     rk.add_argument("--frontend-dir", required=True, help="front-end output folder (channel cache c0/c1/r0/r1.npy)")
     rk.add_argument("--out", required=True, help="output folder")
@@ -115,6 +121,10 @@ def main(argv=None) -> int:
                   f"{m.get('implied_c0_c1_noise_correlation')}\n  verdict: {m['verdict']}")
             status = status or (0 if m["verdict"] == "OK" else 3)
         return status
+    elif args.cmd == "nuisance-compare":
+        from . import nuisance
+        nuisance.compare_expansions(args.frontend_dir, args.run_dir, cfg, args.out)
+        print(open(f"{args.out}/nuisance_compare.md").read())
     elif args.cmd == "rank":
         from . import rank
         res = rank.run_dir(args.frontend_dir, cfg, args.out)

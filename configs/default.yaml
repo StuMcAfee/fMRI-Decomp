@@ -136,7 +136,7 @@ nuisance:                     # Phase 2b: one projector over time, applied to th
   min_peak_prominence: 3.0      # peak power / robust power-law background fit in the search band; below this no band-stop is applied (reported)
   lowpass_hz: 0.10              # used only with motion_filter: lowpass
   filter_order: 4               # Butterworth, applied forwards and backwards (zero phase), within contiguous segments
-  expansion: 24                 # 6 = parameters; 12 = + frame-to-frame changes; 24 = + squares of both
+  expansion: 24                 # 6 = parameters; 12 = + frame-to-frame changes; 18 = 12 + squares of the parameters; 24 = + squares of both
   poly_order: 0                 # Legendre drift terms per segment (0 = constants only)
   n_surrogates: 5               # diagnostic: projectors from phase-randomized motion parameters (chance overlap with signal); 0 = off
 
