@@ -19,7 +19,8 @@ Nulls (the same nuisance projection and demeaning as the data):
   Simulation (gate tests): 30 components, narrowband or broadband, white or coloured noise: within +/- 1;
   1 component: exact; 60 narrowband: 60-66; 60 broadband: over-counts 10-37 % because the many shared
   components contaminate the median noise spectrum. The contamination diagnostic reports this: validated
-  up to ~0.45 (the 30-component cases score ~0.44; the failing 60-component cases ~0.63).
+  up to 0.50 (the 30-component cases score 0.469-0.481; the 60-component cases 0.665-0.692, where
+  broadband components are over-counted by up to 23 % in the calibration runs).
 - temporal, reported: index-by-index parallel analysis (under-counts); the old unsplit deflated search
   (over-counts with coloured noise; off by default, slow).
 - thermal: the residual channels r0, r1, which hold thermal noise and violations but no signal in
@@ -304,7 +305,7 @@ def estimate(c0, c1, r0, r1, cfg: dict, Q=None, seed=None, mask3d=None, with_map
            "k_old_deflated": k_old,
            "split_trace": {k: v["trace"] for k, v in sp.items()},
            "contamination": None if contamination is None else round(contamination, 4),
-           "contamination_validated_max": float(Rk.get("contamination_validated_max", 0.45)),
+           "contamination_validated_max": float(Rk.get("contamination_validated_max", 0.50)),
            "eigenvalues_whitened": spectrum(Xw),
            "deflated_tests": {int(k): {"pass": v[0], "threshold": round(v[1], 5), "eigenvalue": round(float(lam[k - 1]), 5)}
                               for k, v in sorted(tested.items())},
@@ -356,7 +357,7 @@ def run_dir(frontend_dir, cfg: dict, out_dir) -> dict:
 
 
 def render(r: dict) -> str:
-    c, cmax = r.get("contamination"), r.get("contamination_validated_max", 0.45)
+    c, cmax = r.get("contamination"), r.get("contamination_validated_max", 0.50)
     inside = c is not None and c <= cmax
     L = [f"# Rank: {r.get('run_id')} ({r.get('source')} echoes, nuisance projection: "
          f"{'yes, rank ' + str(r['nuisance_rank']) if r.get('nuisance') else 'no'})", "",
