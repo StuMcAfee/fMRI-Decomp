@@ -262,7 +262,9 @@ class Simulation:
             p = out_dir / f"sim_e{k}.nii.gz"
             nib.save(img, str(p))
             io.write_json(out_dir / f"sim_e{k}.json", {"EchoTime": float(self.te_ms[k - 1]) / 1000.0, "EchoNumber": k,
-                                                       "RepetitionTime": self.tr_s, "Simulated": True})
+                                                       "RepetitionTime": self.tr_s, "Simulated": True,
+                                                       **({"SliceTiming": [float(x) for x in self.slice_offsets_s]}
+                                                          if getattr(self, "slice_offsets_s", None) is not None else {})})
             paths.append(p)
         np.savez_compressed(
             out_dir / "truth.npz", mask=self.mask, s0=self.s0, t2s_ms=self.t2s_ms, sigma=self.sigma,
