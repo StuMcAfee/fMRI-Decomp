@@ -77,7 +77,7 @@ Stretch goal: a structured factorization with group-sparse channel maps.
 - Physiological recordings: **none recorded** (user). No RETROICOR/RVT; respiratory and cardiac effects must be handled from the data and reported as a limitation.
 - Sequence fields: see the acquisition bullets above.
 - Slice-stack spacing: 8 slices (26.4 mm). **CAIPI shift unknown** (no protocol PDF; not found in the DICOM sample).
-- Tissue masks (grey matter, CSF/ventricles, vessels/sinuses) and cavity/peri-cavity masks: **no source exists** (user). They must be derived before Phase 5.
+- Tissue masks (grey matter, CSF/ventricles, vessels/sinuses) and cavity/peri-cavity masks: **no ready-made source exists** (user). Each session has a **T1w scan** (user, 2026-11-04). Build both a T1-based option (segmentation registered to EPI space) and a **data-only option** (classes from the multi-echo data alone), so the analysis can run from this data only.
 
 **Analysis mask and independence (user decisions, 2026-11-02):**
 - The analysis always uses its own hole-filled brain mask, built from the input echoes by `mask.py` (head vs air from the measured noise level, coil-shading correction, brain vs scalp with a brain-like echo-1/echo-4 decay to exclude neck and face muscle, every enclosed hole filled, then regrowth into adjacent bright tissue so dephased cerebellar and orbitofrontal edges are kept). The user requires the cerebellum and orbitofrontal cortex to be included (2026-11-03). mbme_tedana's `brain_mask.nii.gz` (nilearn `compute_epi_mask`, which never fills holes) drops the deep brain in many participants; use it only to restrict comparisons with tedana to the voxels tedana saw.
@@ -361,6 +361,8 @@ Tests:
 - **pBOLD / echo-pair FC geometry** as a decomposition-independent referee, **only after the user supplies the full preprint** (PubMed 41929219; DOI unverified). It is a preprint metric; label it as such.
 
 **Gate:** results table and figures shown to the user before any batch run.
+
+**Between Phase 5 and Phase 6 (user decision, 2026-11-04):** traveling-wave detection (`docs/WAVES_BRIEF.md`).
 
 **Phase 6: batch run and summary.**
 - LSF job array over subjects, plus a dependent summary job.

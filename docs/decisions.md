@@ -620,3 +620,18 @@ User confirmed all three changes (cross-fitted eta; family-wise surrogate null w
 **Open question:** eta ~0.2 for the most BOLD-like components. Candidates: real intravascular / inflow dS0 (CLAUDE.md 7.1), or partial volume with CSF. A voxel mixing tissue and CSF has a BOLD change that is not linear in TE, and a linear fit in TE then produces an apparent dS0 intercept. Unverified; testable with a two-compartment simulation.
 
 **Note on stability:** the 30 restarts use the same data, so stability measures how reproducibly ICA converges, not reliability. Split-half reliability is a Phase 5 test.
+
+### 2026-11-04: Phase 4 gate passed (user); Phase 5 begins
+
+User decisions:
+- **Phase 4 gate passed** on the simulation tests and the reported stability. On real data, the energy null and the labels are treated as uninformative until Phase 5 provides injection-based eta bands and split-half reliability. eta is read as a continuous measure meanwhile.
+- **Tissue classes:** each session has a T1w scan. Two options will be built:
+  - T1-based (segmentation registered to EPI space);
+  - **data-only** (classes derived from the multi-echo data alone), so the analysis can still run from this data only.
+- **Traveling-wave detection** (`docs/WAVES_BRIEF.md`) is implemented after Phase 5 and before Phase 6.
+
+Phase 5 order (proposed):
+1. Partial-volume check in simulation (does tissue/CSF mixing create apparent dS0 for BOLD?).
+2. Tissue classes, data-only first, then T1-based (needs the T1w location).
+3. Injection into raw echoes through the full pipeline (eta bands on real data).
+4. Arms A-G; motion check; MB-leakage test; split-half reliability.
