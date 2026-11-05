@@ -787,3 +787,17 @@ Mode 1 figure (`wave_mode_1.png`), added 2026-11-05:
 - The cycle snapshots (sagittal) are strongest along the superior surface (vertex) and at the posterior-inferior and anterior-inferior edges, and the anterior-inferior and posterior-inferior edges have opposite sign at the same moment.
 - In the space-time plot the first ~120 mm along the fitted axis oscillate together; the last two bins (~120-140 mm, the far end of the axis) are stronger and shifted in time. That end bin drives the 6-8 s lag rise and the 29 mm/s fit.
 - Two readings, not yet separable: (a) venous / systemic blood-borne oscillation, with the draining sinuses late (hypothesis); (b) slow head motion (these are the no-regression channels): opposite-sign anterior and posterior edges fit a pitch rotation. The motion-regressed run and a correlation of the mode time course with the motion parameters would separate them.
+
+Sensitivity runs (same job), mode 1:
+
+| Run | Var % | Eigenvalue / null | f_c Hz | Speed mm/s | Fit / R | eta | TE4-TE1 median s (beyond null %) | Lag-slice slope |
+|---|---|---|---|---|---|---|---|---|
+| no regression (primary) | 25.9 | 2.79 | 0.033 | 29.1 [22.3, 34.5] | 0.76 / 0.12 | 0.234 | 0.09 (63) | 0.33 |
+| 24-term motion regression | 25.9 | 2.86 | 0.032 | 38.0 [29.0, 45.5] | 0.78 / 0.13 | 0.229 | 0.30 (61) | 0.47 |
+| no slice-timing correction | 26.4 | 3.25 | 0.033 | 30.1 | 0.76 / 0.12 | 0.233 | 0.07 (63) | -0.40 |
+| c0 only, z-scored (OC-like) | 14.7 | 1.56 | 0.031 | 27.3 | 0.88 / 0.24 | n/a | n/a | 0.05 |
+
+- **Motion regression barely changes mode 1** (absolute eigenvalue about 10 % lower; same maps, same late end in the space-time plot). Motion that is linear in the 24 regressors is unlikely to be the source. Non-linear motion effects (spin history) are not excluded.
+- **Slice-timing correction shifts the slope by +0.73** (simulation: +1.0), so it acts in the right direction and nearly the right size; the residual +0.33 corresponds to about 0.2 s across the TR.
+- **Mode 1 is also the leading mode of the OC-like c0 path**, with a smaller share (14.7 %) when every voxel is z-scored: in whitened units its energy is concentrated in high-amplitude voxels (edges, vessels, ventricles).
+- No other mode is above the null in any run except mode 2 of the c0 path (1.03, marginal).
