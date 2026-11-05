@@ -222,6 +222,18 @@ def test_waves_command_writes_outputs_and_figures(tmp_path):
     assert summ["modes"][0]["speed_mm_s"] == pytest.approx(6.0, rel=0.15)
     assert summ["motion_source"].endswith("mcflirt.par") and summ["motion"]["null95"] > 0
     assert summ["modes"][0]["plv_median_ref"] > 0.8                    # the direct Hilbert phase locks to the mode
+    # phase 0 = the explained-fraction-weighted reference mean; direction in words (+x of a RAS grid = right)
+    reg = {r["region"]: r for r in summ["by_region"]["1"]}
+    assert abs(reg["reference"]["phase_lag_deg"]) < 0.5 and {"edge", "interior"} <= set(reg)
+    assert summ["modes"][0]["direction_label"] == "right" and summ["axcodes"] == "RAS"
+    assert "motion_r_trans_y" in summ["modes"][0]
+    # motion-orthogonal sensitivity: the mode's time course no longer follows the motion parameters
+    assert cli.main(["waves", "--frontend-dir", str(tmp_path / "fe"), "--out", str(tmp_path / "w_mo"), "--config",
+                     str(cpath), "--n-modes", "2", "--bootstrap", "0", "--surrogates", "2", "--no-figures",
+                     "--motion-orthogonal"]) == 0
+    s3 = json.loads((tmp_path / "w_mo" / "waves.json").read_text())
+    assert s3["motion_orthogonal"] and max(s3["motion"]["r_max"]) < 1e-6
+    assert s3["modes"][0]["speed_mm_s"] == pytest.approx(6.0, rel=0.15)
     # without the correction the slice times are still used for the check (slope ~ -1 would flag the artifact)
     assert cli.main(["waves", "--frontend-dir", str(tmp_path / "fe"), "--out", str(tmp_path / "w_nostc"), "--config",
                      str(cpath), "--n-modes", "2", "--bootstrap", "0", "--surrogates", "0", "--no-figures",
@@ -313,3 +325,41 @@ def test_s0_r2_sign_check_on_vascular_and_partial_volume_waves(vascular, record_
     assert r["n"] >= 50 and r["fraction_opposed"] < 0.05 and abs(r["timing_median_s"]) < 0.5
     fr = [x["fraction_same_sign"] for x in r["by_f_long"] if np.isfinite(x["fraction_same_sign"])]
     assert len(fr) >= 3 and fr[-1] > fr[0]
+
+
+def test_project_out_removes_the_motion_subspace():
+    rng = np.random.default_rng(SEED)
+    T, tr = 500, 0.75
+    W = io.load_config()["waves"]
+    blk = waves.contiguous_block(None, T, 2)
+    M = np.cumsum(rng.standard_normal((T, 6)), axis=0)
+    Qm = waves.motion_basis(M, blk, tr, W)
+    A = waves.bandpass_analytic(rng.standard_normal((50, T)) + M[:, :1].T, tr, W["band_hz"])
+    waves.project_out(A, Qm)
+    assert np.abs(A @ np.conj(Qm)).max() < 1e-8 * np.abs(A).max() * T
+
+
+def test_batch_summary_collects_runs_and_flags_missing(tmp_path):
+    """`mejoint waves-summary`: one row per run, variant and mode; runs without results for the commit listed."""
+    import json
+
+    from mejoint import cli
+    mode = {"mode": 1, "above_null": True, "eigenvalue_over_null": 2.5, "f_c_hz": 0.033, "var_frac_stacked": 0.26,
+            "motion_r_max": 0.6, "motion_best_param": "trans_y", "motion_r_null95": 0.4,
+            **{f"motion_r_{n}": 0.1 for n in ("rot_x", "rot_y", "rot_z", "trans_x", "trans_z")}, "motion_r_trans_y": 0.6,
+            "eta": 0.23, "s0r2_n_voxels": 2198, "s0r2_null_n_expected": 2.0, "s0r2_fraction_sign_opposed": 0.91,
+            "direction_label": "posterior-superior"}
+    for run in ("sub-1_acq-1_ser-5", "sub-2_acq-1_ser-5"):
+        for var in ("noreg", "noreg_motion_orth"):
+            d = tmp_path / "waves" / run / "abc1234" / var
+            d.mkdir(parents=True)
+            (d / "waves.json").write_text(json.dumps({"modes": [mode, {**mode, "mode": 2, "above_null": False}],
+                                                      "by_region": {"1": [{"region": "edge", "opposed_per_present": 0.3}]}}))
+    (tmp_path / "waves" / "sub-3_acq-1_ser-5").mkdir()
+    assert cli.main(["waves-summary", "--root", str(tmp_path / "waves"), "--commit", "abc1234",
+                     "--out", str(tmp_path / "sum")]) == 0
+    md = (tmp_path / "sum" / "waves_batch.md").read_text()
+    assert "motion-coupled (largest motion r above its null): 2 of 2" in md and "sub-3_acq-1_ser-5" in md
+    assert (tmp_path / "sum" / "waves_batch_motion.png").exists()
+    rows = json.loads((tmp_path / "sum" / "waves_batch.json").read_text())["rows"]
+    assert len(rows) == 8                                               # 2 runs x 2 variants x 2 modes

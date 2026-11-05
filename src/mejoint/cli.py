@@ -88,6 +88,12 @@ def main(argv=None) -> int:
     wv.add_argument("--config", help="config YAML (default: configs/default.yaml)")
     _wave_args(wv, standalone=True)
 
+    wsum = sub.add_parser("waves-summary", help="cross-participant summary of a wave batch (outputs/waves/<run>/<commit>/)")
+    wsum.add_argument("--root", default="outputs/waves", help="folder with one subfolder per run")
+    wsum.add_argument("--commit", required=True, help="git commit of the batch (the subfolder name under each run)")
+    wsum.add_argument("--out", required=True, help="output folder")
+    wsum.add_argument("--config", help="config YAML (default: configs/default.yaml)")
+
     ts = sub.add_parser("tissue", help="Phase 5 data-only tissue classes and partial-volume coupling from a front-end output")
     ts.add_argument("--frontend-dir", required=True)
     ts.add_argument("--out", required=True)
@@ -170,6 +176,12 @@ def main(argv=None) -> int:
         waves.run_dir(args.frontend_dir, _wave_cfg(cfg, args), args.out, tissue_dir=args.tissue_dir,
                       figures=not args.no_figures)
         print(open(Path(args.out) / "waves_summary.md").read())
+    elif args.cmd == "waves-summary":
+        from pathlib import Path
+
+        from . import waves_batch
+        waves_batch.run(args.root, args.commit, args.out)
+        print(open(Path(args.out) / "waves_batch.md").read())
     elif args.cmd == "tissue":
         from . import tissue
         tissue.run_dir(args.frontend_dir, cfg, args.out)
@@ -199,6 +211,8 @@ def _wave_args(p, standalone: bool) -> None:
     p.add_argument(f"--{pre}channels", choices=["both", "c0"], dest="w_channels")
     p.add_argument(f"--{pre}bootstrap", type=int, dest="w_bootstrap")
     p.add_argument(f"--{pre}surrogates", type=int, dest="w_surrogates")
+    p.add_argument(f"--{pre}motion-orthogonal", action="store_true", dest="w_motion_orth",
+                   help="remove the band-passed motion parameters from the band-passed channels first (sensitivity)")
     p.add_argument("--no-slice-timing", action="store_true", dest="w_no_stc",
                    help="wave stage without slice-timing correction (a sensitivity check; the artifact is inferior-superior)")
 
@@ -210,6 +224,8 @@ def _wave_cfg(cfg: dict, args) -> dict:
     over = {k: (list(v) if isinstance(v, tuple) else v) for k, v in over.items() if v is not None}
     if args.w_no_stc:
         over["slice_timing_correction"] = False
+    if args.w_motion_orth:
+        over["motion_orthogonal"] = True
     if "plot_modes" in over:
         over.setdefault("bootstrap_modes", over["plot_modes"])
     return io.merge(cfg, {"waves": over})

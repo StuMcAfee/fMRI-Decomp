@@ -1,0 +1,10 @@
+#!/bin/bash
+# Cross-participant summary of a wave batch (runs after every array element has ended):
+#   bash scripts/waves_batch_summary.lsf <git commit of the batch>
+set -uo pipefail
+PY="${MEJOINT_PY:-$HOME/miniconda3_new/envs/mejoint/bin/python}"
+COMMIT="${1:-}"
+[ -n "$COMMIT" ] || { echo "usage: waves_batch_summary.lsf <git commit>" >&2; exit 2; }
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}" PYTHONUNBUFFERED=1
+"$PY" -m mejoint.cli waves-summary --root outputs/waves --commit "$COMMIT" --out "outputs/waves_batch/$COMMIT"
