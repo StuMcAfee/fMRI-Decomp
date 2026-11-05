@@ -213,11 +213,15 @@ def test_waves_command_writes_outputs_and_figures(tmp_path):
     for f in ("modes.npz", "modes.tsv", "waves.json", "waves_summary.md", "done.json", "config_used.yaml",
               "figures/wave_mode_1.png", "figures/wave_diagnostics_1.png"):
         assert (w / f).exists(), f
-    for f in ("q_amp", "q_phase", "s_amp", "s_phase", "eta", "lag"):
+    for f in ("q_amp", "q_phase", "s_amp", "s_phase", "eta", "lag", "phase_lag_deg", "hilbert_phase_lag_deg", "plv",
+              "explained_fraction", "s0_vs_r2_phase_deg"):
         assert (w / "maps" / f"{f}.nii.gz").exists(), f
+    assert (w / "modes_by_region.tsv").exists()
     summ = json.loads((w / "waves.json").read_text())
     assert summ["slice_timing_corrected"] and summ["slice_timing_source"].endswith("sim_e1.json")
     assert summ["modes"][0]["speed_mm_s"] == pytest.approx(6.0, rel=0.15)
+    assert summ["motion_source"].endswith("mcflirt.par") and summ["motion"]["null95"] > 0
+    assert summ["modes"][0]["plv_median_ref"] > 0.8                    # the direct Hilbert phase locks to the mode
     # without the correction the slice times are still used for the check (slope ~ -1 would flag the artifact)
     assert cli.main(["waves", "--frontend-dir", str(tmp_path / "fe"), "--out", str(tmp_path / "w_nostc"), "--config",
                      str(cpath), "--n-modes", "2", "--bootstrap", "0", "--surrogates", "0", "--no-figures",
@@ -230,3 +234,82 @@ def test_waves_command_writes_outputs_and_figures(tmp_path):
                      "--wave-surrogates", "0"]) == 0
     assert (tmp_path / "p4" / "waves" / "modes.tsv").exists()
     assert not (tmp_path / "p4" / "waves" / "figures").exists()          # figures only with --wave-figures
+
+
+def test_s0_r2_timing_separates_sign_from_timing():
+    """dS0 relative to the BOLD-positive dR2* part: same sign with a delay gives the delay; opposite sign at the
+    same time is flagged as sign-opposed with zero folded timing (the case that broke the TE4 - TE1 lag)."""
+    V, fc = 400, 0.04
+    R = np.zeros((V, 2, 2))
+    R[:, 0, 0], R[:, 0, 1], R[:, 1, 1] = 40.0, -10.0, 4.0
+    vb = np.full(V, 1e-6)
+    q = -0.5 * np.ones(V, complex)                                       # BOLD-positive: -q = +0.5, phase 0
+    tau = 2.0                                                            # dS0 part 2 s later
+    s_late = 0.01 * np.exp(-1j * 2 * np.pi * fc * tau) * np.ones(V)
+    r = waves.s0_r2_timing(s_late, q, R, vb, fc, 3.0)
+    assert r["n"] == V and r["fraction_opposed"] == 0 and r["timing_median_s"] == pytest.approx(tau)
+    r = waves.s0_r2_timing(-0.01 * np.ones(V, complex), q, R, vb, fc, 3.0, f_long=np.linspace(0, 0.9, V))
+    assert r["fraction_opposed"] == 1 and r["timing_median_s"] == pytest.approx(0, abs=1e-9)
+    fl = np.linspace(0, 0.9, V)
+    assert [x["n_present"] for x in r["by_f_long"]] == [int(((fl >= a) & (fl < b)).sum()) for a, b in
+                                                        ((0, 0.1), (0.1, 0.3), (0.3, 0.5), (0.5, 1.01))]
+    assert all(x["fraction_opposed"] == 1 and x["fraction_same_sign"] == 0 for x in r["by_f_long"])
+
+
+def test_motion_correlation_finds_a_planted_motion_mode():
+    rng = np.random.default_rng(SEED)
+    T, tr = 600, 0.75
+    W = io.load_config()["waves"]
+    blk = waves.contiguous_block(None, T, 2)
+    M = np.cumsum(rng.standard_normal((T, 6)), axis=0) * 0.01
+    tc = waves.bandpass_analytic(M[:, 3][None], tr, W["band_hz"])[0]
+    tc = np.column_stack([tc / np.sqrt(np.mean(np.abs(tc) ** 2)),
+                          waves.bandpass_analytic(rng.standard_normal((1, T)), tr, W["band_hz"])[0]])
+    mc = waves.motion_correlation(tc, M, blk, tr, W, rng, n_null=50)
+    assert mc["r"][0][3] == pytest.approx(1.0, abs=1e-6) and mc["r_max"][0] > mc["null95"]
+    assert mc["r_max"][1] < 0.6
+
+
+def test_s0_r2_sign_null_matches_pure_r2_with_noise():
+    """With weak dR2* and correlated s / q estimation noise, opposite signs appear without any dS0; the null
+    reproduces both the number of voxels passing and the opposed fraction."""
+    rng = np.random.default_rng(SEED + 7)
+    V, fc = 20000, 0.04
+    R = np.zeros((V, 2, 2))
+    R[:, 0, 0], R[:, 0, 1], R[:, 1, 1] = 40.0, -30.0, 6.0
+    vb = np.full(V, 1e-4)
+    q_true = -0.5 * np.exp(1j * rng.uniform(0, 2 * np.pi, V)) * rng.uniform(0, 1, V)
+    sd = np.sqrt(vb / 2)
+    m0 = R[:, 0, 0] * q_true / 1000 + sd * (rng.standard_normal(V) + 1j * rng.standard_normal(V))
+    m1 = sd * (rng.standard_normal(V) + 1j * rng.standard_normal(V))
+    s, q = waves.backsub_complex(m0[:, None], m1[:, None], R)
+    r = waves.s0_r2_timing(s[:, 0], q[:, 0], R, vb, fc, 1.5, rng=rng, n_draws=20)
+    assert r["n"] > 200
+    assert r["n"] == pytest.approx(r["null_n_expected"], rel=0.15)
+    assert r["fraction_opposed"] == pytest.approx(r["null_fraction_opposed"], abs=0.05)
+
+
+def test_s0_r2_sign_check_on_vascular_and_partial_volume_waves(vascular, record_property):
+    """Vascular wave (dS0 inflow leads the BOLD-positive dR2* part by 3 s): voxels with both parts beyond the
+    null, mostly same sign, dS0 timing about -3 s. Pure dR2* wave with CSF partial volume: apparent dS0 of
+    opposite sign, more often where the CSF fraction is larger (Phase 5 derivation)."""
+    mv = vascular[2]["measures"][0]
+    record_property("vascular", {k: mv[k] for k in ("s0r2_n_voxels", "s0r2_null_n_expected",
+                                                    "s0r2_fraction_sign_opposed", "s0r2_timing_median_s")})
+    assert mv["s0r2_n_voxels"] > 5 * max(mv["s0r2_null_n_expected"], 1)
+    assert mv["s0r2_fraction_sign_opposed"] < 0.2
+    assert -3.6 < mv["s0r2_timing_median_s"] < -2.0
+    sim, fe, out = run({**NEURAL, "q": -0.5}, seed_off=3,
+                       over={"csf_partial_volume": {"enabled": True, "fraction_max": 0.7}})
+    W = io.load_config()["waves"]
+    m = out["measures"][0]
+    s_c, q_c = waves.backsub_complex(out["m0_cf"][:, [0]], out["m1_cf"][:, [0]], fe["R"])
+    r = waves.s0_r2_timing(s_c[:, 0], q_c[:, 0], fe["R"], out["vb_emp0"][:, 0], out["f_c"][0], W["amp_z"],
+                           f_long=sim.csf_fraction[sim.mask], vb1_k=out["vb_emp1"][:, 0])
+    record_property("partial_volume", {"n": r["n"], "fraction_opposed": r["fraction_opposed"],
+                                       "timing": r["timing_median_s"], "by_f_long": r["by_f_long"], "eta": m["eta"]})
+    # partial volume: apparent dS0 in phase with the BOLD-positive part (same sign, no timing difference), more
+    # often where the CSF fraction is larger; no opposite signs
+    assert r["n"] >= 50 and r["fraction_opposed"] < 0.05 and abs(r["timing_median_s"]) < 0.5
+    fr = [x["fraction_same_sign"] for x in r["by_f_long"] if np.isfinite(x["fraction_same_sign"])]
+    assert len(fr) >= 3 and fr[-1] > fr[0]

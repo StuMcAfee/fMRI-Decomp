@@ -103,7 +103,8 @@ recovers each one's time course and both of its maps; η places each where it be
 ![Figure 6](docs/figures/readme_6_partial_volume.png)
 
 *Figure 6. When CSF (long T2\*) shares a voxel with tissue, a pure tissue ΔR2\* change no longer gives a
-straight line in TE, and part of it is read as ΔS0, opposite in sign to the BOLD change. With 3.3 mm
+straight line in TE, and part of it is read as ΔS0, with the same sign as the signal change (opposite in
+sign to ΔR2\*). With 3.3 mm
 voxels at cortical and ventricular borders this is common, so η must be read together with each
 voxel's CSF fraction.*
 
