@@ -650,7 +650,7 @@ eta of the voxel's change:
 | 0.6 | 0.073 | 0.179 | 0.331 |
 | 0.5 | 0.127 | 0.266 | 0.419 |
 
-- The apparent dS0/S0 is negative (-0.09 to -0.27 %), opposite in sign to the signal change, and the apparent dR2* is diluted (e.g. 0.13 instead of 0.5 s^-1).
+- The apparent dS0/S0 is negative (-0.09 to -0.27 %) for this dR2* increase (the signal falls): the same sign as the signal change and opposite in sign to dR2*. The apparent dR2* is diluted (e.g. 0.13 instead of 0.5 s^-1). (Wording corrected 2026-11-05; it first said "opposite in sign to the signal change". The numbers were right.)
 - Whitened energy of the change at tissue fraction 0.6: c0 98.1 %, c1 1.6 %, r0 0.3 %, r1 ~0. It is invisible per frame in the residual.
 - Its static fingerprint is a convex mean decay (curvature about +0.015). 47159's static curvature has its 90th percentile at +0.074, so many voxels have convex, partial-volume-like decays.
 
