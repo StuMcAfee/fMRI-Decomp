@@ -119,7 +119,7 @@ voxel's CSF fraction.*
 | Rank | spectra and every dimensionality estimate, reported | `mejoint rank --frontend-dir ... --out ...` |
 | Tissue (data-only) | two-compartment fit of the mean decay: CSF fraction, classes, κ | `mejoint tissue --frontend-dir ... --out ...` |
 | Joint ICA + metrics | components, s and q maps, η, nulls, bootstrap intervals, stability, figures | `scripts/phase4_subject.lsf "<front-end folder>" "<rank folder>"` |
-| Traveling waves (branch `claude/waves`) | complex modes of the band-passed analytic channels: lag maps, speed and direction, η, TE-dependent lag, two figures per mode | `mejoint waves --frontend-dir ... --out ...`, or `mejoint decompose ... --waves --wave-figures`; overnight: `scripts/waves_overnight.lsf "<run>"` |
+| Traveling waves (branch `claude/waves`) | complex modes of the band-passed analytic channels: lag maps, speed and direction, η, TE-dependent lag, two figures per mode | `mejoint waves --frontend-dir ... --out ...`, or `mejoint decompose ... --waves --wave-figures`; overnight: `scripts/waves_overnight.lsf "<run>"`; all participants: `scripts/submit_waves_batch.sh runs.txt` |
 
 The motion-corrected echoes come from the existing `mbme_tedana.py` pipeline (pairing of volumes across
 echoes and motion correction are reused, not reimplemented). Each stage writes a `done.json` (input

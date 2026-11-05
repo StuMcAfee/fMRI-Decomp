@@ -477,9 +477,9 @@ def figure_diagnostics(out: dict, k: int, mask3d, voxel_mm, axcodes, meta: dict,
     else:
         ax.set_title("F  Local directions", pad=18)
     ax.set_yticklabels([])
-    ax.text(0.5, -0.2, f"R = {m['R']:.2f} (1 = one direction everywhere)\nfitted direction (array axes) "
-            f"[{', '.join(f'{x:.2f}' for x in dvec)}]", transform=ax.transAxes, ha="center", fontsize=8, color=INK2,
-            va="top")
+    ax.text(0.5, -0.2, f"R = {m['R']:.2f} (1 = one direction everywhere)\nfitted direction towards later voxels: "
+            f"{m.get('direction_label') or '?'} (RAS {m.get('direction_ras', '?')})", transform=ax.transAxes,
+            ha="center", fontsize=8, color=INK2, va="top")
     # G: echo phasors
     ax = axs[2, 0]
     tes = te / 1000.0

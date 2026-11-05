@@ -835,3 +835,19 @@ Primary (no regression) and motion-regressed runs agree; numbers below are the p
 - Consequences: for this mode, eta (0.23) is carried mainly by sign-opposed dS0, not by CSF partial volume; and the half-period pile-up of the TE4 - TE1 lag is these voxels (z_e changes sign between echoes), not noise.
 - **Spatial structure.** Explained fraction median 0.088 in tissue (PLV 0.25). The binned band-passed data are nearly synchronous over the first ~120 mm of the fitted axis (data and reconstruction look alike); the last ~15 mm are shifted. The phase table is relative to the |q|-weighted convention, not to the tissue mean as the caption states: tissue -17.6 degrees, CSF -8.9, inferior third +7.1 (spread 0.75, weak). To fix: phase 0 should be the explained-fraction-weighted tissue mean (the agreed convention).
 - The crest lines kink where the mode's amplitude is low (around 100-140 s): the instantaneous phase is ill-defined there.
+
+### 2026-11-05: fix and checks a-d built; batch tooling for all participants (user decisions)
+
+User: "implement the fix plus a-d. Then run it on all participants to see if this correlation with y-translation is unique."
+
+- **Fix:** phase 0 = the circular mean phase of q over the reference (tissue) voxels weighted by each voxel's explained fraction (was |q|-weighted, dominated by edge voxels). The reference row of the region table is now 0 by construction (tested).
+- **(a) Direction in anatomical terms:** the fitted direction (towards later voxels) is converted with the image's orientation codes to RAS and words (e.g. "posterior-superior"); `axcodes` is recorded in waves.json. Tested on a RAS simulation (+x = "right", +y = "anterior").
+- **(b) Edge and interior regions:** edge = mask voxels with a face neighbour outside the mask (one voxel, about 3.3 mm). The region table now also gives, per region, the fraction of the voxels where the mode is present that carry a significant same-sign or opposite-sign dS0.
+- **(c) Motion-orthogonal sensitivity** (`--motion-orthogonal`, `waves.motion_orthogonal`): the band-passed analytic motion parameters (6 complex = 12 real regressors) are projected out of the band-passed channels; the thermal-noise calibration and the surrogate null go through the same projection. Tested: the projection leaves nothing in the motion subspace, the mode's motion correlation becomes 0, and a simulated wave keeps its speed.
+- **(d) TE4 - TE1 lag** is computed over the voxels where the mode is present minus those with a significant opposite-sign dS0 (the lag is not defined there); the number excluded is reported. The bootstrap uses the same voxels.
+- Per-parameter motion correlations and the strongest parameter are columns of modes.tsv.
+
+**Batch (description across participants, not the group stage):**
+- `scripts/submit_waves_batch.sh runs.txt` submits an LSF job array (`wavesb`, 8 cores and 2000 MB per core per element, at most 8 at a time) of `scripts/waves_batch.lsf`, which runs `waves_overnight.lsf <run> batch`: front ends (mc, with and without motion regression), tissue classes, waves primary (no regression, figures, 200 bootstrap / 200 surrogates), motion-regressed and motion-orthogonal (50 / 50). A dependent job (`ended(wavesb)`) runs `mejoint waves-summary`, writing `outputs/waves_batch/<commit>/waves_batch.{md,tsv,json}` and `waves_batch_motion.png` (mode 1 vs each motion parameter per participant; largest coupling vs mean FD).
+- Dry run here on two simulated participants with a reduced config: every step ok, summary written.
+- **Prerequisite:** each run needs its motion-corrected echoes (`work/echo-k_desc-mc_bold.nii.gz`, mbme_tedana `--keep-intermediates`). Only 47159 has them in `OUT_keep` as far as this record shows; the submit script lists runs without them, and those elements stop in preflight.

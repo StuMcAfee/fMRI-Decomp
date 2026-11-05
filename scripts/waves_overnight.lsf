@@ -4,21 +4,22 @@
 #   1. front ends on mc, with and without motion regression (built only if missing);
 #   2. data-only tissue classes (built only if missing);
 #   3. waves, primary: no-regression channels (waves.channels_primary), with figures and full bootstrap/null;
-#   4. waves, sensitivity: motion-regressed channels; no slice-timing correction (shows the artifact);
-#      c0 only with per-voxel z-scoring (the tedana-like optimally combined path);
+#   4. waves, sensitivity: motion-regressed channels; band-passed motion projected out (motion-orthogonal);
+#      no slice-timing correction (shows the artifact); c0 only with per-voxel z-scoring (tedana-like path);
 #   5. the Phase 4 joint-ICA sweep with tissue classes (eta by class, the partial-volume diagnostic, corrected norms).
 # Each step logs its start and end; a failed step is reported and the next one still runs.
 #
 # Submit from inside the repository (one line; quotes keep the space in "Monitoring Visit"):
 #   bsub -q standard -n 8 -R "rusage[mem=2000] span[hosts=1]" -env "all" -J waves47159 -o waves_%J.log \
 #        "bash scripts/waves_overnight.lsf '<OUT_keep run folder>' [all|waves] [config.yaml]"
-# Second argument: all (default) = every step; waves = skip the joint-ICA sweep (step 5).
+# Second argument: all (default) = every step; waves = skip the joint-ICA sweep (step 5); batch = steps 1-3 plus
+# the motion-regressed and motion-orthogonal runs (the job-array setting, scripts/waves_batch.lsf).
 # Third argument: a config YAML (default configs/default.yaml).
 # Wave outputs go to outputs/waves/<run>/<git commit>/, so a rerun with newer code never overwrites older results.
 set -uo pipefail
 PY="${MEJOINT_PY:-$HOME/miniconda3_new/envs/mejoint/bin/python}"   # the env's python by full path (override only for local tests)
 RUN_DIR="${1:-}"
-STEPS="${2:-all}"                                          # all | waves
+STEPS="${2:-all}"                                          # all | waves | batch
 CONFIG="${3:-}"                                            # optional config YAML (default configs/default.yaml)
 REPO=""
 for cand in "$(dirname "${BASH_SOURCE[0]:-.}")/.." "$PWD" "${LS_SUBCWD:-}"; do
@@ -36,7 +37,7 @@ fail() { echo "PREFLIGHT FAILED: $*" >&2; exit 2; }
 [ -n "$RUN_DIR" ] && [ -f "$RUN_DIR/result.json" ] || fail "first argument must be an mbme_tedana run folder (with result.json)"
 [ -f "$RUN_DIR/work/echo-1_desc-mc_bold.nii.gz" ] || fail "no motion-corrected echoes in $RUN_DIR/work (rerun mbme_tedana with --keep-intermediates)"
 "$PY" -c "import mejoint.waves, mejoint.wave_figures, matplotlib" || fail "python packages missing (see the import error above)"
-case "$STEPS" in all|waves) ;; *) fail "second argument must be all or waves (got $STEPS)";; esac
+case "$STEPS" in all|waves|batch) ;; *) fail "second argument must be all, waves or batch (got $STEPS)";; esac
 CFGARG=(); if [ -n "$CONFIG" ]; then [ -f "$CONFIG" ] || fail "no config file $CONFIG"; CFGARG=(--config "$CONFIG"); fi
 NAME="$(basename "$RUN_DIR")"
 FE_REG="outputs/phase2/$NAME/mc"
@@ -74,12 +75,17 @@ step "waves primary (no regression, figures)" \
     "$PY" -m mejoint.cli waves "${CFGARG[@]}" --frontend-dir "$FE_NOREG" --out "$WOUT/noreg" "${TISARG[@]}"
 step "waves sensitivity: motion regression" \
     "$PY" -m mejoint.cli waves "${CFGARG[@]}" --frontend-dir "$FE_REG" --out "$WOUT/reg" "${TISARG[@]}" --bootstrap 50 --surrogates 50
+step "waves sensitivity: motion-orthogonal" \
+    "$PY" -m mejoint.cli waves "${CFGARG[@]}" --frontend-dir "$FE_NOREG" --out "$WOUT/noreg_motion_orth" "${TISARG[@]}" \
+    --motion-orthogonal --bootstrap 50 --surrogates 50
+if [ "$STEPS" != "batch" ]; then
 step "waves sensitivity: no slice-timing correction" \
     "$PY" -m mejoint.cli waves "${CFGARG[@]}" --frontend-dir "$FE_NOREG" --out "$WOUT/noreg_no_stc" "${TISARG[@]}" --no-slice-timing \
     --bootstrap 0 --surrogates 20 --plot-modes 1
 step "waves sensitivity: c0 only, z-scored (OC-like)" \
     "$PY" -m mejoint.cli waves "${CFGARG[@]}" --frontend-dir "$FE_NOREG" --out "$WOUT/noreg_c0_zscore" "${TISARG[@]}" --channels c0 \
     --voxel-scaling zscore_c0 --bootstrap 0 --surrogates 20 --plot-modes 1
+fi
 
 if [ "$STEPS" = "all" ]; then
     threads 1                                                     # the ICA restarts parallelize with joblib
