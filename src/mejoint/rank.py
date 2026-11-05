@@ -499,3 +499,38 @@ def render(r: dict) -> str:
         L += ["", f"Alias-correlation diagnostic failed: {ac.get('error')}"]
     L += ["", f"Fixed sweep for Phase 4: MAPCA estimates and k = {r['sweep_fixed']}."]
     return "\n".join(L) + "\n"
+
+
+def run_dir_mapca(frontend_dir, cfg: dict, out_dir) -> dict:
+    """Light Phase 3 for batches: the eigen-spectrum of the stacked channels and the MAPCA AIC / KIC / MDL
+    estimates only (the k values the Phase 4 sweep needs; Phase 3 outcome: no gated k). Same rank.json keys
+    that decompose.run_sweep reads; the slow phase-randomized estimators are skipped (`mejoint rank` runs them)."""
+    import json
+    from pathlib import Path
+
+    import nibabel as nib
+
+    from . import io
+
+    fd, out_dir = Path(frontend_dir), Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    c0, c1 = np.load(fd / "c0.npy"), np.load(fd / "c1.npy")
+    mask3d = np.asarray(nib.load(str(fd / "analysis_mask.nii.gz")).dataobj) > 0
+    fs = json.loads((fd / "summary.json").read_text())
+    X, _ = stack(c0, c1)
+    lam = spectrum(X)
+    mp = mapca_estimates(c0, c1, mask3d) if cfg["rank"].get("mapca", True) else {"available": False, "reason": "off"}
+    keep = {"run_id": fs.get("run_id"), "source": fs.get("source"), "mode": "mapca_only", "n_rows": int(X.shape[0]),
+            "n_frames": int(X.shape[1]), "mapca": mp, "sweep_fixed": [int(k) for k in cfg["rank"]["sweep_fixed"]],
+            "nuisance": (fd / "nuisance_Q.npy").exists(), "frontend_dir": str(fd)}
+    io.write_tsv(out_dir / "spectrum.tsv", {"index": list(range(1, lam.size + 1)), "eigenvalue": [float(x) for x in lam]})
+    io.write_json(out_dir / "rank.json", keep)
+    L = [f"# Rank (MAPCA only): {keep['run_id']} ({keep['source']} echoes)", "",
+         f"{keep['n_rows']} stacked rows x {keep['n_frames']} frames. "
+         + (f"MAPCA AIC / KIC / MDL = {mp['aic']} / {mp['kic']} / {mp['mdl']}." if mp.get("available")
+            else f"MAPCA not available: {mp.get('reason')}."),
+         f"Fixed sweep: {keep['sweep_fixed']}. The phase-randomized estimators were not run (`mejoint rank` runs them)."]
+    io.write_text(out_dir / "rank.md", "\n".join(L) + "\n")
+    io.write_config_copy(cfg, out_dir)
+    io.write_json(out_dir / "done.json", {"stage": "rank_mapca", **io.provenance(cfg, {"frontend_summary": str(fd / "summary.json")})})
+    return keep

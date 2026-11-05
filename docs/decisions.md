@@ -851,3 +851,15 @@ User: "implement the fix plus a-d. Then run it on all participants to see if thi
 - `scripts/submit_waves_batch.sh runs.txt` submits an LSF job array (`wavesb`, 8 cores and 2000 MB per core per element, at most 8 at a time) of `scripts/waves_batch.lsf`, which runs `waves_overnight.lsf <run> batch`: front ends (mc, with and without motion regression), tissue classes, waves primary (no regression, figures, 200 bootstrap / 200 surrogates), motion-regressed and motion-orthogonal (50 / 50). A dependent job (`ended(wavesb)`) runs `mejoint waves-summary`, writing `outputs/waves_batch/<commit>/waves_batch.{md,tsv,json}` and `waves_batch_motion.png` (mode 1 vs each motion parameter per participant; largest coupling vs mean FD).
 - Dry run here on two simulated participants with a reduced config: every step ok, summary written.
 - **Prerequisite:** each run needs its motion-corrected echoes (`work/echo-k_desc-mc_bold.nii.gz`, mbme_tedana `--keep-intermediates`). Only 47159 has them in `OUT_keep` as far as this record shows; the submit script lists runs without them, and those elements stop in preflight.
+
+### 2026-11-05: whole pipeline for every participant (user request)
+
+User: "run the entire pipeline for everyone for which there's suitable data" (the 17-run echo-1 list, minus the excluded 40240 and 51497).
+
+- `scripts/submit_pipeline_batch.sh <echo-1 list> [mbme_tedana.py] [OUT_keep]` (login node):
+  1. cleans the list (quotes, blank lines, #comments; subjects in `subjects.exclude` dropped), so line numbers match mbme_tedana's `--index`;
+  2. runs `mbme_tedana.py check` (echo files and TEs for every line, no processing) and stops if it fails;
+  3. submits one LSF job per participant (`mejoint_full[1-N]%8`, 8 cores, 4000 MB per core, `span[hosts=1]`) and the wave summary after all have ended.
+- Each job (`scripts/pipeline_batch.lsf`): mbme_tedana `run --index i --keep-intermediates` into OUT_keep with the existing analysis settings (`--echo-times 16.20 31.22 46.24 61.26 --interp spline --ica-method robustica --n-robust-runs 30 --tedpca aic --tree tedana_orig --seed 42`, from the source pasted 2026-11-02; mbme_tedana skips runs already finished, e.g. 47159), FSL 6 via modules, tedana env python by full path; then `waves_overnight.lsf <run> full`: front ends (with and without regression), tissue classes, rank (`mejoint rank --mapca-only`: spectrum and MAPCA AIC / KIC / MDL, the k values the sweep needs; the slow phase-randomized estimators are skipped), waves (primary, motion-regressed, motion-orthogonal), joint-ICA sweep with tissue classes.
+- Tested here end to end with stand-ins for mbme_tedana and bsub (two simulated participants): list cleaning (an excluded subject dropped), check, submission commands, both jobs through every stage.
+- Not verified here: the cluster run of mbme_tedana itself (module name `fsl/6` and the options are as recorded; the first job's log will show).

@@ -103,6 +103,7 @@ def main(argv=None) -> int:
     rk = sub.add_parser("rank", help="Phase 3 rank of the stacked channels of one front-end output folder")
     rk.add_argument("--frontend-dir", required=True, help="front-end output folder (channel cache c0/c1/r0/r1.npy)")
     rk.add_argument("--out", required=True, help="output folder")
+    rk.add_argument("--mapca-only", action="store_true", help="spectrum and MAPCA estimates only (fast; batches)")
     rk.add_argument("--config", help="config YAML (default: configs/default.yaml)")
 
     mq = sub.add_parser("mask-qc", help="build the analysis mask for every run and tabulate it (raw echoes 1 and 4)")
@@ -188,8 +189,12 @@ def main(argv=None) -> int:
         print(open(f"{args.out}/tissue.md").read())
     elif args.cmd == "rank":
         from . import rank
-        res = rank.run_dir(args.frontend_dir, cfg, args.out)
-        print(rank.render(res))
+        if args.mapca_only:
+            rank.run_dir_mapca(args.frontend_dir, cfg, args.out)
+            print(open(f"{args.out}/rank.md").read())
+        else:
+            res = rank.run_dir(args.frontend_dir, cfg, args.out)
+            print(rank.render(res))
     elif args.cmd == "mask-qc":
         from . import mask
         rows = mask.qc_all(args.pipeline_out, cfg, args.out)
