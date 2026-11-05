@@ -734,7 +734,7 @@ Tests (tests/test_waves_sim.py, noise-free ground truth; 8 tests, 7-9 s per run;
 
 **Flag (brief inconsistency):** brief 4.7 gives "lag = phase / (2 pi f_c)" but its gradient formula carries a minus sign. With analytic time courses ~ exp(+i w t), a voxel that lags by tau has map phase -w tau, so the implementation uses lag = -arg(q) / (2 pi f_c), consistent with the gradient formula, and the W2 tests verify the sign on simulated waves.
 
-### 2026-11-04: W2: individual wave stage built; simulation tests pass (slow set: see below)
+### 2026-11-04: W2: individual wave stage built; simulation tests pass, slow set included
 
 `src/mejoint/waves.py` (fresh implementation), `src/mejoint/wave_figures.py`, `mejoint waves`, `mejoint decompose --waves [--wave-figures] [--waves-frontend-dir]` (the same `waves.run_dir`), `scripts/waves_overnight.lsf`.
 
@@ -749,6 +749,8 @@ Simulations (tests/test_waves.py): 32 x 32 x 24 grid, 3.28 x 3.28 x 3.3 mm, 600 
 | eta | neural ~0 (inside its matched-SNR dR2* band); vascular 0.145, above the band |
 | TE4 - TE1 lag (95 % bootstrap interval of the median beyond the null) | neural [-0.27, 0.33] s (includes 0); vascular [0.52, 0.81] s (excludes 0, positive) |
 | c0 only, equal weights, linear form, z-scored vs an independent reference (SVD of the band-passed analytic OC signal, written separately) | Hungarian-matched complex |r| = 1.000 for the top 3 modes |
+| pure noise (20 runs, 20 x 20 x 16 grid, 450 volumes, 40 surrogates) | 1 / 20 runs with any mode above the family-wise null (5 %; pass: at most 1) |
+| speed interval coverage (100 runs, planar 6 mm/s, q 0.25 s^-1, snr0 60, 100 bootstrap resamples) | 0.98 (pass: 0.90-0.98). At the upper edge: the intervals are slightly conservative (wide), not too narrow |
 | `mejoint waves` / `decompose --waves` on a real-layout folder | SliceTiming read from the echo-1 sidecar; modes, maps, both figures, summary, done.json written |
 
 Fixes found on the way (each verified by the tests above):
