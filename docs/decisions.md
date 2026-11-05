@@ -825,3 +825,13 @@ Tests (tests/test_waves.py, all pass; real TEs, TR, MB 6 slice timing):
 - the sign null reproduces pure dR2* plus correlated noise (count within 15 %, opposed fraction within 0.05);
 - a planted motion-driven mode correlates 1.00 with its motion parameter, above the null;
 - the command test checks the new maps and tables, the motion file found through the pipeline folder, and that the direct Hilbert phase locks to a simulated wave (median PLV > 0.8).
+
+### 2026-11-05: W3 second real-data run on 47159 (waves only, commit 09de749): observations
+
+Primary (no regression) and motion-regressed runs agree; numbers below are the primary run, mode 1 (the only mode above the energy null).
+
+- **Motion coupling.** The mode time course correlates 0.60 with the band-passed y translation (null 95th percentile 0.40), and still 0.53 on the motion-regressed channels. The 24-regressor projection is fitted over the whole band, where the motion traces are dominated by slow drift, so it leaves in-band coupling. The earlier inference "motion regression barely changes mode 1, so motion is unlikely" is withdrawn: regression did not remove it, but the mode follows a motion trace. Direction of cause (motion driving the signal, or a shared physiological driver) is not determined.
+- **Real dS0, mostly sign-opposed.** 2198 voxels have both dS0 and dR2* beyond the empirical noise (2.0 expected for pure dR2*). 91 % are sign-opposed (S0 and R2* change in the same direction at the same time; folded timing -0.07 s), so their effects on the signal partly cancel. As a fraction of the voxels where the mode is present: opposite sign 0.25 / 0.17 / 0.21 / 0.27 and same sign 0.02 / 0.04 / 0.03 / 0.05 across CSF fraction bins 0-0.1 / 0.1-0.3 / 0.3-0.5 / 0.5-1.0. The opposite-sign fraction does not follow the CSF fraction; the small same-sign fraction rises with it, as partial volume predicts.
+- Consequences: for this mode, eta (0.23) is carried mainly by sign-opposed dS0, not by CSF partial volume; and the half-period pile-up of the TE4 - TE1 lag is these voxels (z_e changes sign between echoes), not noise.
+- **Spatial structure.** Explained fraction median 0.088 in tissue (PLV 0.25). The binned band-passed data are nearly synchronous over the first ~120 mm of the fitted axis (data and reconstruction look alike); the last ~15 mm are shifted. The phase table is relative to the |q|-weighted convention, not to the tissue mean as the caption states: tissue -17.6 degrees, CSF -8.9, inferior third +7.1 (spread 0.75, weak). To fix: phase 0 should be the explained-fraction-weighted tissue mean (the agreed convention).
+- The crest lines kink where the mode's amplitude is low (around 100-140 s): the instantaneous phase is ill-defined there.
