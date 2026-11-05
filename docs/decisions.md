@@ -781,3 +781,9 @@ Primary wave run (`outputs/waves/<run>/noreg`): 800 contiguous volumes, slice ti
 Joint-ICA sweep with tissue classes (k = 13, 24, 28, 50, 70, 90): every component "mixed" and above the energy null at every k; stability 0.997-1.000. Unchanged from Phase 4: the thermal-only eta bands and the energy null are uninformative on real data (injection is the planned reference).
 
 Proposed (awaiting the user): a sign-agnostic dS0-dR2* timing measure per voxel (the relative phase of s and -q folded to +-90 degrees, plus a "sign-opposed" flag), compared with the CSF fraction f_long, reported beside the brief's TE4 - TE1 lag.
+
+Mode 1 figure (`wave_mode_1.png`), added 2026-11-05:
+- Over most of the brain the dR2* map is faint and nearly in phase (lag near 0 within the 30 s cycle): a near-synchronous, global-like mode. The strongest voxels are at the brain's edges, around the midline at the ventricle level, and in the most inferior slices.
+- The cycle snapshots (sagittal) are strongest along the superior surface (vertex) and at the posterior-inferior and anterior-inferior edges, and the anterior-inferior and posterior-inferior edges have opposite sign at the same moment.
+- In the space-time plot the first ~120 mm along the fitted axis oscillate together; the last two bins (~120-140 mm, the far end of the axis) are stronger and shifted in time. That end bin drives the 6-8 s lag rise and the 29 mm/s fit.
+- Two readings, not yet separable: (a) venous / systemic blood-borne oscillation, with the draining sinuses late (hypothesis); (b) slow head motion (these are the no-regression channels): opposite-sign anterior and posterior edges fit a pitch rotation. The motion-regressed run and a correlation of the mode time course with the motion parameters would separate them.
