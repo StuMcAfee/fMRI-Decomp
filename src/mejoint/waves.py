@@ -295,7 +295,7 @@ def prepare(c0, c1, vox_slice_offset_s, tr, W: dict, blk: dict, Q=None):
 
 
 def thermal_beta_variance(tcs: np.ndarray, blk: dict, T_cache: int, offsets_s, tr, W, n_rows: int, rng,
-                          Q=None) -> np.ndarray:
+                          Q=None, return_power: bool = False):
     """E|beta|^2 for unit white thermal noise passed through exactly the same preprocessing (Monte Carlo,
     including the nuisance projection Q if the channels were projected): the noise-debiasing constant of
     complex eta (brief 4.7 item 6: calibrated, not the real-valued constant)."""
@@ -306,13 +306,18 @@ def thermal_beta_variance(tcs: np.ndarray, blk: dict, T_cache: int, offsets_s, t
     a, _, _ = prepare(noise, noise, off, tr, {**W, "voxel_scaling": "whitened"}, blk)
     Tg = a.shape[1]
     beta = a @ np.conj(tcs) / Tg
+    if return_power:                                                    # mean |a|^2 of unit noise after preprocessing
+        return (np.abs(beta) ** 2).mean(0), float(np.mean(np.abs(a) ** 2))
     return (np.abs(beta) ** 2).mean(0)                                 # (K,)
 
 
 def run(c0, c1, R, mask3d, voxel_mm, te_ms, tr, cfg: dict, slice_offsets_s=None, volumes=None, ref=None,
-        seed=None, Q=None, channels: str = "both", bootstrap: int | None = None, surrogates: int | None = None) -> dict:
+        seed=None, Q=None, channels: str = "both", bootstrap: int | None = None, surrogates: int | None = None,
+        motion=None, regions: dict | None = None, f_long=None) -> dict:
     """Individual stage on arrays (V aligned with mask3d in C order). ref: (V,) bool reference voxels for the
-    global phase and the speed statistics (data-only tissue class or the mask). Returns modes and measures."""
+    global phase and the speed statistics (data-only tissue class or the mask). motion: (T, 6) motion parameters
+    aligned with the frames (mode-motion correlation); regions: {name: (V,) bool} for the per-class summaries;
+    f_long: (V,) long-T2* (CSF-like) fraction for the dS0 / dR2* sign check. Returns modes and measures."""
     W = cfg["waves"]
     rng = np.random.default_rng(seed)
     V, T0 = c0.shape
@@ -367,7 +372,8 @@ def run(c0, c1, R, mask3d, voxel_mm, te_ms, tr, cfg: dict, slice_offsets_s=None,
         if channels != "c0":
             u1 = use & ok1
             m1c[u1] = (a1[u1] @ P) * scale[u1, None]
-    vb_unit = thermal_beta_variance(tc, blk, T0, offs, tr, W, int(W.get("noise_mc_rows", 2000)), rng, Q)   # (K,)
+    vb_unit, p_noise = thermal_beta_variance(tc, blk, T0, offs, tr, W, int(W.get("noise_mc_rows", 2000)), rng, Q,
+                                             return_power=True)        # (K,), scalar
     vb = vb_unit[None, :] * np.ones((V, 1))                              # whitened units: same for every voxel
     out = {"tc": tc, "m0": m0w, "m1": m1w, "s": s, "q": q, "m0_cf": m0c, "m1_cf": m1c, "f_c": fc,
            "var_frac_stacked": pc["var_frac"], "eig": pc["eig"], "phase_rotation": alpha, "block": blk,
@@ -377,9 +383,37 @@ def run(c0, c1, R, mask3d, voxel_mm, te_ms, tr, cfg: dict, slice_offsets_s=None,
     # variance fraction in c0 alone
     c0_energy = np.sum(np.abs(a0) ** 2)
     out["var_frac_c0"] = np.array([np.sum(np.abs(m0[:, k]) ** 2) * Tg / c0_energy for k in range(K)])
+    # explained fraction of each voxel's band-passed c0 by each mode (fade of the phase maps), and the direct
+    # Hilbert relative phase: each voxel's c0 phase minus the mode's phase, averaged over time (unweighted), with
+    # its phase-locking value (user decision 2026-11-05: model map (i) as the main map, direct map (ii) as a check)
+    e0 = np.sum(np.abs(a0) ** 2, axis=1)
+    m0p = pc["maps"][:V] * rot[None, :]                                  # prepared units, after the phase convention
+    with np.errstate(divide="ignore", invalid="ignore"):
+        out["explained_fraction"] = np.where(e0[:, None] > 0, np.abs(m0p) ** 2 * Tg / e0[:, None], np.nan)
+    out["hilbert_phase"], out["plv"] = direct_relative_phase(a0, tc)
+    # empirical beta noise per voxel, mode and channel (whitened units): the thermal value scaled by the voxel's
+    # residual band power (what this mode does not explain) relative to unit noise through the same pipeline.
+    # Physiological noise makes this larger than the thermal value on real data; used by the dS0 / dR2* sign
+    # check (the brief's eta and TE-lag nulls keep the thermal value).
+    def vb_emp(a, mp, ok):
+        res = np.sum(np.abs(a) ** 2, axis=1)[:, None] / Tg - np.abs(mp) ** 2
+        v = vb_unit[None, :] * np.maximum(res, 0) * scale[:, None] ** 2 / max(p_noise, 1e-30)
+        return np.where(ok[:, None], v, np.nan)
+    out["vb_emp0"] = vb_emp(a0, m0p, np.ones(V, bool))
+    if channels != "c0":
+        m1p = np.zeros((V, K), complex)
+        m1p[ok1] = pc["maps"][V:] * rot[None, :]
+        out["vb_emp1"] = vb_emp(a1, m1p, ok1)                         # rows without c1 are NaN and stay masked
+    else:
+        out["vb_emp1"] = np.full((V, K), np.nan)
+    out["_regions"] = regions or {}
+    out["_f_long"] = None if f_long is None else np.asarray(f_long, float)
+    out["motion"] = motion_correlation(tc, motion, blk, tr, W, rng) if motion is not None else None
     # per-mode measures
     out["_offsets"] = offs if slice_offsets_s is not None else None
     out["measures"] = [mode_measures(out, k, mask3d, x_mm, voxel_mm, te_ms, R, refv, vb, cfg, rng) for k in range(K)]
+    for k in range(int(min(K, W.get("plot_modes", 3)))):              # the data behind the space-time plot
+        out["measures"][k]["_st_data"] = spacetime_data(a0, out["q"][:, k], out["measures"][k]["_profile"])
     # energy null: phase-randomized surrogates through the same pipeline, family-wise (largest eigenvalue)
     n_sur = int(W.get("surrogates", 200) if surrogates is None else surrogates)
     if n_sur > 0:
@@ -439,6 +473,10 @@ def mode_measures(out, k, mask3d, x_mm, voxel_mm, te_ms, R, refv, vb, cfg, rng) 
     # path profile along the fitted propagation axis (figures; bootstrap bands use the same bins)
     prof = path_profile(q, s, out["m0_cf"][:, k], out["m1_cf"][:, k], R, vb[:, k], x_mm, hi, wv["direction"], fc,
                         te_ms, float(W.get("path_bin_mm", 6.0)))
+    s0r2 = s0_r2_timing(s_c[:, 0], q_c[:, 0], R, out["vb_emp0"][:, k], fc, float(W.get("amp_z", 3.0)),
+                        out.get("_f_long"), rng=rng, n_draws=int(W.get("te_lag_null_draws", 20)),
+                        vb1_k=out["vb_emp1"][:, k])
+    by_class = class_summary(out, k, refv, e_s0[:, 0], e_r2[:, 0], s0r2, hi)
     nd = null_draws[:, sel].ravel()
     nd = nd[np.isfinite(nd)]
     if nd.size > 20000:
@@ -453,6 +491,14 @@ def mode_measures(out, k, mask3d, x_mm, voxel_mm, te_ms, R, refv, vb, cfg, rng) 
             "te_lag_median_s": float(np.nanmedian(dlag[sel])) if sel.any() else np.nan,
             "te_lag_fraction_beyond_null": float(np.mean(beyond[sel])) if sel.any() else np.nan,
             "te_lag_median_beyond_null_s": float(np.nanmedian(dlag[sel & beyond])) if (sel & beyond).sum() >= 5 else np.nan,
+            "s0r2_n_voxels": s0r2["n"], "s0r2_fraction_sign_opposed": s0r2["fraction_opposed"],
+            "s0r2_timing_median_s": s0r2["timing_median_s"], "s0r2_null_n_expected": s0r2["null_n_expected"],
+            "s0r2_null_fraction_opposed": s0r2["null_fraction_opposed"],
+            "explained_fraction_median_ref": float(np.nanmedian(out["explained_fraction"][refv, k])),
+            "plv_median_ref": float(np.nanmedian(out["plv"][refv, k])),
+            "motion_r_max": (out["motion"]["r_max"][k] if out.get("motion") else np.nan),
+            "motion_r_null95": (out["motion"]["null95"] if out.get("motion") else np.nan),
+            "by_class": by_class, "_s0r2": s0r2,
             "_null_d": null_d, "_null_dlag_draws": nd, "_profile": prof,
             "_lag": lag, "_grad": grad, "_dlag": dlag, "_te_lags": tl, "_hi": hi, "_beyond": beyond}
 
@@ -520,6 +566,153 @@ def voxel_eta(m0c, m1c, R, vb_k, mask3d, voxel_mm, fwhm_mm: float) -> np.ndarray
     es, er = sm(e_s0[:, 0]), sm(e_r2[:, 0])
     with np.errstate(divide="ignore", invalid="ignore"):
         return np.where(es + er > 0, np.clip(es / (es + er), 0, 1), np.nan)
+
+
+def direct_relative_phase(a0, tc, chunk: int = 20000):
+    """Per voxel and mode: the time average of exp(i (phase of the voxel's analytic c0 - phase of the mode's time
+    course)). Returns its angle (rad) and its length (phase-locking value, 0-1), both (V, K)."""
+    V, K = a0.shape[0], tc.shape[1]
+    ph, plv = np.full((V, K), np.nan), np.full((V, K), np.nan)
+    u = tc / np.maximum(np.abs(tc), 1e-30)
+    for i in range(0, V, chunk):
+        a = a0[i:i + chunk]
+        au = a / np.maximum(np.abs(a), 1e-30)
+        m = au @ np.conj(u) / a.shape[1]                                   # (chunk, K)
+        ph[i:i + chunk], plv[i:i + chunk] = np.angle(m), np.abs(m)
+    return ph, plv
+
+
+def motion_correlation(tc, motion, blk, tr, W, rng, n_null: int = 200) -> dict:
+    """|complex correlation| of each mode's time course with each of the 6 motion parameters, band-passed and
+    made analytic the same way (no slice-timing shift: motion is one value per volume). Null: the same with
+    phase-randomized motion parameters, 95th percentile of the largest of the 6."""
+    M = np.asarray(motion, float)
+    if M.ndim != 2 or M.shape[1] != 6 or M.shape[0] < blk["cache_index"].max() + 1:
+        return None                                                     # rows must be the cached frames
+    P = bandpass_analytic(apply_block(M.T.copy(), blk), tr, W["band_hz"], int(W.get("filter_order", 4)))   # (6, Tg)
+    def corr(Pm):
+        num = np.abs(np.conj(Pm) @ tc)                                  # (6, K)
+        den = np.sqrt(np.sum(np.abs(Pm) ** 2, 1))[:, None] * np.sqrt(np.sum(np.abs(tc) ** 2, 0))[None, :]
+        with np.errstate(divide="ignore", invalid="ignore"):
+            return np.where(den > 0, num / den, 0.0)
+    r = corr(P)
+    tops = []
+    Mb = apply_block(M.T.copy(), blk)
+    for _ in range(int(n_null)):
+        Ps = bandpass_analytic(phase_randomize(Mb, rng), tr, W["band_hz"], int(W.get("filter_order", 4)))
+        tops.append(corr(Ps).max(0))
+    tops = np.concatenate(tops)
+    return {"r": r.T.tolist(), "r_max": r.max(0).tolist(), "null95": float(np.quantile(tops, 0.95)),
+            "names": ["rot_x", "rot_y", "rot_z", "trans_x", "trans_y", "trans_z"]}
+
+
+def s0_r2_timing(s, q, R, vb_k, fc, z, f_long=None, rng=None, n_draws: int = 0, vb1_k=None) -> dict:
+    """Sign-aware timing of the dS0 part relative to the BOLD-positive dR2* part (user decision 2026-11-05).
+    In voxels where both |s| and |q| exceed z noise SDs: delta = arg(s conj(-q)). |delta| > 90 degrees =
+    sign-opposed (e.g. CSF partial volume, Phase 5); otherwise the folded angle gives the timing
+    -delta / (2 pi f_c) in s (positive = the dS0 part later). Sign-opposed voxels are folded by 180 degrees
+    before their timing is taken. Optional: the fraction sign-opposed by CSF fraction f_long.
+    Null (n_draws > 0): the per-voxel s and q estimates share noise (CLAUDE.md 5.2), which by itself favours
+    opposite signs, so each voxel is redrawn as pure dR2* (its own q) plus channel noise; reported are the
+    expected number of voxels passing the thresholds and the opposed fraction among them."""
+    R00, R01, R11 = R[:, 0, 0], R[:, 0, 1], R[:, 1, 1]
+    vb0 = np.asarray(vb_k, float)                                       # c0 beta noise (and c1, unless given)
+    vb1 = vb0 if vb1_k is None else np.asarray(vb1_k, float)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        sd_s = np.sqrt(vb1) / R11
+        sd_q = np.sqrt(vb0 + vb1 * R01 ** 2 / R11 ** 2) / R00 * 1000.0
+    ok = np.isfinite(s) & np.isfinite(q) & (np.abs(s) > z * sd_s) & (np.abs(q) > z * sd_q)
+    d = np.angle(s * np.conj(-q))
+    opp = np.abs(d) > np.pi / 2
+    folded = np.angle(np.exp(1j * d) * np.where(opp, -1.0, 1.0))
+    timing = -folded / (2 * np.pi * fc)
+    enough = ok.sum() >= 20                                             # fractions from fewer voxels are not reported
+    res = {"n": int(ok.sum()), "fraction_opposed": float(opp[ok].mean()) if enough else np.nan,
+           "timing_median_s": float(np.median(timing[ok])) if enough else np.nan,
+           "timing_median_same_sign_s": float(np.median(timing[ok & ~opp])) if (ok & ~opp).sum() >= 20 else np.nan,
+           "_ok": ok, "_delta": d, "_opposed": opp, "_timing": timing, "by_f_long": None}
+    res["null_n_expected"], res["null_fraction_opposed"] = np.nan, np.nan
+    if rng is not None and n_draws > 0:
+        sd0, sd1 = np.sqrt(np.nan_to_num(vb0) / 2), np.sqrt(np.nan_to_num(vb1) / 2)
+        m0 = R00 * np.nan_to_num(q) / 1000.0
+        n_ok, n_opp = 0, 0
+        for _ in range(int(n_draws)):
+            n0 = sd0 * (rng.standard_normal(q.size) + 1j * rng.standard_normal(q.size))
+            n1 = sd1 * (rng.standard_normal(q.size) + 1j * rng.standard_normal(q.size))
+            s_, q_ = backsub_complex((m0 + n0)[:, None], n1[:, None], R)
+            s_, q_ = s_[:, 0], q_[:, 0]
+            ok_ = np.isfinite(s_) & np.isfinite(q_) & (np.abs(s_) > z * sd_s) & (np.abs(q_) > z * sd_q)
+            opp_ = np.abs(np.angle(s_ * np.conj(-q_))) > np.pi / 2
+            n_ok += int(ok_.sum())
+            n_opp += int((ok_ & opp_).sum())
+        res["null_n_expected"] = n_ok / n_draws
+        res["null_fraction_opposed"] = n_opp / n_ok if n_ok >= 20 else np.nan
+    if f_long is not None:
+        # CSF partial volume predicts an apparent dS0 with the SAME sign as the BOLD-positive part (in phase with
+        # -q, zero timing), more often where f_long is larger (our derivation, decisions.md Phase 5 / W3); it
+        # does not predict opposite signs. Fractions are of the voxels where the mode's q is present.
+        fl = np.asarray(f_long, float)
+        present = np.isfinite(q) & (np.abs(q) > z * sd_q)
+        edges = [0.0, 0.1, 0.3, 0.5, 1.01]
+        rows = []
+        for a, b in zip(edges[:-1], edges[1:]):
+            m = present & np.isfinite(fl) & (fl >= a) & (fl < b)
+            n = int(m.sum())
+            rows.append({"f_long": f"{a:.1f}-{min(b, 1.0):.1f}", "n_present": n, "n": int((ok & m).sum()),
+                         "fraction_same_sign": float((ok & m & ~opp).sum() / n) if n >= 20 else np.nan,
+                         "fraction_opposed": float((ok & m & opp).sum() / n) if n >= 20 else np.nan})
+        res["by_f_long"] = rows
+    return res
+
+
+def class_summary(out, k, refv, e_s0, e_r2, s0r2, hi) -> list[dict]:
+    """Per tissue class / region: voxels, voxels where the mode is present, median explained fraction, the
+    explained-fraction-weighted circular mean phase lag (degrees and s; 0 = the reference voxels by the phase
+    convention, + = later), its circular spread, eta (debiased energies summed) and the sign-opposed fraction."""
+    fc = float(out["f_c"][k])
+    q = out["q"][:, k]
+    ef = np.nan_to_num(out["explained_fraction"][:, k])
+    regs = {"all": np.ones(q.size, bool), "reference": refv, **out.get("_regions", {})}
+    rows = []
+    for name, m in regs.items():
+        m = np.asarray(m, bool) & np.isfinite(q)
+        if m.sum() == 0:
+            continue
+        z = np.sum(ef[m] * np.exp(1j * np.angle(q[m])))
+        wsum = ef[m].sum()
+        ph = -np.angle(z) if wsum > 0 else np.nan
+        es, er = e_s0[m].sum(), e_r2[m].sum()
+        ok = s0r2["_ok"] & m
+        rows.append({"region": name, "n_voxels": int(m.sum()), "n_present": int((hi & m).sum()),
+                     "explained_fraction_median": round(float(np.median(ef[m])), 4),
+                     "phase_lag_deg": round(float(np.degrees(ph)), 1) if np.isfinite(ph) else np.nan,
+                     "phase_lag_s": round(float(ph / (2 * np.pi * fc)), 2) if np.isfinite(ph) else np.nan,
+                     "circular_spread": round(float(1 - np.abs(z) / wsum), 3) if wsum > 0 else np.nan,
+                     "eta": round(float(es / (es + er)), 3) if es + er > 0 else np.nan,
+                     "fraction_sign_opposed": round(float(s0r2["_opposed"][ok].mean()), 3) if ok.sum() >= 20 else np.nan})
+    return rows
+
+
+def spacetime_data(a0, q, prof) -> np.ndarray:
+    """Data behind the space-time plot (model-light): per distance bin, the mean BOLD-positive band-passed c0
+    (-Re) over the bin's voxels whose mode phase lies within 90 degrees of the bin's circular mean (voxels of
+    opposite sign would cancel), each row z-scored. (B, T), NaN for empty bins."""
+    nb = prof["lags"].shape[0]
+    out = np.full((nb, a0.shape[1]), np.nan, np.float32)
+    bi = prof["bin_index"]
+    for b in range(nb):
+        m = bi == b
+        if m.sum() < 5:
+            continue
+        qb = q[m]
+        ref = np.sum(np.abs(qb) * qb)
+        keep = np.flatnonzero(m)[np.real(qb * np.conj(ref)) > 0]
+        if keep.size < 3:
+            continue
+        row = -np.real(a0[keep]).mean(0)
+        sd = row.std()
+        out[b] = (row - row.mean()) / sd if sd > 0 else row
+    return out
 
 
 def eta_bands(m0, m1, R, vb_k, E, rng, n_mc: int = 50) -> dict:
@@ -700,6 +893,21 @@ def find_volumes(frontend_dir, T: int):
     return vu[:, 0] if vu.shape[0] == T else None
 
 
+def find_motion(frontend_dir, T: int):
+    """The run's motion parameters (mbme_tedana motion/mcflirt.par, one row per kept frame, as the front end uses
+    them), found through the front end's done.json. (None, None) when absent or of the wrong length."""
+    import json
+    from pathlib import Path
+
+    try:
+        inp = json.loads((Path(frontend_dir) / "done.json").read_text()).get("inputs", {})
+        par = Path(inp["volumes_used"]["path"]).parent / "motion" / "mcflirt.par"
+        M = np.loadtxt(par, ndmin=2)
+    except (OSError, ValueError, KeyError, TypeError):
+        return None, None
+    return (M, str(par)) if M.shape == (T, 6) else (None, None)
+
+
 def run_dir(frontend_dir, cfg: dict, out_dir, tissue_dir=None, figures: bool = True, slice_timing: bool | None = None,
             n_jobs: int | None = None, data_type: str | None = None) -> dict:
     """Individual wave stage on a cached front-end folder (c0/c1.npy, R.npy, analysis mask, nuisance_Q.npy when
@@ -742,14 +950,22 @@ def run_dir(frontend_dir, cfg: dict, out_dir, tissue_dir=None, figures: bool = T
         raise ValueError(f"SliceTiming has {offsets.size} entries but the volume has {mask3d.shape[2]} slices")
     volumes = find_volumes(fd, c0.shape[1])
     ref, ref_name = None, "analysis mask"
+    inf = inferior_third(mask3d, mimg.affine)[mask3d]
+    regions, f_long = {"inferior_third": inf}, None
     if tissue_dir is not None and (Path(tissue_dir) / "classes.npy").exists():
+        from .tissue import CLASS_NAMES
         cls = np.load(Path(tissue_dir) / "classes.npy")
-        if cls.shape[0] == c0.shape[0] and (cls == 1).sum() >= 100:
-            ref, ref_name = cls == 1, "data-only tissue class 'tissue'"
+        if cls.shape[0] == c0.shape[0]:
+            if (cls == 1).sum() >= 100:
+                ref, ref_name = cls == 1, "data-only tissue class 'tissue'"
+            regions.update({f"class_{name}": cls == c for c, name in CLASS_NAMES.items()})
+            fl = Path(tissue_dir) / "f_long.npy"
+            f_long = np.load(fl) if fl.exists() else None
+    motion, motion_src = find_motion(fd, c0.shape[1])
     seed = io.seed_sequence(cfg, subj, 0, 6, 0)                             # stage 6 = waves
     channels = W.get("channels", "both")
     out = run(c0, c1, R, mask3d, voxel_mm, te_ms, tr, cfg, slice_offsets_s=offsets, volumes=volumes, ref=ref,
-              seed=seed, Q=Q, channels=channels)
+              seed=seed, Q=Q, channels=channels, motion=motion, regions=regions, f_long=f_long)
     if "skipped" in out:
         summ = {"run_id": fs.get("run_id"), "skipped": out["skipped"]}
         io.write_json(out_dir / "waves.json", summ)
@@ -761,10 +977,15 @@ def run_dir(frontend_dir, cfg: dict, out_dir, tissue_dir=None, figures: bool = T
     eta_vox = np.stack([voxel_eta(out["m0_cf"][:, k], out["m1_cf"][:, k], R, out["vb_thermal"][k] * np.ones(c0.shape[0]),
                                   mask3d, voxel_mm, fwhm) for k in range(K)], axis=1)
     lag = np.stack([msr["_lag"] for msr in out["measures"]], axis=1)
-    # maps
+    deg = lambda a: np.degrees(a)
+    s0r2_deg = np.stack([np.where(msr["_s0r2"]["_ok"], deg(msr["_s0r2"]["_delta"]), np.nan) for msr in out["measures"]], 1)
+    # maps (phase lag in degrees, + = later; 0 = the reference voxels)
     for name, arr in (("q_amp", np.abs(out["q"])), ("q_phase", np.angle(out["q"])), ("s_amp", np.abs(out["s"])),
-                      ("s_phase", np.angle(out["s"])), ("eta", eta_vox), ("lag", lag)):
-        io.save_map(arr.astype(np.float32), mask3d, mimg, out_dir / "maps" / f"{name}.nii.gz")
+                      ("s_phase", np.angle(out["s"])), ("eta", eta_vox), ("lag", lag),
+                      ("phase_lag_deg", -deg(np.angle(out["q"]))), ("hilbert_phase_lag_deg", -deg(out["hilbert_phase"])),
+                      ("plv", out["plv"]), ("explained_fraction", out["explained_fraction"]),
+                      ("s0_vs_r2_phase_deg", s0r2_deg)):
+        io.save_map(np.asarray(arr, np.float32), mask3d, mimg, out_dir / "maps" / f"{name}.nii.gz")
     np.savez_compressed(out_dir / "modes.npz", m0=out["m0"], m1=out["m1"], s=out["s"], q=out["q"], tc=out["tc"],
                         f_c=out["f_c"], phase_rotation=out["phase_rotation"], m0_cf=out["m0_cf"], m1_cf=out["m1_cf"],
                         eig=out["eig"], var_frac_stacked=out["var_frac_stacked"], block_grid=out["block"]["grid"],
@@ -772,6 +993,8 @@ def run_dir(frontend_dir, cfg: dict, out_dir, tissue_dir=None, figures: bool = T
                                                   "time courses ~ exp(+i 2 pi f t); lag = -arg(q) / (2 pi f_c)"))
     rows = mode_rows(out)
     io.write_tsv(out_dir / "modes.tsv", {c: [r.get(c) for r in rows] for c in rows[0]})
+    crow = [{"mode": k + 1, **r} for k, msr in enumerate(out["measures"]) for r in msr["by_class"]]
+    io.write_tsv(out_dir / "modes_by_region.tsv", {c: [r.get(c) for r in crow] for c in crow[0]})
     simulated = False
     if st_src:
         try:
@@ -787,7 +1010,6 @@ def run_dir(frontend_dir, cfg: dict, out_dir, tissue_dir=None, figures: bool = T
     if figures:
         from . import wave_figures as wf
         (out_dir / "figures").mkdir(exist_ok=True)
-        inf = inferior_third(mask3d, mimg.affine)[mask3d]
         n_plot = int(min(K, W.get("plot_modes", 3)))
         extra = {"eta_voxel": eta_vox, "eta_fwhm_mm": fwhm, "ref": refv,
                  "rep_voxels": [wf.representative_voxels(out, k, refv, eta_vox[:, k], inf) for k in range(n_plot)]}
@@ -801,7 +1023,10 @@ def run_dir(frontend_dir, cfg: dict, out_dir, tissue_dir=None, figures: bool = T
             "slice_timing_source": st_src, "voxel_scaling": out["voxel_scaling"], "reference_voxels": ref_name,
             "n_volumes_used": out["n_volumes_used"], "n_interpolated": int(out["block"].get("n_interpolated", 0)),
             "band_hz": W["band_hz"], "null": out.get("null"), "bootstrap_n": (out.get("bootstrap") or {}).get("n", 0),
-            "modes": rows, "figures": figs}
+            "motion_source": motion_src, "motion": out.get("motion"), "tissue_dir": str(tissue_dir) if tissue_dir else None,
+            "modes": rows, "by_region": {k + 1: msr["by_class"] for k, msr in enumerate(out["measures"])},
+            "s0r2_by_f_long": {k + 1: msr["_s0r2"]["by_f_long"] for k, msr in enumerate(out["measures"])},
+            "figures": figs}
     io.write_json(out_dir / "waves.json", summ)
     io.write_text(out_dir / "waves_summary.md", render(summ))
     io.write_config_copy(cfg, out_dir)
@@ -813,7 +1038,10 @@ def run_dir(frontend_dir, cfg: dict, out_dir, tissue_dir=None, figures: bool = T
 
 SCALARS = ("f_c_hz", "var_frac_stacked", "var_frac_c0", "speed_mm_s", "fit_quality", "local_speed_median", "R", "eta",
            "eta_band_R2", "eta_band_S0", "lag_vs_slice_time_slope", "n_voxels_present", "te_lag_median_s",
-           "te_lag_fraction_beyond_null", "te_lag_median_beyond_null_s", "above_null")
+           "te_lag_fraction_beyond_null", "te_lag_median_beyond_null_s", "above_null", "explained_fraction_median_ref",
+           "plv_median_ref", "s0r2_n_voxels", "s0r2_null_n_expected", "s0r2_fraction_sign_opposed",
+           "s0r2_null_fraction_opposed", "s0r2_timing_median_s", "motion_r_max",
+           "motion_r_null95")
 
 
 def mode_rows(out: dict) -> list[dict]:
@@ -860,6 +1088,39 @@ def render(s: dict) -> str:
                  f"{r['speed_mm_s']:.3g} {r.get('speed_mm_s_ci', '')} | {r['fit_quality']:.2f} | {r['R']:.2f} | "
                  f"{r['eta']:.3f} {r['eta_band_R2']} | {r['te_lag_median_s']:.2f} "
                  f"({100 * r['te_lag_fraction_beyond_null']:.0f}) | {r['lag_vs_slice_time_slope']:.2f} |")
+    f = lambda v, n=2: "" if v is None or (isinstance(v, float) and not np.isfinite(v)) else f"{v:.{n}f}"
+    mot = s.get("motion")
+    L += ["", "Checks per mode: motion = largest |complex correlation| of the mode time course with the 6 band-passed motion "
+              f"parameters ({'null 95th percentile ' + f(mot['null95']) if mot else 'no motion parameters found'}); "
+              "explained fraction and phase locking (PLV) = medians over the reference voxels; dS0 vs dR2* = voxels where "
+              "both parts exceed the noise, the fraction with opposite sign and the median folded timing of the dS0 part "
+              "(+ = later); in brackets the same for pure dR2* plus noise (the s and q estimates share noise, which by "
+              "itself favours opposite signs). Noise for this check is empirical (each voxel's residual band power), "
+              "not thermal.", "",
+          "| Mode | Motion r (max) | Explained fraction | PLV | dS0 vs dR2*: voxels (pure-dR2* null) | sign-opposed "
+          "(null) | timing s |", "|---|---|---|---|---|---|---|"]
+    for r in s["modes"]:
+        n0 = r.get("s0r2_null_n_expected")
+        L.append(f"| {r['mode']} | {f(r.get('motion_r_max'))} | {f(r.get('explained_fraction_median_ref'), 3)} | "
+                 f"{f(r.get('plv_median_ref'))} | {int(r['s0r2_n_voxels']) if r.get('s0r2_n_voxels') is not None else ''} "
+                 f"({f(n0, 1)}) | {f(r.get('s0r2_fraction_sign_opposed'))} ({f(r.get('s0r2_null_fraction_opposed'))}) | "
+                 f"{f(r.get('s0r2_timing_median_s'))} |")
+    show = [r["mode"] for r in s["modes"] if r.get("above_null") is True] or [r["mode"] for r in s["modes"][:1]]
+    for k in show:
+        L += ["", f"## Mode {k} by region (phase lag relative to the reference voxels, + = later; weighted by the "
+                  "explained fraction)", "",
+              "| Region | Voxels | Present | Explained fraction | Phase lag deg | s | Spread | eta | Sign-opposed |",
+              "|---|---|---|---|---|---|---|---|---|"]
+        for r in s["by_region"][k]:
+            L.append(f"| {r['region']} | {r['n_voxels']} | {r['n_present']} | {r['explained_fraction_median']} | "
+                     f"{r['phase_lag_deg']} | {r['phase_lag_s']} | {r['circular_spread']} | {r['eta']} | "
+                     f"{r['fraction_sign_opposed']} |")
+        fl = s["s0r2_by_f_long"].get(k)
+        if fl:
+            L += ["", "Voxels with a significant dS0 by CSF fraction f_long (fraction of the voxels where the mode is "
+                      "present; same sign / opposite sign; partial volume predicts a rising same-sign fraction): "
+                      + "; ".join(f"{x['f_long']}: {f(x['fraction_same_sign'])} / {f(x['fraction_opposed'])} "
+                                  f"(n {x['n_present']})" for x in fl) + "."]
     L += ["", "Reading the table: speed and direction come from the plane-wave fit (a standing mode has a very high "
               "'speed' and low fit quality); R is the coherence of the local propagation directions; eta is the "
               "noise-debiased S0 energy fraction (interpret only for modes above the null); a lag-slice slope near "

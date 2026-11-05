@@ -650,7 +650,7 @@ eta of the voxel's change:
 | 0.6 | 0.073 | 0.179 | 0.331 |
 | 0.5 | 0.127 | 0.266 | 0.419 |
 
-- The apparent dS0/S0 is negative (-0.09 to -0.27 %), opposite in sign to the signal change, and the apparent dR2* is diluted (e.g. 0.13 instead of 0.5 s^-1).
+- The apparent dS0/S0 is negative (-0.09 to -0.27 %) for this dR2* increase (the signal falls): the same sign as the signal change and opposite in sign to dR2*. The apparent dR2* is diluted (e.g. 0.13 instead of 0.5 s^-1). (Wording corrected 2026-11-05; it first said "opposite in sign to the signal change". The numbers were right.)
 - Whitened energy of the change at tissue fraction 0.6: c0 98.1 %, c1 1.6 %, r0 0.3 %, r1 ~0. It is invisible per frame in the residual.
 - Its static fingerprint is a convex mean decay (curvature about +0.015). P04's static curvature has its 90th percentile at +0.074, so many voxels have convex, partial-volume-like decays.
 
@@ -696,7 +696,7 @@ Next step when resumed: weight voxels by the precision of kappa q, or fit in the
    - eta uses cross-fitted complex maps;
    - the null uses the top-n directions of surrogates, family-wise.
    Phase-randomized surrogates are uninformative on real data here (coloured, nonstationary noise; Phases 3-4), so "above null" will need the bootstrap / split-half evidence on real data.
-5. **Partial volume** (Phase 5): CSF partial volume inflates eta with an apparent dS0 that is in phase with q, so it does not create a TE-dependent lag. TE lag is robust to it; eta is not. Report both, with the PV diagnostic.
+5. **Partial volume** (Phase 5): CSF partial volume inflates eta with an apparent dS0 that is in phase with -q (the BOLD-positive part; wording corrected 2026-11-05, it first said "in phase with q"), so it does not create a TE-dependent lag. TE lag is robust to it; eta is not. Report both, with the PV diagnostic.
 6. **Gray matter** is not available data-only. The data-only classes are tissue / mixed / CSF / short T2* / few echoes. The phase convention ("q in gray matter") and the speed statistics use the data-only tissue class until the T1 option exists.
 7. **Slice timing** is not in the front-end cache. It is read from the JSON sidecar of the raw echo 1 (found through result.json), and recorded.
 8. **ANTs:** the brief's path is under `rhel7_apps`, but the cluster is RHEL8. To verify at W5.
@@ -775,12 +775,12 @@ Primary wave run (`outputs/waves/<run>/noreg`): 800 contiguous volumes, slice ti
 - **Only mode 1 is above the family-wise energy null** (eigenvalue / null 2.79; f_c 0.033 Hz; 25.9 % of the band-passed variance). Modes 2-10 are below it (0.95 down to 0.23) and are not interpreted.
 - **Mode 1** is a large-scale mode: plane-wave speed 29.1 mm/s [22.3, 34.5], fit quality 0.76, but local directional coherence R = 0.12. The lag profile along the fitted axis is not linear: about 0-2 s over the first ~110 mm, then a rise of about 6-8 s over the last ~30 mm. A plane wave is a poor summary of this mode; the lag map is the better one.
 - **eta** = 0.23 for mode 1 (0.25-0.43 for modes 2-10), far above the thermal-only dR2* bands (about +-0.01). Same pattern as the Phase 4 sweep: the thermal bands are too narrow for real data, and partial volume with CSF alone can produce eta ~0.2 (Phase 5). Not evidence of physiological dS0.
-- **TE4 - TE1 lag**: mode 1 median 0.09 s [-0.08, 0.30] (includes 0), but 63 % of voxels "beyond the null". In all three plotted modes the voxels beyond the null pile up near +-half a period (15.2 s, 22.7 s and 15.6 s), which is the signature of W2 flag 1 (s and -TE q of opposite sign, so z_e passes near zero and the unwrapped phase jumps by about half a cycle), not of a timing difference: a 15 s delay between the dS0 and dR2* parts is not physiological. The posterior-fossa phasor of mode 1 crosses the origin (sign flip between TE1 and TE4), as CSF partial volume predicts. Likely explanation; not yet tested. The histogram also clips values at +-half a period, which exaggerates the edge bins.
+- **TE4 - TE1 lag**: mode 1 median 0.09 s [-0.08, 0.30] (includes 0), but 63 % of voxels "beyond the null". In all three plotted modes the voxels beyond the null pile up near +-half a period (15.2 s, 22.7 s and 15.6 s), which is the signature of W2 flag 1 (s and -TE q of opposite sign, so z_e passes near zero and the unwrapped phase jumps by about half a cycle), not of a timing difference: a 15 s delay between the dS0 and dR2* parts is not physiological. The posterior-fossa phasor of mode 1 crosses the origin (sign flip between TE1 and TE4). (Corrected 2026-11-05: this entry first said that CSF partial volume predicts this. It does not: partial volume gives an apparent dS0 in phase with -q, so z_e keeps one sign across echoes; see the next entry.) The histogram also clips values at +-half a period, which exaggerates the edge bins.
 - **Lag vs slice-time slope** of mode 1 after correction: 0.33 (simulation: ~0). In lag terms this is about 0.23 s across the 0.75 s TR, small against the ~8 s lag range, but not zero. The no-correction run gives the comparison.
 
 Joint-ICA sweep with tissue classes (k = 13, 24, 28, 50, 70, 90): every component "mixed" and above the energy null at every k; stability 0.997-1.000. Unchanged from Phase 4: the thermal-only eta bands and the energy null are uninformative on real data (injection is the planned reference).
 
-Proposed (awaiting the user): a sign-agnostic dS0-dR2* timing measure per voxel (the relative phase of s and -q folded to +-90 degrees, plus a "sign-opposed" flag), compared with the CSF fraction f_long, reported beside the brief's TE4 - TE1 lag.
+Proposed: a sign-aware dS0-dR2* timing measure per voxel (the relative phase of s and -q folded to +-90 degrees, plus a "sign-opposed" flag), compared with the CSF fraction f_long, reported beside the brief's TE4 - TE1 lag (agreed and built 2026-11-05, below).
 
 Mode 1 figure (`wave_mode_1.png`), added 2026-11-05:
 - Over most of the brain the dR2* map is faint and nearly in phase (lag near 0 within the 30 s cycle): a near-synchronous, global-like mode. The strongest voxels are at the brain's edges, around the midline at the ventricle level, and in the most inferior slices.
@@ -801,3 +801,27 @@ Sensitivity runs (same job), mode 1:
 - **Slice-timing correction shifts the slope by +0.73** (simulation: +1.0), so it acts in the right direction and nearly the right size; the residual +0.33 corresponds to about 0.2 s across the TR.
 - **Mode 1 is also the leading mode of the OC-like c0 path**, with a smaller share (14.7 %) when every voxel is z-scored: in whitened units its energy is concentrated in high-amplitude voxels (edges, vessels, ventricles).
 - No other mode is above the null in any run except mode 2 of the c0 path (1.03, marginal).
+
+### 2026-11-05: W3 additions built (user decisions: a-c, e; phase maps; all four display recommendations)
+
+User decisions (2026-11-05):
+- (a) motion correlation per mode; (b) sign-aware dS0 / dR2* timing; (c) phase, amplitude and eta by region; (e) waves-only reruns.
+- Figures show **phase**, not time: hsv, 0 = the reference voxels, + = later. Main map (i) from the mode; check map (ii) the direct Hilbert relative phase (each voxel's c0 phase minus the mode's phase, averaged over time). Phase 0 = the tissue-class mean. Fading by each voxel's explained fraction (map i) or phase-locking value (map ii). Space-time panel shows the band-passed **data** in distance bins with the mode's crest lines from its instantaneous phase; the mode's own reconstruction is a small companion panel (it has propagation built in).
+- The fixed-period dashed lines of the first figures drifted off the crests because the mode time course is broadband (crest spacing varies); the new lines follow the instantaneous phase.
+
+Built:
+- `waves.direct_relative_phase`, `motion_correlation` (null: phase-randomized motion parameters, 95th percentile of the largest of 6), `s0_r2_timing`, `class_summary`, `spacetime_data`; new maps `phase_lag_deg`, `hilbert_phase_lag_deg`, `plv`, `explained_fraction`, `s0_vs_r2_phase_deg`; `modes_by_region.tsv`; new summary tables.
+- `scripts/waves_overnight.lsf '<run>' [all|waves] [config]`; wave outputs now go to `outputs/waves/<run>/<git commit>/` so reruns never overwrite earlier results; memory request lowered to 2000 MB per core (the first run peaked at 9.0 GB).
+
+**Correction (my error, found by the new simulation test):** CSF partial volume gives an apparent dS0 with the **same sign as the signal change**, i.e. in phase with the BOLD-positive part -q (opposite in sign to dR2* itself). Direct calculation (tissue T2* 45 ms, CSF 200 ms, dR2* = -1 s^-1): apparent dS0 = +0.30 %, +0.50 %, +0.38 % at CSF fractions 0.1, 0.3, 0.6. Three earlier statements had the sign relation wrong in words (the Phase 5 entry, W0 conflict 5, and the W3 phasor remark; all corrected above, numbers unchanged), as did README Figure 6's caption. Consequences:
+- partial volume does not produce sign flips across echoes, so it does **not** explain the half-period pile-up of the TE4 - TE1 lag on P04;
+- the remaining candidates are (1) noise larger than the thermal noise the TE-lag null assumes (physiological noise; the same miscalibration as the eta bands), and (2) a real dS0 of the same sign as dR2* (S0 up while R2* rises, e.g. edge or motion effects).
+
+**Noise for the sign check.** The per-voxel s and q estimates share noise (CLAUDE.md 5.2), which by itself favours opposite signs: on simulated pure noise every passing voxel was "opposed". The check therefore (1) uses empirical noise per voxel (the thermal beta variance scaled by the voxel's residual band power relative to unit noise through the same pipeline; physiological noise included), and (2) reports a pure-dR2* null (expected number of passing voxels and their opposed fraction). The brief's eta and TE-lag nulls are unchanged (thermal); switching the TE-lag null to the empirical noise is an option for the user.
+
+Tests (tests/test_waves.py, all pass; real TEs, TR, MB 6 slice timing):
+- vascular wave (dS0 inflow leads the BOLD-positive dR2* by 3 s): 89 voxels with both parts beyond noise (null: 0.45 expected), 2 % opposed, dS0 timing -2.90 s (planted -3.0 s);
+- pure dR2* wave with CSF partial volume (fraction up to 0.7): 2623 voxels with apparent dS0, 0.1 % opposed, timing 0.03 s; same-sign fraction by CSF fraction 0.01 / 0.35 / 0.60 / 0.53 (0-0.1 / 0.1-0.3 / 0.3-0.5 / 0.5-1.0);
+- the sign null reproduces pure dR2* plus correlated noise (count within 15 %, opposed fraction within 0.05);
+- a planted motion-driven mode correlates 1.00 with its motion parameter, above the null;
+- the command test checks the new maps and tables, the motion file found through the pipeline folder, and that the direct Hilbert phase locks to a simulated wave (median PLV > 0.8).
