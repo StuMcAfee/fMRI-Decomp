@@ -108,6 +108,10 @@ def check(ch: dict, R2: np.ndarray, mu, sigma, ratios, use, t2s, te_ms, M, m0_cf
     # --- A: sign and ratio (cross-fitted maps, empirical noise)
     R00, R01, R11 = R2[:, 0, 0][:, None], R2[:, 0, 1][:, None], R2[:, 1, 1][:, None]
     vb0, vb1 = VB["c0"], VB["c1"]
+    # a non-positive empirical noise variance is not a usable estimate (e.g. raw echoes with uncorrected motion):
+    # mark it missing, so those voxels never count as significant in the data or in the null
+    vb0 = np.where(vb0 > 0, vb0, np.nan)
+    vb1 = np.where(vb1 > 0, vb1, np.nan)
     with np.errstate(divide="ignore", invalid="ignore"):
         s = m1_cf / R11
         q = (m0_cf - R01 * s) / R00 * 1000.0                            # s^-1
