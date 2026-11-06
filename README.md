@@ -191,4 +191,5 @@ docs/             decisions.md (gates, results), research_report.md, WAVES_BRIEF
 - `claude/waves` holds the traveling-wave extension ([`docs/WAVES_BRIEF.md`](docs/WAVES_BRIEF.md)): complex,
   analytic-signal modes with complex ΔR2\* and ΔS0 maps, run as an option of the decomposition, plus a
   separate group command.
+- `claude/two-stage` (from `claude/waves`, 2026-11-06) holds the two-stage design: stage 1 = the joint decomposition (physics, noise), stage 2 = network analysis after stage-1 noise removal.
 - Nothing is merged into `main` without the user's agreement.
