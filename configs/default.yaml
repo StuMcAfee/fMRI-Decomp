@@ -155,7 +155,7 @@ waves:                        # traveling-wave extension, individual stage (docs
   amp_z: 3.0                    # a voxel "has" the mode where |q| exceeds this many noise SDs of q
   band_mc: 50                   # Monte Carlo draws for the matched-SNR eta bands per mode
   eta_display_fwhm_mm: 6.0      # smoothing of the debiased energies for the voxelwise eta map (display only)
-  motion_orthogonal: false      # sensitivity: project the band-passed motion parameters (6 complex = 12 real regressors) out of the band-passed channels
+  motion_orthogonal: true       # project the band-passed motion parameters (6 complex = 12 real regressors) out of the band-passed channels; primary for wave claims (user decision 2026-11-06: in-band motion coupling in 12 of 15 runs); false = comparison
   gradient_smooth_mm: 4.0
   path_bin_mm: 6.0
   bootstrap: 200                # circular block bootstrap over time (blocks >= one cycle of the slowest reported mode)

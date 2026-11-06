@@ -280,6 +280,11 @@ def test_motion_correlation_finds_a_planted_motion_mode():
     mc = waves.motion_correlation(tc, M, blk, tr, W, rng, n_null=50)
     assert mc["r"][0][3] == pytest.approx(1.0, abs=1e-6) and mc["r_max"][0] > mc["null95"]
     assert mc["r_max"][1] < 0.6
+    # lag: a mode that follows the motion parameter 2 s later (and with opposite sign: the sign is arbitrary)
+    late = waves.bandpass_analytic(-waves.fractional_delay(M[:, 3][None], np.array([2.0]), tr), tr, W["band_hz"])[0]
+    fc = waves.mode_frequency(late, tr)
+    ml = waves.motion_correlation(late[:, None], M, blk, tr, W, rng, n_null=10, fc=[fc])
+    assert ml["r"][0][3] > 0.95 and ml["lag_s"][0][3] == pytest.approx(2.0, abs=0.3)
 
 
 def test_s0_r2_sign_null_matches_pure_r2_with_noise():
@@ -348,7 +353,7 @@ def test_batch_summary_collects_runs_and_flags_missing(tmp_path):
             "motion_r_max": 0.6, "motion_best_param": "trans_y", "motion_r_null95": 0.4,
             **{f"motion_r_{n}": 0.1 for n in ("rot_x", "rot_y", "rot_z", "trans_x", "trans_z")}, "motion_r_trans_y": 0.6,
             "eta": 0.23, "s0r2_n_voxels": 2198, "s0r2_null_n_expected": 2.0, "s0r2_fraction_sign_opposed": 0.91,
-            "direction_label": "posterior-superior"}
+            "direction_label": "posterior-superior", "motion_best_lag_s": 1.5}
     for run in ("sub-1_acq-1_ser-5", "sub-2_acq-1_ser-5"):
         for var in ("noreg", "noreg_motion_orth"):
             d = tmp_path / "waves" / run / "abc1234" / var
@@ -360,6 +365,7 @@ def test_batch_summary_collects_runs_and_flags_missing(tmp_path):
                      "--out", str(tmp_path / "sum")]) == 0
     md = (tmp_path / "sum" / "waves_batch.md").read_text()
     assert "motion-coupled (largest motion r above its null): 2 of 2" in md and "sub-3_acq-1_ser-5" in md
+    assert "lag of the signal after its strongest motion parameter, coupled runs: median +1.5 s" in md
     assert (tmp_path / "sum" / "waves_batch_motion.png").exists()
     rows = json.loads((tmp_path / "sum" / "waves_batch.json").read_text())["rows"]
     assert len(rows) == 8                                               # 2 runs x 2 variants x 2 modes

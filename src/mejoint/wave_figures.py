@@ -335,6 +335,7 @@ def _header(fig, title, meta, out, k):
              f"{meta.get('data_type', 'real data')}. f_c = {fc:.3f} Hz (period {1 / fc:.1f} s); {out['n_volumes_used']} "
              f"volumes; slice-timing correction {'applied' if out['slice_timing_corrected'] else 'NOT applied'}; "
              f"normalization {out['voxel_scaling']}; channels {out['channels']}"
+             f"{'; band-passed motion projected out' if out.get('motion_orthogonal') else '; motion NOT projected out'}"
              f"{', ' + meta['nuisance'] if meta.get('nuisance') else ''}; variance {100 * m['var_frac_stacked']:.1f} % "
              f"of the band-passed channels; "
              + ("energy above the family-wise null" if an else "energy NOT above the family-wise null" if an is not None
@@ -512,6 +513,12 @@ def figure_diagnostics(out: dict, k: int, mask3d, voxel_mm, axcodes, meta: dict,
         r = np.asarray(mot["r"])[k]
         ax.bar(np.arange(r.size), r, color=BLUE, alpha=0.8)
         ax.axhline(mot["null95"], color=ORANGE, ls="--", lw=1.2, label="null 95 % (largest of 6)")
+        lags = np.asarray(mot.get("lag_s", [[np.nan] * r.size] * (k + 1)))[k]
+        for xi, (rv, lg) in enumerate(zip(r, lags)):
+            if np.isfinite(lg):
+                ax.text(xi, rv + 0.02, f"{lg:+.1f} s", ha="center", fontsize=7, color=INK2)
+        ax.text(0.02, 0.97, "labels: lag of the signal after the parameter\n(folded to ± a quarter period)",
+                transform=ax.transAxes, fontsize=7.5, va="top", color=INK2)
         ax.set_xticks(np.arange(r.size), [n.replace("_", "\n") for n in mot["names"]])
         ax.legend(loc="upper right", fontsize=8)
         ax.set_ylim(0, 1)

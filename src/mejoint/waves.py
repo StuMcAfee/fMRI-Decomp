@@ -335,13 +335,14 @@ def run(c0, c1, R, mask3d, voxel_mm, te_ms, tr, cfg: dict, slice_offsets_s=None,
     # optional sensitivity (user decision 2026-11-05): remove the band-passed motion parameters (6 complex
     # analytic regressors = 12 real ones) from the band-passed channels; the noise calibration and the surrogate
     # null go through the same projection
-    Qm = None
+    Qm, mo_note = None, None
     if W.get("motion_orthogonal", False):
         if motion is None:
-            raise ValueError("motion_orthogonal needs the run's motion parameters (none found)")
-        Qm = motion_basis(motion, blk, tr, W)
-        project_out(a0, Qm)
-        project_out(a1, Qm)
+            mo_note = "requested but no motion parameters were found: motion NOT projected out"
+        else:
+            Qm = motion_basis(motion, blk, tr, W)
+            project_out(a0, Qm)
+            project_out(a1, Qm)
     ok1 = np.isfinite(a1).all(1)
     rows = [a0] if channels == "c0" else [a0, a1[ok1]]
     Z = np.concatenate(rows, axis=0)
@@ -396,7 +397,7 @@ def run(c0, c1, R, mask3d, voxel_mm, te_ms, tr, cfg: dict, slice_offsets_s=None,
            "var_frac_stacked": pc["var_frac"], "eig": pc["eig"], "phase_rotation": alpha, "block": blk,
            "n_volumes_used": int(Tg), "vb_thermal": vb_unit, "channels": channels,
            "slice_timing_corrected": bool(W.get("slice_timing_correction", True)) and slice_offsets_s is not None,
-           "motion_orthogonal": Qm is not None,
+           "motion_orthogonal": Qm is not None, "motion_orthogonal_note": mo_note,
            "voxel_scaling": W.get("voxel_scaling", "whitened")}
     # variance fraction in c0 alone
     c0_energy = np.sum(np.abs(a0) ** 2)
@@ -426,7 +427,7 @@ def run(c0, c1, R, mask3d, voxel_mm, te_ms, tr, cfg: dict, slice_offsets_s=None,
         out["vb_emp1"] = np.full((V, K), np.nan)
     out["_regions"] = regions or {}
     out["_f_long"] = None if f_long is None else np.asarray(f_long, float)
-    out["motion"] = motion_correlation(tc, motion, blk, tr, W, rng) if motion is not None else None
+    out["motion"] = motion_correlation(tc, motion, blk, tr, W, rng, fc=fc) if motion is not None else None
     # per-mode measures
     out["_offsets"] = offs if slice_offsets_s is not None else None
     out["measures"] = [mode_measures(out, k, mask3d, x_mm, voxel_mm, te_ms, R, refv, vb, cfg, rng) for k in range(K)]
@@ -619,20 +620,30 @@ def direct_relative_phase(a0, tc, chunk: int = 20000):
     return ph, plv
 
 
-def motion_correlation(tc, motion, blk, tr, W, rng, n_null: int = 200) -> dict:
+def motion_correlation(tc, motion, blk, tr, W, rng, n_null: int = 200, fc=None) -> dict:
     """|complex correlation| of each mode's time course with each of the 6 motion parameters, band-passed and
     made analytic the same way (no slice-timing shift: motion is one value per volume). Null: the same with
-    phase-randomized motion parameters, 95th percentile of the largest of the 6."""
+    phase-randomized motion parameters, 95th percentile of the largest of the 6.
+    Lag (user decision 2026-11-06): the angle of the complex correlation gives the delay of the mode's signal
+    in the reference voxels (the phase convention puts them at phase 0) after each motion parameter, in s at the
+    mode's f_c, + = signal later. A motion parameter's sign is arbitrary, so the angle is folded to +-90 degrees
+    (+-a quarter period); a delay and the same delay +- half a period with opposite sign are not distinguished."""
     M = np.asarray(motion, float)
     if M.ndim != 2 or M.shape[1] != 6 or M.shape[0] < blk["cache_index"].max() + 1:
         return None                                                     # rows must be the cached frames
     P = bandpass_analytic(apply_block(M.T.copy(), blk), tr, W["band_hz"], int(W.get("filter_order", 4)))   # (6, Tg)
-    def corr(Pm):
-        num = np.abs(np.conj(Pm) @ tc)                                  # (6, K)
+    def ccorr(Pm):
+        num = np.conj(Pm) @ tc                                          # (6, K) complex
         den = np.sqrt(np.sum(np.abs(Pm) ** 2, 1))[:, None] * np.sqrt(np.sum(np.abs(tc) ** 2, 0))[None, :]
         with np.errstate(divide="ignore", invalid="ignore"):
             return np.where(den > 0, num / den, 0.0)
-    r = corr(P)
+    corr = lambda Pm: np.abs(ccorr(Pm))
+    cc = ccorr(P)
+    r = np.abs(cc)
+    ang = np.angle(cc)
+    folded = np.angle(np.exp(1j * ang) * np.where(np.abs(ang) > np.pi / 2, -1.0, 1.0))
+    fcs = np.asarray(fc, float) if fc is not None else np.full(tc.shape[1], np.nan)
+    lag = -folded / (2 * np.pi * fcs[None, :])                          # (6, K) s
     tops = []
     Mb = apply_block(M.T.copy(), blk)
     for _ in range(int(n_null)):
@@ -640,7 +651,7 @@ def motion_correlation(tc, motion, blk, tr, W, rng, n_null: int = 200) -> dict:
         tops.append(corr(Ps).max(0))
     tops = np.concatenate(tops)
     return {"r": r.T.tolist(), "r_max": r.max(0).tolist(), "null95": float(np.quantile(tops, 0.95)),
-            "names": ["rot_x", "rot_y", "rot_z", "trans_x", "trans_y", "trans_z"]}
+            "lag_s": lag.T.tolist(), "names": ["rot_x", "rot_y", "rot_z", "trans_x", "trans_y", "trans_z"]}
 
 
 def s0_r2_timing(s, q, R, vb_k, fc, z, f_long=None, rng=None, n_draws: int = 0, vb1_k=None) -> dict:
@@ -1087,7 +1098,8 @@ def run_dir(frontend_dir, cfg: dict, out_dir, tissue_dir=None, figures: bool = T
             figs += [str(p1), str(p2)]
     summ = {"run_id": fs.get("run_id"), "source": fs.get("source"), "channels": out["channels"],
             "nuisance_projected": Q is not None, "slice_timing_corrected": out["slice_timing_corrected"],
-            "motion_orthogonal": out.get("motion_orthogonal", False), "axcodes": "".join(axcodes),
+            "motion_orthogonal": out.get("motion_orthogonal", False),
+            "motion_orthogonal_note": out.get("motion_orthogonal_note"), "axcodes": "".join(axcodes),
             "frontend_dir": str(fd),
             "slice_timing_source": st_src, "voxel_scaling": out["voxel_scaling"], "reference_voxels": ref_name,
             "n_volumes_used": out["n_volumes_used"], "n_interpolated": int(out["block"].get("n_interpolated", 0)),
@@ -1137,9 +1149,13 @@ def mode_rows(out: dict) -> list[dict]:
         mot = out.get("motion")
         if mot:
             rk = np.asarray(mot["r"])[k]
-            for name, v in zip(mot["names"], rk):
+            lk = np.asarray(mot.get("lag_s", [[np.nan] * 6] * (k + 1)))[k]
+            for name, v, lg in zip(mot["names"], rk, lk):
                 r[f"motion_r_{name}"] = round(float(v), 4)
-            r["motion_best_param"] = mot["names"][int(np.argmax(rk))]
+                r[f"motion_lag_s_{name}"] = round(float(lg), 2)
+            ib = int(np.argmax(rk))
+            r["motion_best_param"] = mot["names"][ib]
+            r["motion_best_lag_s"] = round(float(lk[ib]), 2)
         r["eigenvalue"] = round(float(out["eig"][k]), 4)
         if out.get("null"):
             r["eigenvalue_over_null"] = round(float(out["eig"][k] / out["null"]["threshold"]), 4)
@@ -1156,7 +1172,9 @@ def render(s: dict) -> str:
          f"slice-timing correction {'applied' if s['slice_timing_corrected'] else 'not applied'}"
          f"{' (' + s['slice_timing_source'] + ')' if s.get('slice_timing_source') else ''}; normalization "
          f"{s['voxel_scaling']}; reference voxels: {s['reference_voxels']}"
-         f"{'; band-passed motion parameters projected out (motion-orthogonal sensitivity)' if s.get('motion_orthogonal') else ''}.", ""]
+         + ("; band-passed motion parameters projected out (motion-orthogonal; the primary analysis)" if s.get("motion_orthogonal")
+            else "; band-passed motion NOT projected out (comparison)") + "."
+         + (f" Note: {s['motion_orthogonal_note']}." if s.get("motion_orthogonal_note") else ""), ""]
     if s.get("null"):
         L.append(f"Energy null: largest eigenvalue of {s['null']['n_surrogates']} phase-randomized surrogates, "
                  f"{s['null']['quantile']:.2f} quantile = {s['null']['threshold']:.4g} (family-wise).")
@@ -1177,11 +1195,12 @@ def render(s: dict) -> str:
               "(+ = later); in brackets the same for pure dR2* plus noise (the s and q estimates share noise, which by "
               "itself favours opposite signs). Noise for this check is empirical (each voxel's residual band power), "
               "not thermal.", "",
-          "| Mode | Motion r (max, parameter) | Explained fraction | PLV | dS0 vs dR2*: voxels (pure-dR2* null) | "
+          "| Mode | Motion r (max, parameter, lag of the signal) | Explained fraction | PLV | dS0 vs dR2*: voxels (pure-dR2* null) | "
           "sign-opposed (null) | timing s | Direction (towards later) |", "|---|---|---|---|---|---|---|---|"]
     for r in s["modes"]:
         n0 = r.get("s0r2_null_n_expected")
-        L.append(f"| {r['mode']} | {f(r.get('motion_r_max'))} {r.get('motion_best_param', '')} | "
+        L.append(f"| {r['mode']} | {f(r.get('motion_r_max'))} {r.get('motion_best_param', '')}"
+                 f"{(', lag ' + f(r.get('motion_best_lag_s'), 1) + ' s') if r.get('motion_best_param') else ''} | "
                  f"{f(r.get('explained_fraction_median_ref'), 3)} | "
                  f"{f(r.get('plv_median_ref'))} | {int(r['s0r2_n_voxels']) if r.get('s0r2_n_voxels') is not None else ''} "
                  f"({f(n0, 1)}) | {f(r.get('s0r2_fraction_sign_opposed'))} ({f(r.get('s0r2_null_fraction_opposed'))}) | "
