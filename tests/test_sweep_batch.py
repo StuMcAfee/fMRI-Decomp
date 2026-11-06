@@ -38,3 +38,23 @@ def test_sweep_summary_tables_and_figure(tmp_path):
     assert (out / "sweep_batch_eta.png").exists()
     rows = json.loads((out / "sweep_batch.json").read_text())["runs"]
     assert len(rows) == 4 and np.isclose(rows[0]["fd_abs_corr_max"], 0.3)
+
+
+def test_sweep_summary_strength_and_recheck_columns(tmp_path):
+    """Check 1 (eta vs component strength) and check 2 (eta_recheck.json) appear in the summary."""
+    root = tmp_path / "outputs" / "phase5"
+    d = root / "sub-1_acq-1_ser-5" / "phase4_sweep_mc" / "k50"
+    d.mkdir(parents=True)
+    cs = [{**comp(j, "mixed", 0.6 - 0.1 * j), "energy_single": 10.0 * j, "energy_null_threshold": 5.0} for j in range(1, 7)]
+    (d / "components.json").write_text(json.dumps({"k": 50, "components": cs, "explained_variance": 0.3,
+                                                   "stability_median_of_components": 0.99,
+                                                   "label_counts": {"mixed": 6}}))
+    (d.parent / "sweep.json").write_text(json.dumps({"rows": []}))
+    (d / "eta_recheck.json").write_text(json.dumps({
+        "noise_level_c0": 1.1, "noise_level_c1": 1.9, "colour_factor_c0": 1.3, "colour_factor_c1": 2.5,
+        "components": [{"component": j, "eta_white_empirical": 0.2, "eta_empirical": 0.05} for j in range(1, 7)]}))
+    out = tmp_path / "sum"
+    assert cli.main(["sweep-summary", "--root", str(root), "--out", str(out)]) == 0
+    md = (out / "sweep_batch.md").read_text()
+    assert "| sub-1_acq-1_ser-5 | -1.00 | 0.200 / 0.300 | 1.10 / 1.90 | 1.30 / 2.50 | 0.250 / 0.200 / 0.050 |" in md
+    assert (out / "sweep_batch_eta_strength.png").exists()
