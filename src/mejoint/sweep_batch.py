@@ -58,9 +58,12 @@ def collect(root, sweep_name: str = "phase4_sweep_mc") -> tuple[list[dict], list
             erf = kd.parent / "eta_recheck.json"
             er = json.loads(erf.read_text()) if erf.exists() else {}
             erc = {c["component"]: c for c in er.get("components", [])}
+            tcf = kd.parent / "te_check.json"
+            tk = {c["component"]: c for c in (json.loads(tcf.read_text()).get("components", []) if tcf.exists() else [])}
             k = int(s["k"])
             cs = s["components"]
             above = [c for c in cs if c.get("above_null")]
+            tka = [tk.get(c.get("component"), {}) for c in above]
             fd_key = next((key for key in ("corr_fd_filtered_mm", "corr_fd_mm") if any(key in c for c in cs)), None)
             fdr = [abs(_num(c.get(fd_key))) for c in cs] if fd_key else []
             judged = [c for c in above if c.get("pv_verdict") in ("consistent with partial volume", "not partial volume")]
@@ -85,6 +88,17 @@ def collect(root, sweep_name: str = "phase4_sweep_mc") -> tuple[list[dict], list
                          "colour_factor_c0": er.get("colour_factor_c0"), "colour_factor_c1": er.get("colour_factor_c1"),
                          "eta_white_empirical_median": _med(erc.get(c.get("component"), {}).get("eta_white_empirical") for c in above),
                          "eta_empirical_median": _med(erc.get(c.get("component"), {}).get("eta_empirical") for c in above),
+                         "te_fraction_opposed": _med(t.get("fraction_opposed") for t in tka),
+                         "te_null_fraction_opposed": _med(t.get("null_fraction_opposed") for t in tka),
+                         "te_n_sig_over_null": _med((_num(t.get("n_sig")) / max(_num(t.get("null_n_sig")), 1.0)) for t in tka if t),
+                         "te_ratio_ms": _med(t.get("ratio_ms_median") for t in tka),
+                         "te_curvature_fraction": _med(t.get("curvature_fraction") for t in tka),
+                         "te_curvature_z": _med(t.get("curvature_z") for t in tka),
+                         "te_curvature_vs_s0_corr": _med(t.get("curvature_vs_s0_corr") for t in tka),
+                         "te_te1_te4_opposite": _med(t.get("fraction_te1_te4_opposite") for t in tka),
+                         "te_zero_crossing_ms": _med(t.get("profile_zero_crossing_ms") for t in tka),
+                         "te_n_crossing": sum(t.get("profile_zero_crossing_ms") is not None for t in tka),
+                         "te_exchange_t2x_ms": _med(t.get("exchange_t2x_ms") for t in tka),
                          "strength_eta_empirical_spearman": _spearman(
                              [erc.get(c.get("component"), {}).get("eta_empirical") for c in above], [_strength(c) for c in above])})
             for c in cs:
@@ -94,7 +108,11 @@ def collect(root, sweep_name: str = "phase4_sweep_mc") -> tuple[list[dict], list
                               "pv_verdict": c.get("pv_verdict"), "stability": c.get("stability_median_abs_r"),
                               "fd_corr": c.get(fd_key) if fd_key else None, "energy_over_null": _strength(c),
                               "eta_white_empirical": erc.get(c.get("component"), {}).get("eta_white_empirical"),
-                              "eta_empirical": erc.get(c.get("component"), {}).get("eta_empirical")})
+                              "eta_empirical": erc.get(c.get("component"), {}).get("eta_empirical"),
+                              **{f"te_{key}": tk.get(c.get("component"), {}).get(key) for key in (
+                                  "n_sig", "null_n_sig", "fraction_opposed", "null_fraction_opposed", "ratio_ms_median",
+                                  "curvature_fraction", "curvature_z", "curvature_vs_s0_corr", "fraction_te1_te4_opposite",
+                                  "profile_zero_crossing_ms", "exchange_t2x_ms")}})
     return runs, comps, missing
 
 
@@ -138,6 +156,24 @@ def render(runs: list[dict], missing: list[str], k_main: int) -> str:
                  f"{f(r['colour_factor_c0'])} / {f(r['colour_factor_c1'])} | {f(r['eta_median'], 3)} / "
                  f"{f(r['eta_white_empirical_median'], 3)} / {f(r['eta_empirical_median'], 3)} | "
                  f"{f(r['strength_eta_empirical_spearman'])} |")
+    L += ["", f"## What is the dS0? (k = {k_main}; `mejoint te-check`; medians over the components above the null)", "",
+          "A: voxels with both dS0 and dR2* beyond noise, as a multiple of the pure-dR2* null count; the fraction where "
+          "S0 and R2* change together ('opposed'; null in brackets: the s / q estimates share noise); the ratio dS0/dR2* "
+          "(ms; for opposed voxels the TE where the signal change flips sign). B: curvature energy fraction (0 = straight "
+          "line in TE; a volume change of a compartment with another T2* curves, so does partial volume, about 500x less "
+          "in simulation), its z (support only: heavy-tailed), and its correlation with the S0-channel beta. C: in the "
+          "200 strongest voxels, the fraction where TE1 and TE4 change in opposite directions, the median profile's "
+          "zero crossing (components with one: n), and the exploratory T2* of a compartment whose volume change fits "
+          "the profile best.", "",
+          "| Run | dS0 voxels / null | opposed (null) | ratio ms | curvature fraction | curvature z | curv. vs S0 r | "
+          "TE1/TE4 opposite | zero crossing ms (n) | compartment T2* ms |", "|---|---|---|---|---|---|---|---|---|---|"]
+    for r in main:
+        L.append(f"| {r['run']} | {f(r['te_n_sig_over_null'], 0)} | {f(r['te_fraction_opposed'])} ({f(r['te_null_fraction_opposed'])}) | "
+                 f"{f(r['te_ratio_ms'], 1)} | {f(r['te_curvature_fraction'], 4)} | {f(r['te_curvature_z'], 0)} | "
+                 f"{f(r['te_curvature_vs_s0_corr'])} | {f(r['te_te1_te4_opposite'])} | {f(r['te_zero_crossing_ms'], 1)} "
+                 f"({r['te_n_crossing']}) | {f(r['te_exchange_t2x_ms'], 0)} |")
+    if main and not any(np.isfinite(_num(r["te_curvature_fraction"])) for r in main):
+        L += ["", "Not run yet: `mejoint te-check`, then this summary again."]
     if main and not any(np.isfinite(_num(r["eta_empirical_median"])) for r in main):
         L += ["", "Check 2 not run yet: `mejoint eta-recheck`, then this summary again."]
     if main:

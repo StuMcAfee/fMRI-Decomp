@@ -72,10 +72,11 @@ def beta_noise(x, M, max_lag: int, n_nuisance: int = 0, chunk: int = 10000, cali
         fac = calibrate(M, ac_med, max_lag, n_nuisance, np.random.default_rng(seed))
         vb = vb * fac[None, :]
         beta_noise.last_factor = fac
+        beta_noise.last_factor_rel_se = calibrate.last_rel_se
     return vb, vbw, g0
 
 
-def calibrate(M, ac_med, max_lag: int, n_nuisance: int, rng, n_sim: int = 2000) -> np.ndarray:
+def calibrate(M, ac_med, max_lag: int, n_nuisance: int, rng, n_sim: int = 5000) -> np.ndarray:
     """Correction factor per component (k,) for the bias of the residual-based estimate: the residual has no
     power in the directions of the regressors, so its autocovariance under-states the noise the betas carry.
     Noise with the channel's median autocovariance is simulated, its betas' actual variance compared with the
@@ -90,7 +91,11 @@ def calibrate(M, ac_med, max_lag: int, n_nuisance: int, rng, n_sim: int = 2000) 
     Mc = M - M.mean(0)
     beta = (Z - Z.mean(1, keepdims=True)) @ (Mc @ np.linalg.inv(Mc.T @ Mc))
     vb, _, _ = beta_noise(Z, M, max_lag, n_nuisance, calib=False)
-    return np.mean(beta ** 2, 0) / np.mean(vb, 0)
+    fac = np.mean(beta ** 2, 0) / np.mean(vb, 0)
+    # relative standard error of the factor (Monte Carlo): shared by every voxel, so tests that sum over voxels
+    # must add it to their noise (te_check)
+    calibrate.last_rel_se = np.std(beta ** 2, 0) / np.sqrt(n_sim) / np.mean(beta ** 2, 0)
+    return fac
 
 
 def recheck_k(frontend_dir, k_dir, max_lag: int = 40) -> dict:
