@@ -107,6 +107,12 @@ def main(argv=None) -> int:
     er.add_argument("--max-lag", type=int, default=40, help="autocovariance lags in frames (default 40 = 30 s)")
     er.add_argument("--config", help="config YAML (default: configs/default.yaml)")
 
+    tk = sub.add_parser("te-check", help="what is the dS0 in the sweep components: sign and ratio, curvature, echo profiles")
+    tk.add_argument("--phase5-root", default="outputs/phase5", help="folder with one subfolder per run (sweeps)")
+    tk.add_argument("--phase2-root", default="outputs/phase2", help="folder with the front ends (<run>/mc)")
+    tk.add_argument("--k", type=int, action="append", help="k (repeatable; default 50)")
+    tk.add_argument("--config", help="config YAML (default: configs/default.yaml)")
+
     ts = sub.add_parser("tissue", help="Phase 5 data-only tissue classes and partial-volume coupling from a front-end output")
     ts.add_argument("--frontend-dir", required=True)
     ts.add_argument("--out", required=True)
@@ -206,6 +212,10 @@ def main(argv=None) -> int:
         from . import eta_recheck
         rows = eta_recheck.run(args.phase5_root, args.phase2_root, ks=args.k, max_lag=args.max_lag)
         print(f"{len(rows)} sweep folders rechecked; eta_recheck.json written in each; run sweep-summary to tabulate")
+    elif args.cmd == "te-check":
+        from . import te_check
+        rows = te_check.run(args.phase5_root, args.phase2_root, ks=tuple(args.k or [50]))
+        print(f"{len(rows)} sweep folders checked; te_check.json and te_profiles.png in each; run sweep-summary to tabulate")
     elif args.cmd == "tissue":
         from . import tissue
         tissue.run_dir(args.frontend_dir, cfg, args.out)
