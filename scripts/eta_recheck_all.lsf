@@ -1,0 +1,16 @@
+#!/bin/bash
+# eta with empirical noise for every joint-ICA sweep folder, then the cross-participant sweep summary.
+# Submit from inside the repository:
+#   bsub -q standard -n 4 -R "rusage[mem=4000] span[hosts=1]" -env "all" -J eta_recheck -o logs/eta_recheck_%J.log \
+#        "bash scripts/eta_recheck_all.lsf <summary folder name, e.g. e67f906>"
+set -uo pipefail
+PY="${MEJOINT_PY:-$HOME/miniconda3_new/envs/mejoint/bin/python}"
+NAME="${1:-recheck}"
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}" PYTHONUNBUFFERED=1
+NT="${LSB_DJOB_NUMPROC:-4}"
+export OMP_NUM_THREADS="$NT" MKL_NUM_THREADS="$NT" OPENBLAS_NUM_THREADS="$NT"
+echo "== eta recheck | $(date) | git $(git rev-parse --short HEAD 2>/dev/null || echo '?')"
+"$PY" -m mejoint.cli eta-recheck --phase5-root outputs/phase5 --phase2-root outputs/phase2
+"$PY" -m mejoint.cli sweep-summary --root outputs/phase5 --out "outputs/sweep_batch/$NAME"
+echo "== done | $(date) | outputs/sweep_batch/$NAME/sweep_batch.md"

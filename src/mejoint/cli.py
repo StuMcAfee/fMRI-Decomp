@@ -100,6 +100,13 @@ def main(argv=None) -> int:
     swsum.add_argument("--k", type=int, default=50, help="common k for the per-component table (default 50)")
     swsum.add_argument("--config", help="config YAML (default: configs/default.yaml)")
 
+    er = sub.add_parser("eta-recheck", help="eta with empirical noise (level and autocorrelation) for every sweep folder")
+    er.add_argument("--phase5-root", default="outputs/phase5", help="folder with one subfolder per run (sweeps)")
+    er.add_argument("--phase2-root", default="outputs/phase2", help="folder with the front ends (<run>/mc)")
+    er.add_argument("--k", type=int, action="append", help="only these k (repeatable; default every k folder)")
+    er.add_argument("--max-lag", type=int, default=40, help="autocovariance lags in frames (default 40 = 30 s)")
+    er.add_argument("--config", help="config YAML (default: configs/default.yaml)")
+
     ts = sub.add_parser("tissue", help="Phase 5 data-only tissue classes and partial-volume coupling from a front-end output")
     ts.add_argument("--frontend-dir", required=True)
     ts.add_argument("--out", required=True)
@@ -195,6 +202,10 @@ def main(argv=None) -> int:
         from . import sweep_batch
         sweep_batch.run(args.root, args.out, k_main=args.k)
         print(open(Path(args.out) / "sweep_batch.md").read())
+    elif args.cmd == "eta-recheck":
+        from . import eta_recheck
+        rows = eta_recheck.run(args.phase5_root, args.phase2_root, ks=args.k, max_lag=args.max_lag)
+        print(f"{len(rows)} sweep folders rechecked; eta_recheck.json written in each; run sweep-summary to tabulate")
     elif args.cmd == "tissue":
         from . import tissue
         tissue.run_dir(args.frontend_dir, cfg, args.out)
