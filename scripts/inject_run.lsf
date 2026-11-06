@@ -1,0 +1,111 @@
+#!/bin/bash
+# Phase 5 injection calibration, one run and one amplitude level (submitted by scripts/submit_inject.sh):
+#   1. mejoint inject-make: known dR2*-only, dS0-only and mixed sources added to the RAW echoes (one of each type
+#      in cortical, deep and inferior positions; inject: in the config); placement from this run's own analysis
+#      mask and data-only tissue classes (the earlier pipeline outputs);
+#   2. mbme_tedana.py run on the injected echoes, same settings as the existing analysis (pairing, motion
+#      correction, tedana robustica), into <injection folder>/OUT;
+#   3. mejoint front end (motion-corrected echoes, motion regression), joint ICA at inject.k (same seeds as the
+#      original run's sweep), and inject-recover (recovery.md / .json / .png in the injection folder).
+# Arguments: <OUT_keep run folder> <mbme_tedana.py> <level> [seed=N] [config=file.yaml] [clean]
+#   clean: delete the injected raw echoes and the motion-corrected copies once the front end exists (saves ~4 GB;
+#   both can be remade from the seed).
+# Outputs: outputs/inject/<run>/<level>_s<seed>/
+set -uo pipefail
+RUN_DIR="${1:-}"; MBME="${2:-}"; LEVEL="${3:-}"; shift 3 2>/dev/null || true
+SEED=1; CONFIG=""; CLEAN=0
+for a in "$@"; do
+    case "$a" in
+        seed=*) SEED="${a#seed=}" ;;
+        config=*) CONFIG="${a#config=}" ;;
+        clean) CLEAN=1 ;;
+        *) echo "unknown argument: $a" >&2; exit 2 ;;
+    esac
+done
+TPY="${TEDANA_PY:-$HOME/miniconda3_new/envs/tedana/bin/python}"    # the env of the existing analysis (unchanged)
+PY="${MEJOINT_PY:-$HOME/miniconda3_new/envs/mejoint/bin/python}"
+fail() { echo "PREFLIGHT FAILED: $*" >&2; exit 2; }
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}" PYTHONUNBUFFERED=1
+[ -x "$PY" ] || fail "no python at $PY"
+[ -n "$RUN_DIR" ] && [ -f "$RUN_DIR/result.json" ] || fail "first argument must be the original mbme_tedana run folder (with result.json)"
+[ -f "$MBME" ] || fail "mbme_tedana.py not found: $MBME"
+[ -n "$LEVEL" ] || fail "third argument: amplitude level (strong or weak)"
+CFGARG=(); if [ -n "$CONFIG" ]; then [ -f "$CONFIG" ] || fail "no config file $CONFIG"; CFGARG=(--config "$CONFIG"); fi
+NAME="$(basename "$RUN_DIR")"
+FE0="outputs/phase2/$NAME/mc"
+TIS0="outputs/tissue/$NAME/mc"
+[ -f "$FE0/analysis_mask.nii.gz" ] || fail "no front end of the original run at $FE0 (run the pipeline for $NAME first)"
+K="$("$PY" -c "import sys; from mejoint import io; print(io.load_config(sys.argv[1] or None)['inject']['k'])" "$CONFIG")" \
+    || fail "cannot read inject.k from the config"
+IDIR="outputs/inject/$NAME/${LEVEL}_s${SEED}"
+NT="${LSB_DJOB_NUMPROC:-8}"
+threads() { export OMP_NUM_THREADS="$1" MKL_NUM_THREADS="$1" OPENBLAS_NUM_THREADS="$1"; }
+echo "== injection | $NAME | level $LEVEL | seed $SEED | k $K | $(date) | host $(hostname) | job ${LSB_JOBID:-interactive} | cores $NT | git $(git rev-parse --short HEAD 2>/dev/null || echo '?')"
+threads "$NT"
+
+# --- 1. injected raw echoes (skipped when they already exist with the same settings)
+TISARG=(); [ -f "$TIS0/classes.npy" ] && TISARG=(--tissue-dir "$TIS0")
+FE1="$IDIR/frontend_mc"
+if [ -f "$FE1/c0.npy" ] && [ -f "$IDIR/truth.json" ]; then
+    echo "injected front end exists: inject-make and mbme_tedana skipped"
+else
+    echo; echo "== [inject-make] start $(date)"
+    "$PY" -m mejoint.cli inject-make "${CFGARG[@]}" --run-dir "$RUN_DIR" --level "$LEVEL" --seed "$SEED" --out "$IDIR" \
+        --baseline-frontend "$FE0" "${TISARG[@]}" || fail "inject-make failed"
+fi
+E1="$(head -n 1 "$IDIR/list.txt")"
+
+# --- 2. mbme_tedana on the injected echoes (FSL 6 needed; bsub shells do not define `module`)
+if [ ! -f "$FE1/c0.npy" ]; then
+    for init in /usr/share/Modules/init/bash /etc/profile.d/modules.sh /cm/local/apps/environment-modules/*/init/bash; do
+        [ -f "$init" ] && { source "$init"; break; }
+    done
+    if command -v module >/dev/null 2>&1; then module load fsl/6 || echo "warning: module load fsl/6 failed"; fi
+    export FSLOUTPUTTYPE=NIFTI_GZ                                  # fsl/6 does not set it
+    echo; echo "== [mbme_tedana run] start $(date)"
+    "$TPY" "$MBME" run --list "$IDIR/list.txt" --index 1 --out "$PWD/$IDIR/OUT" --keep-intermediates \
+        --echo-times 16.20 31.22 46.24 61.26 --interp spline --ica-method robustica --n-robust-runs 30 \
+        --tedpca aic --tree tedana_orig --seed 42
+    echo "== [mbme_tedana run] exit $? $(date)"
+fi
+IRUN="$("$PY" - "$IDIR/OUT" "$E1" <<'PYEOF'
+import json, sys
+from pathlib import Path
+out, e1 = Path(sys.argv[1]), Path(sys.argv[2]).resolve()
+for f in sorted(out.glob("*/result.json")):
+    try:
+        r = json.loads(f.read_text())
+    except ValueError:
+        continue
+    if r.get("input_echo1") and Path(r["input_echo1"]).resolve() == e1:
+        print(f.parent)
+        break
+PYEOF
+)"
+[ -n "$IRUN" ] || fail "no run folder in $IDIR/OUT has input_echo1 = $E1 (see the mbme_tedana output above)"
+echo "injected run folder: $IRUN"
+
+# --- 3. front end, decomposition, recovery
+if [ ! -f "$FE1/c0.npy" ]; then
+    [ -f "$IRUN/work/echo-1_desc-mc_bold.nii.gz" ] || fail "$IRUN has no motion-corrected echoes (work/)"
+    echo; echo "== [front end] start $(date)"
+    "$PY" -m mejoint.cli frontend "${CFGARG[@]}" --run-dir "$IRUN" --source mc --no-mppca --out "$FE1" || fail "front end failed"
+fi
+KD="$IDIR/decompose/k$K"
+if [ ! -f "$KD/components.json" ]; then
+    threads 1                                                      # the ICA restarts parallelize with joblib
+    echo; echo "== [joint ICA k=$K] start $(date)"
+    "$PY" -m mejoint.cli decompose "${CFGARG[@]}" --frontend-dir "$FE1" --out "$IDIR/decompose" --k "$K" || fail "decomposition failed"
+    threads "$NT"
+fi
+BASEK="outputs/phase5/$NAME/phase4_sweep_mc/k$K"
+BARG=(); [ -f "$BASEK/time_courses.tsv" ] && BARG=(--baseline-k-dir "$BASEK")
+echo; echo "== [inject-recover] start $(date)"
+"$PY" -m mejoint.cli inject-recover "${CFGARG[@]}" --inject-dir "$IDIR" --frontend-dir "$FE1" --k-dir "$KD" \
+    --mbme-run "$IRUN" "${BARG[@]}" || fail "inject-recover failed"
+if [ "$CLEAN" = 1 ]; then
+    echo "clean: removing $IDIR/echoes and $IRUN/work"
+    rm -rf "$IDIR/echoes" "$IRUN/work"
+fi
+echo; echo "== done $(date): $PWD/$IDIR/recovery.md and recovery.png"

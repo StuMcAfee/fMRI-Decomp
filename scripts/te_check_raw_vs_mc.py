@@ -30,10 +30,11 @@ def measure(fe: Path, M: np.ndarray):
     ch = {n: np.load(fe / f"{n}.npy") for n in ("c0", "c1", "r0", "r1")}
     if ch["c0"].shape[1] != M.shape[0]:
         raise ValueError(f"{fe}: {ch['c0'].shape[1]} frames, the time courses have {M.shape[0]}")
-    p = int(np.load(fe / "nuisance_Q.npy").shape[1]) if (fe / "nuisance_Q.npy").exists() else 0
+    Qn = np.load(fe / "nuisance_Q.npy") if (fe / "nuisance_Q.npy").exists() else None
+    p = int(Qn.shape[1]) if Qn is not None else 0
     m0, m1 = te_check.ols_betas(ch["c0"], M), te_check.ols_betas(ch["c1"], M)
     out = te_check.check(ch, np.load(fe / "R.npy"), mapv("mu"), mapv("sigma"), fs["echo_noise_ratios_used"],
-                         mapv("usable") > 0.5, mapv("t2s_ms"), fs["te_ms"], M, m0, m1, n_nuisance=p)
+                         mapv("usable") > 0.5, mapv("t2s_ms"), fs["te_ms"], M, m0, m1, n_nuisance=p, Q=Qn)
     out["nuisance_rank"] = p
     return out, fs["te_ms"]
 

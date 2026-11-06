@@ -130,6 +130,27 @@ def main(argv=None) -> int:
     mq.add_argument("--out", required=True, help="output folder")
     mq.add_argument("--config", help="config YAML (default: configs/default.yaml)")
 
+    im = sub.add_parser("inject-make", help="Phase 5 injection: known sources added to the raw echoes of one run")
+    im.add_argument("--run-dir", required=True, help="mbme_tedana run folder of the original run (result.json, volumes_used.tsv)")
+    im.add_argument("--level", required=True, help="amplitude level (inject.levels in the config, e.g. strong, weak)")
+    im.add_argument("--seed", type=int, default=1, help="placement and time-course seed (default 1)")
+    im.add_argument("--out", required=True, help="injection folder (echoes/, truth.json, list.txt)")
+    im.add_argument("--baseline-frontend", required=True, help="front end of the original run (analysis_mask.nii.gz)")
+    im.add_argument("--tissue-dir", help="tissue classes of the original run (sources kept out of CSF and dropout)")
+    im.add_argument("--config", help="config YAML (default: configs/default.yaml)")
+    ir = sub.add_parser("inject-recover", help="Phase 5 injection: find the injected sources in a decomposition")
+    ir.add_argument("--inject-dir", required=True, help="injection folder (truth.json)")
+    ir.add_argument("--frontend-dir", required=True, help="front end of the injected echoes")
+    ir.add_argument("--k-dir", required=True, help="decomposition folder of the injected echoes (one k)")
+    ir.add_argument("--mbme-run", help="mbme_tedana run folder of the injected echoes (tedana comparison, pairing check)")
+    ir.add_argument("--baseline-k-dir", help="the same k of the original run (do the other components survive?)")
+    ir.add_argument("--no-te-check", action="store_true", help="skip the te-check profile and curvature")
+    ir.add_argument("--config", help="config YAML (default: configs/default.yaml)")
+    isu = sub.add_parser("inject-summary", help="Phase 5 injection: pool every recovery.json under a folder")
+    isu.add_argument("--root", default="outputs/inject", help="folder searched for recovery.json")
+    isu.add_argument("--out", help="output folder (default: --root)")
+    isu.add_argument("--config", help="config YAML (default: configs/default.yaml)")
+
     args = ap.parse_args(argv)
     if args.cmd == "inventory" and not (args.nifti_dir or args.run_dir):
         ap.error("give --run-dir (preferred) or --nifti-dir")
@@ -232,6 +253,21 @@ def main(argv=None) -> int:
         from . import mask
         rows = mask.qc_all(args.pipeline_out, cfg, args.out)
         return 1 if any("error" in r for r in rows) else 0
+    elif args.cmd == "inject-make":
+        from . import inject
+        tr = inject.make_dir(args.run_dir, cfg, args.level, args.seed, args.out, args.baseline_frontend, args.tissue_dir)
+        print(f"{len(tr['sources'])} sources; injected echo 1: {tr['echo1_injected']}; list for mbme_tedana: {args.out}/list.txt")
+    elif args.cmd == "inject-recover":
+        from . import inject
+        inject.recover_dir(args.inject_dir, args.frontend_dir, args.k_dir, mbme_run=args.mbme_run,
+                           baseline_k_dir=args.baseline_k_dir, te_check=not args.no_te_check)
+        print(open(f"{args.inject_dir}/recovery.md").read())
+    elif args.cmd == "inject-summary":
+        from pathlib import Path
+
+        from . import inject
+        inject.summary(args.root, args.out)
+        print(open(Path(args.out or args.root) / "inject_summary.md").read())
     elif args.cmd == "inventory-summary":
         from . import inventory
         inventory.write_summary(args.out, cfg)
