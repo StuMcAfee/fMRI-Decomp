@@ -62,6 +62,7 @@ def main(argv=None) -> int:
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
     cm, cr = res["mc"]["components"], res["raw"]["components"]
+    fmt = lambda v, f=".3f": "n/a" if v is None or not np.isfinite(v) else format(v, f)
     g = lambda cs, key: np.array([np.nan if c[key] is None else c[key] for c in cs], float)
     keys = ("curvature_fraction", "fraction_te1_te4_opposite", "ratio_ms_median", "n_sig")
     med = {name: {key: float(np.nanmedian(g(res[name]["components"], key))) for key in keys} for name in res}
@@ -82,7 +83,7 @@ def main(argv=None) -> int:
         ax.plot(tt, cm[j]["profile_pct"], "o-", color="#2a78d6", label="motion-corrected")
         ax.plot(tt, cr[j]["profile_pct"], "s--", color="#eb6834", label="raw echoes")
         ax.axhline(0, color="#e4e3df")
-        ax.set_title(f"comp {j + 1}: curvature {cm[j]['curvature_fraction']:.3f} mc, {cr[j]['curvature_fraction']:.3f} raw",
+        ax.set_title(f"comp {j + 1}: curvature {fmt(cm[j]['curvature_fraction'])} mc, {fmt(cr[j]['curvature_fraction'])} raw",
                      fontsize=8.5, loc="left")
     axs[0, 0].legend(fontsize=7, frameon=False)
     fig.suptitle(f"{a.run}, k{a.k}: the same components' echo profiles (% change, dR2* > 0) in motion-corrected and raw echoes",
@@ -90,10 +91,10 @@ def main(argv=None) -> int:
     fig.tight_layout()
     fig.savefig(out / f"{a.run}_k{a.k}.png", dpi=110)
     plt.close(fig)
-    print(f"{a.run} k{a.k}: curvature fraction median mc {med['mc']['curvature_fraction']:.3f}, raw {med['raw']['curvature_fraction']:.3f} "
-          f"(paired raw/mc {paired:.2f}); TE1/TE4 opposite mc {med['mc']['fraction_te1_te4_opposite']:.2f}, raw "
+    print(f"{a.run} k{a.k}: curvature fraction median mc {fmt(med['mc']['curvature_fraction'])}, raw {fmt(med['raw']['curvature_fraction'])} "
+          f"(paired raw/mc {fmt(paired, '.2f')}); TE1/TE4 opposite mc {med['mc']['fraction_te1_te4_opposite']:.2f}, raw "
           f"{med['raw']['fraction_te1_te4_opposite']:.2f}; zero crossings mc {cross['mc']}, raw {cross['raw']}; "
-          f"ratio ms mc {med['mc']['ratio_ms_median']:.1f}, raw {med['raw']['ratio_ms_median']:.1f}; "
+          f"ratio ms mc {fmt(med['mc']['ratio_ms_median'], '.1f')}, raw {fmt(med['raw']['ratio_ms_median'], '.1f')}; "
           f"nuisance rank mc {res['mc']['nuisance_rank']}, raw {res['raw']['nuisance_rank']}", flush=True)
     return 0
 
