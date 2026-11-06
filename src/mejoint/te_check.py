@@ -81,8 +81,9 @@ def exchange_fit(prof, te_ms, t2t):
 
 
 def check(ch: dict, R2: np.ndarray, mu, sigma, ratios, use, t2s, te_ms, M, m0_cf, m1_cf, max_lag=40,
-          n_nuisance=0, z=3.0, n_top=200, n_draws=20, rng=None) -> dict:
-    """Arrays version. ch: {"c0", "c1", "r0", "r1"} (V, T); R2: the front end's (V, 2, 2) factors."""
+          n_nuisance=0, z=3.0, n_top=200, n_draws=20, rng=None, Q=None) -> dict:
+    """Arrays version. ch: {"c0", "c1", "r0", "r1"} (V, T); R2: the front end's (V, 2, 2) factors; Q: the
+    nuisance basis projected out of the channels (for the noise calibration; see eta_recheck.beta_noise)."""
     from .eta_recheck import beta_noise
     rng = np.random.default_rng(0) if rng is None else rng
     te = np.asarray(te_ms, float)
@@ -92,7 +93,7 @@ def check(ch: dict, R2: np.ndarray, mu, sigma, ratios, use, t2s, te_ms, M, m0_cf
     B, VB, SE = {}, {}, {}
     for name in ("c0", "c1", "r0", "r1"):
         B[name] = ols_betas(ch[name], M)
-        VB[name], _, _ = beta_noise(ch[name], M, max_lag, n_nuisance)
+        VB[name], _, _ = beta_noise(ch[name], M, max_lag, n_nuisance, Q=Q)
         SE[name] = getattr(beta_noise, "last_factor_rel_se", np.zeros(M.shape[1]))
     # recomputed basis (4-echo voxels), checked against the saved factors, curvature sign fixed
     idx = np.flatnonzero(four)
@@ -196,12 +197,13 @@ def check_dir(frontend_dir, k_dir, **kw) -> dict:
     mapv = lambda n: np.asarray(nib.load(str(fe / f"{n}.nii.gz")).dataobj, np.float64)[mask3d]
     fs = json.loads((fe / "summary.json").read_text())
     ch = {n: np.load(fe / f"{n}.npy") for n in ("c0", "c1", "r0", "r1")}
-    p = int(np.load(fe / "nuisance_Q.npy").shape[1]) if (fe / "nuisance_Q.npy").exists() else 0
+    Qn = np.load(fe / "nuisance_Q.npy") if (fe / "nuisance_Q.npy").exists() else None
+    p = int(Qn.shape[1]) if Qn is not None else 0
     tcs = np.genfromtxt(kd / "time_courses.tsv", delimiter="\t", names=True)
     M = np.column_stack([tcs[n] for n in tcs.dtype.names]).astype(np.float64)
     out = check(ch, np.load(fe / "R.npy"), mapv("mu"), mapv("sigma"), fs["echo_noise_ratios_used"], mapv("usable") > 0.5,
                 mapv("t2s_ms"), fs["te_ms"], M, np.load(kd / "m0_cf.npy").astype(np.float64),
-                np.load(kd / "m1_cf.npy").astype(np.float64), n_nuisance=p, **kw)
+                np.load(kd / "m1_cf.npy").astype(np.float64), n_nuisance=p, Q=Qn, **kw)
     from . import io
     io.write_json(kd / "te_check.json", out)
     figure(out, fs["te_ms"], kd / "te_profiles.png", kd)

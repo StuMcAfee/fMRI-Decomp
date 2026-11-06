@@ -38,10 +38,17 @@ def energies2(m0, m1, R, vb0, vb1) -> dict:
     return {"E_S0": e_s0, "E_R2": e_r2, "eta": eta}
 
 
-def beta_noise(x, M, max_lag: int, n_nuisance: int = 0, chunk: int = 10000, calib: bool = True, seed: int = 0):
+def beta_noise(x, M, max_lag: int, n_nuisance: int = 0, chunk: int = 10000, calib: bool = True, seed: int = 0, Q=None):
     """Per row of x (n, T): beta noise variance per component (n, k) from the residual autocovariance, the same
-    with the residual variance only (white), and the residual variance (lag 0, dof-corrected)."""
+    with the residual variance only (white), and the residual variance (lag 0, dof-corrected).
+    Q (T, p): the nuisance basis projected out of x (front end nuisance_Q.npy). The calibration's simulated noise
+    is projected with it too, so it carries the same spectral hole and the same dof loss as the data (without
+    this, the dof correction for the regressors was applied to unprojected simulated noise, and the factor came
+    out too small by about p / (T - k - 1): noise under-estimated, e.g. 3 % at T = 800, k = 50, p = 25;
+    fixed 2026-11-06)."""
     T, k = M.shape
+    if Q is not None:
+        n_nuisance = int(Q.shape[1])
     Mc = M - M.mean(0)
     P = Mc @ np.linalg.inv(Mc.T @ Mc)                                  # (T, k): beta = x_demeaned @ P
     L = int(min(max_lag, T - 1))
@@ -69,25 +76,34 @@ def beta_noise(x, M, max_lag: int, n_nuisance: int = 0, chunk: int = 10000, cali
     if calib and acs:
         ac_all = np.concatenate(acs)
         ac_med = np.median(ac_all / ac_all[:, :1], axis=0) * np.median(ac_all[:, 0])
-        fac = calibrate(M, ac_med, max_lag, n_nuisance, np.random.default_rng(seed))
+        fac = calibrate(M, ac_med, max_lag, n_nuisance, np.random.default_rng(seed), Q=Q)
         vb = vb * fac[None, :]
         beta_noise.last_factor = fac
         beta_noise.last_factor_rel_se = calibrate.last_rel_se
     return vb, vbw, g0
 
 
-def calibrate(M, ac_med, max_lag: int, n_nuisance: int, rng, n_sim: int = 5000) -> np.ndarray:
+def calibrate(M, ac_med, max_lag: int, n_nuisance: int, rng, n_sim: int = 5000, Q=None) -> np.ndarray:
     """Correction factor per component (k,) for the bias of the residual-based estimate: the residual has no
     power in the directions of the regressors, so its autocovariance under-states the noise the betas carry.
-    Noise with the channel's median autocovariance is simulated, its betas' actual variance compared with the
-    estimate, and the ratio returned (1 = no bias)."""
+    Noise with the channel's median autocovariance is simulated, projected like the data (Q, the nuisance
+    basis; without Q and with n_nuisance > 0, a random basis orthogonal to M of that size stands in), its betas'
+    actual variance compared with the estimate, and the ratio returned (1 = no bias)."""
     T, k = M.shape
+    if Q is None and n_nuisance > 0:
+        Mc0 = M - M.mean(0)
+        G = rng.standard_normal((T, int(n_nuisance)))
+        G -= G.mean(0)
+        G -= Mc0 @ np.linalg.lstsq(Mc0, G, rcond=None)[0]
+        Q = np.linalg.qr(G)[0]
     L = ac_med.size - 1
     f = np.fft.rfftfreq(T)
     w = 0.5 * (1 + np.cos(np.pi * np.arange(L + 1) / (L + 1)))           # Tukey taper: a valid spectrum
     S = ac_med[0] + 2 * np.sum((ac_med[1:] * w[1:])[:, None] * np.cos(2 * np.pi * np.arange(1, L + 1)[:, None] * f[None, :]), 0)
     S = np.maximum(S, 1e-6 * ac_med[0])
     Z = np.fft.irfft(np.fft.rfft(rng.standard_normal((n_sim, T)), axis=1) * np.sqrt(S)[None, :], n=T, axis=1)
+    if Q is not None:
+        Z = Z - (Z @ Q) @ Q.T                                          # the same projection as the data
     Mc = M - M.mean(0)
     beta = (Z - Z.mean(1, keepdims=True)) @ (Mc @ np.linalg.inv(Mc.T @ Mc))
     vb, _, _ = beta_noise(Z, M, max_lag, n_nuisance, calib=False)
@@ -105,9 +121,10 @@ def recheck_k(frontend_dir, k_dir, max_lag: int = 40) -> dict:
     tcs = np.genfromtxt(kd / "time_courses.tsv", delimiter="\t", names=True)
     M = np.column_stack([tcs[n] for n in tcs.dtype.names]).astype(np.float64)
     m0, m1, vb_cf = (np.load(kd / f"{n}.npy").astype(np.float64) for n in ("m0_cf", "m1_cf", "vb_cf"))
-    vb0, vb0w, g00 = beta_noise(c0, M, max_lag, p)
+    Qn = np.load(fe / "nuisance_Q.npy") if p else None
+    vb0, vb0w, g00 = beta_noise(c0, M, max_lag, p, Q=Qn)
     f0 = getattr(beta_noise, "last_factor", np.ones(M.shape[1]))
-    vb1, vb1w, g01 = beta_noise(c1, M, max_lag, p)
+    vb1, vb1w, g01 = beta_noise(c1, M, max_lag, p, Q=Qn)
     f1 = getattr(beta_noise, "last_factor", np.ones(M.shape[1]))
     rep = energies2(m0, m1, R, vb_cf, vb_cf)
     white = energies2(m0, m1, R, vb0w, vb1w)
