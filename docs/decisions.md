@@ -940,3 +940,21 @@ User's design: stage 1 = the current joint decomposition, unchanged (thermal whi
 ### 2026-11-06: two-stage work moves to its own branch (user decision)
 
 User: commit the decomposition work and start a new branch that is not waves. Everything was already committed and pushed on claude/waves (9f30dc5). New branch **claude/two-stage** from that commit, so it carries all work to date: Phases 0-5, the wave extension (unchanged from here on), the batch pipeline, the eta and dS0 checks, and the step-1 diagnostic. Two-stage work happens only on claude/two-stage; claude/waves stays as it is; claude/beautiful-hamilton-141ubf is the original project branch (Phases 0-5). The return point is the branch **claude/pre-two-stage** at 69428fd, the state before the two-stage work (tags cannot be pushed from this session or from the cluster, so a branch that is never committed to stands in for the tag). CLAUDE.md section 2 still names the single project branch; updating it waits for the user's approval with the other CLAUDE.md edits.
+
+### 2026-11-06: step 1 result on P04 (motion-regressed front end), review pending
+
+tedana: 19 components (13 accepted, 6 tagged Likely BOLD); matched over 30,637 voxels in both masks.
+
+| k | Variant | Variance in k dims | Spatial: median matched r, >= 0.7 | Temporal: median, >= 0.7 | tedana accepted / Likely BOLD reproduced |
+|---|---|---|---|---|---|
+| 28 (AIC) | (a) [c0 | c1], thermal | 39.8 % | 0.59, 4 of 19 | 0.72, 10 | 3 / 13, 1 / 6 |
+| 28 | (b) c0, thermal | 49.4 % | 0.55, 5 | 0.66, 6 | 4 / 13, 1 / 6 |
+| 28 | (c) c0, z-scored | 31.7 % | 0.63, 7 | 0.70, 10 | 4 / 13, 3 / 6 |
+| 25 | (a) | 38.9 % | 0.59, 4 | 0.63, 9 | 3 / 13, 1 / 6 |
+| 25 | (b) | 48.4 % | 0.58, 4 | 0.67, 7 | 3 / 13, 1 / 6 |
+| 25 | (c) | 30.8 % | 0.61, 7 | 0.70, 9 | 5 / 13, 2 / 6 |
+
+- All variants reproduce tedana only in part (about half of its components by time course at |r| >= 0.7, a quarter to a third by map). (c) is best by a small margin; weighting and k change little.
+- The montages of (c) are dominated by edge rings, the frontal pole, lateral edges, an inferior occipital cluster and posterior-fossa speckle; bilateral grey-matter networks are not evident by eye. The display is limited (5 axial slices, unsmoothed maps thresholded at |z| > 2, array orientation).
+- Not like-for-like yet: our variants used the 24-term motion-regressed front end, tedana did not regress; masks differ (ours includes deep brain and cerebellum); k differs (tedana 19); tedana's maps are z statistics, ours betas (temporal matching is free of the map-type difference).
+- The matching tests agreement with tedana, not "conventional networks" (tedana's own components were not inspected for networks; no network templates in native space yet).
