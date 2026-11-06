@@ -1,0 +1,16 @@
+#!/bin/bash
+# Is the echo-1 effect created by motion correction? Every run with both front ends; then a summary table.
+# Submit from inside the repository:
+#   bsub -q standard -n 4 -R "rusage[mem=4000] span[hosts=1]" -env "all" -J raw_vs_mc -o logs/raw_vs_mc_%J.log \
+#        "bash scripts/te_check_raw_vs_mc.lsf"
+set -uo pipefail
+PY="${MEJOINT_PY:-$HOME/miniconda3_new/envs/mejoint/bin/python}"
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}" PYTHONUNBUFFERED=1
+NT="${LSB_DJOB_NUMPROC:-4}"; export OMP_NUM_THREADS="$NT" MKL_NUM_THREADS="$NT" OPENBLAS_NUM_THREADS="$NT"
+echo "== raw vs motion-corrected echo profiles | $(date) | git $(git rev-parse --short HEAD 2>/dev/null || echo '?')"
+for d in outputs/phase5/sub-*/; do
+    run="$(basename "$d")"
+    "$PY" scripts/te_check_raw_vs_mc.py "$run" --k 50 || echo "$run: failed or skipped"
+done
+echo "== done | $(date) | outputs/te_check_raw_vs_mc/<run>_k50.json and .png"
