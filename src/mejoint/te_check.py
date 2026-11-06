@@ -229,7 +229,11 @@ def figure(out, te_ms, path, k_dir=None) -> None:
         ax.set_xlabel("TE (ms)")
     for ax in axs[:, 0]:
         ax.set_ylabel("signal change, % (dR2* > 0)")
-    fig.suptitle("Echo profiles of the strongest components (median of the 200 strongest voxels each)", x=0.01,
+    where = ""
+    if k_dir is not None:
+        kd = Path(k_dir)
+        where = f"{kd.parent.parent.name}, {kd.name}: "
+    fig.suptitle(f"{where}echo profiles of the strongest components (median of the 200 strongest voxels each)", x=0.01,
                  ha="left", fontsize=10)
     fig.tight_layout()
     fig.savefig(path, dpi=110)
