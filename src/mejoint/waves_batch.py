@@ -13,7 +13,10 @@ from pathlib import Path
 
 import numpy as np
 
-VARIANTS = ("noreg", "reg", "noreg_motion_orth")
+VARIANTS = ("noreg_motion_orth", "noreg", "reg")     # primary first (user decision 2026-11-06)
+TITLES = {"noreg_motion_orth": "primary: no regression, band-passed motion projected out",
+          "noreg": "comparison: no regression, motion not projected out",
+          "reg": "comparison: 24-term motion regression"}
 NAMES = ("rot_x", "rot_y", "rot_z", "trans_x", "trans_y", "trans_z")
 
 
@@ -33,7 +36,7 @@ def collect(root, commit: str, max_modes: int = 3) -> tuple[list[dict], list[str
     rows, missing = [], []
     for run in sorted(p for p in Path(root).iterdir() if p.is_dir()):
         base = run / commit
-        if not (base / "noreg" / "waves.json").exists():
+        if not any((base / v / "waves.json").exists() for v in VARIANTS):
             missing.append(run.name)
             continue
         for var in VARIANTS:
@@ -55,8 +58,9 @@ def collect(root, commit: str, max_modes: int = 3) -> tuple[list[dict], list[str
                        "eig_over_null": r.get("eigenvalue_over_null"), "f_c_hz": r.get("f_c_hz"),
                        "var_pct": round(100 * float(r.get("var_frac_stacked", np.nan)), 2),
                        "motion_r_max": r.get("motion_r_max"), "motion_best_param": r.get("motion_best_param"),
-                       "motion_r_null95": r.get("motion_r_null95"),
+                       "motion_r_null95": r.get("motion_r_null95"), "motion_best_lag_s": r.get("motion_best_lag_s"),
                        **{f"r_{n}": r.get(f"motion_r_{n}") for n in NAMES},
+                       **{f"lag_s_{n}": r.get(f"motion_lag_s_{n}") for n in NAMES},
                        "eta": r.get("eta"), "s0r2_n": r.get("s0r2_n_voxels"), "s0r2_null_n": r.get("s0r2_null_n_expected"),
                        "s0r2_opposed": r.get("s0r2_fraction_sign_opposed"),
                        "opposed_per_present_edge": (g.get("edge") or {}).get("opposed_per_present"),
@@ -97,19 +101,24 @@ def render(rows: list[dict], missing: list[str], commit: str) -> str:
         for r in coupled:
             best[r["motion_best_param"]] = best.get(r["motion_best_param"], 0) + 1
         ty = np.array([_num(r["r_trans_y"]) for r in m1])
-        L += ["", f"## {var}: mode 1", "",
+        lags = np.array([_num(r.get("motion_best_lag_s")) for r in coupled])
+        L += ["", f"## {var} ({TITLES[var]}): mode 1", "",
               f"- above the energy null: {len(above)} of {len(m1)} runs;",
               f"- motion-coupled (largest motion r above its null): {len(coupled)} of {len(m1)}; strongest parameter: "
               + (", ".join(f"{k} {v}" for k, v in sorted(best.items(), key=lambda kv: -kv[1])) or "none") + ";",
-              f"- r with trans_y: median {np.nanmedian(ty):.2f}, range {np.nanmin(ty):.2f}-{np.nanmax(ty):.2f}." if np.isfinite(ty).any()
-              else "- r with trans_y: not available.", "",
-              "| Run | Eig / null | Var % | f_c Hz | Motion r max (parameter) | null95 | r trans_y | Mean FD mm | eta | dS0 "
-              "voxels (null) | opposed / present: edge, interior | Direction |",
-              "|---|---|---|---|---|---|---|---|---|---|---|---|"]
+              f"- r with trans_y: median {np.nanmedian(ty):.2f}, range {np.nanmin(ty):.2f}-{np.nanmax(ty):.2f};" if np.isfinite(ty).any()
+              else "- r with trans_y: not available;",
+              (f"- lag of the signal after its strongest motion parameter, coupled runs: median {np.nanmedian(lags):+.1f} s, "
+               f"range {np.nanmin(lags):+.1f} to {np.nanmax(lags):+.1f} s (folded to +- a quarter period; + = signal later)."
+               if np.isfinite(lags).any() else "- lag: no coupled runs."), "",
+              "| Run | Eig / null | Var % | f_c Hz | Motion r max (parameter) | lag s | null95 | r trans_y | Mean FD mm | eta | "
+              "dS0 voxels (null) | opposed / present: edge, interior | Direction |",
+              "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
         f = lambda v, n=2: "" if not np.isfinite(_num(v)) else f"{_num(v):.{n}f}"
         for r in sorted(m1, key=lambda r: r["run"]):
             L.append(f"| {r['run']} | {f(r['eig_over_null'])} | {f(r['var_pct'], 1)} | {f(r['f_c_hz'], 3)} | "
-                     f"{f(r['motion_r_max'])} ({r['motion_best_param']}) | {f(r['motion_r_null95'])} | {f(r['r_trans_y'])} | "
+                     f"{f(r['motion_r_max'])} ({r['motion_best_param']}) | {f(r.get('motion_best_lag_s'), 1)} | "
+                     f"{f(r['motion_r_null95'])} | {f(r['r_trans_y'])} | "
                      f"{f(r['fd_mean_mm'], 3)} | {f(r['eta'], 3)} | {f(r['s0r2_n'], 0)} ({f(r['s0r2_null_n'], 1)}) | "
                      f"{f(r['opposed_per_present_edge'])}, {f(r['opposed_per_present_interior'])} | {r['direction']} |")
     L += ["", "Reading: a motion-coupled leading mode in many runs means the coupling is not unique to one "
@@ -128,7 +137,7 @@ def figure(rows: list[dict], path, variant: str = "noreg") -> None:
     R = np.array([[_num(r[f"r_{n}"]) for n in NAMES] for r in m1])
     null = np.array([_num(r["motion_r_null95"]) for r in m1])
     fd = np.array([_num(r["fd_mean_mm"]) for r in m1])
-    fig, axs = plt.subplots(1, 2, figsize=(13, 0.35 * len(m1) + 2.5), gridspec_kw={"width_ratios": [1.4, 1]})
+    fig, axs = plt.subplots(1, 3, figsize=(18, 0.35 * len(m1) + 2.5), gridspec_kw={"width_ratios": [1.4, 1, 1]})
     im = axs[0].imshow(R, cmap="viridis", vmin=0, vmax=1, aspect="auto")
     for i in range(len(m1)):
         for j in range(len(NAMES)):
@@ -147,6 +156,19 @@ def figure(rows: list[dict], path, variant: str = "noreg") -> None:
     axs[1].set_xlabel("mean framewise displacement (mm)")
     axs[1].set_ylabel("largest motion |r| of mode 1")
     axs[1].set_title("Coupling vs head motion (orange = above null)", loc="left", fontsize=10)
+    lag = np.array([_num(r.get("motion_best_lag_s")) for r in m1])
+    fc = np.array([_num(r.get("f_c_hz")) for r in m1])
+    y = np.arange(len(m1))
+    above = rmax > null
+    axs[2].errorbar(np.zeros(len(m1)), y, xerr=np.where(np.isfinite(fc), 0.25 / fc, np.nan), fmt="none", ecolor="#e4e3df",
+                    elinewidth=6, label="folding range (+- quarter period)")
+    axs[2].scatter(lag, y, c=["#eb6834" if a else "#2a78d6" for a in above], zorder=3)
+    axs[2].axvline(0, color="#52514e", lw=0.8)
+    axs[2].set_yticks(y, [r["run"].split("_")[0] for r in m1])
+    axs[2].invert_yaxis()
+    axs[2].set_xlabel("lag of the mode signal after its strongest motion parameter (s)")
+    axs[2].set_title("Coupling lag (orange = coupled)", loc="left", fontsize=10)
+    axs[2].legend(loc="lower right", fontsize=7, frameon=False)
     fig.tight_layout()
     fig.savefig(path, dpi=120)
     plt.close(fig)
@@ -161,6 +183,6 @@ def run(root, commit: str, out_dir) -> dict:
         cols = list(dict.fromkeys(k for r in rows for k in r))
         io.write_tsv(out_dir / "waves_batch.tsv", {c: [r.get(c, "") for r in rows] for c in cols})
     io.write_text(out_dir / "waves_batch.md", render(rows, missing, commit))
-    figure(rows, out_dir / "waves_batch_motion.png")
+    figure(rows, out_dir / "waves_batch_motion.png", variant="noreg")      # coupling is measured without the projection
     io.write_json(out_dir / "waves_batch.json", {"commit": commit, "rows": rows, "missing": missing})
     return {"n_rows": len(rows), "missing": missing}

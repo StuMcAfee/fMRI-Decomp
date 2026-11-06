@@ -112,7 +112,7 @@ voxel's CSF fraction.*
 
 | Stage | What it does | Command (repository root) |
 |---|---|---|
-| Whole pipeline, all participants | mbme_tedana (`--keep-intermediates`), front ends, tissue, rank (MAPCA), waves, joint-ICA sweep; one LSF job per participant | `bash scripts/submit_pipeline_batch.sh <echo-1 list>` |
+| Whole pipeline, all participants | mbme_tedana (`--keep-intermediates`), front ends, tissue, rank (MAPCA), waves (band-passed motion projected out; comparisons without), joint-ICA sweep; one LSF job per participant; cross-participant summaries `mejoint waves-summary`, `mejoint sweep-summary` | `bash scripts/submit_pipeline_batch.sh <echo-1 list>` |
 | Audit | inventories echoes, sidecars and pipeline outputs | `scripts/phase0_one_subject.lsf`, `scripts/phase0_all_subjects.lsf` |
 | Mask | brain mask from the echoes themselves (holes filled; cerebellum and orbitofrontal cortex kept) | inside the front end; QC: `mejoint mask-qc` |
 | Front end | mean decay, T2\*, thermal σ, echo usability, whitening into c0, c1, r | `scripts/phase2_frontend_subject.lsf "<run>" mc auto reg` |

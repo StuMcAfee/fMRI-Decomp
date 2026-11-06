@@ -94,6 +94,12 @@ def main(argv=None) -> int:
     wsum.add_argument("--out", required=True, help="output folder")
     wsum.add_argument("--config", help="config YAML (default: configs/default.yaml)")
 
+    swsum = sub.add_parser("sweep-summary", help="cross-participant summary of the joint-ICA sweep (outputs/phase5/<run>/phase4_sweep_mc/)")
+    swsum.add_argument("--root", default="outputs/phase5", help="folder with one subfolder per run")
+    swsum.add_argument("--out", required=True, help="output folder")
+    swsum.add_argument("--k", type=int, default=50, help="common k for the per-component table (default 50)")
+    swsum.add_argument("--config", help="config YAML (default: configs/default.yaml)")
+
     ts = sub.add_parser("tissue", help="Phase 5 data-only tissue classes and partial-volume coupling from a front-end output")
     ts.add_argument("--frontend-dir", required=True)
     ts.add_argument("--out", required=True)
@@ -183,6 +189,12 @@ def main(argv=None) -> int:
         from . import waves_batch
         waves_batch.run(args.root, args.commit, args.out)
         print(open(Path(args.out) / "waves_batch.md").read())
+    elif args.cmd == "sweep-summary":
+        from pathlib import Path
+
+        from . import sweep_batch
+        sweep_batch.run(args.root, args.out, k_main=args.k)
+        print(open(Path(args.out) / "sweep_batch.md").read())
     elif args.cmd == "tissue":
         from . import tissue
         tissue.run_dir(args.frontend_dir, cfg, args.out)
@@ -216,8 +228,9 @@ def _wave_args(p, standalone: bool) -> None:
     p.add_argument(f"--{pre}channels", choices=["both", "c0"], dest="w_channels")
     p.add_argument(f"--{pre}bootstrap", type=int, dest="w_bootstrap")
     p.add_argument(f"--{pre}surrogates", type=int, dest="w_surrogates")
-    p.add_argument(f"--{pre}motion-orthogonal", action="store_true", dest="w_motion_orth",
-                   help="remove the band-passed motion parameters from the band-passed channels first (sensitivity)")
+    p.add_argument(f"--{pre}motion-orthogonal", action=argparse.BooleanOptionalAction, default=None, dest="w_motion_orth",
+                   help="remove the band-passed motion parameters from the band-passed channels first (default: "
+                        "waves.motion_orthogonal, true; --no-...motion-orthogonal for the comparison run)")
     p.add_argument("--no-slice-timing", action="store_true", dest="w_no_stc",
                    help="wave stage without slice-timing correction (a sensitivity check; the artifact is inferior-superior)")
 
@@ -229,8 +242,8 @@ def _wave_cfg(cfg: dict, args) -> dict:
     over = {k: (list(v) if isinstance(v, tuple) else v) for k, v in over.items() if v is not None}
     if args.w_no_stc:
         over["slice_timing_correction"] = False
-    if args.w_motion_orth:
-        over["motion_orthogonal"] = True
+    if args.w_motion_orth is not None:
+        over["motion_orthogonal"] = bool(args.w_motion_orth)
     if "plot_modes" in over:
         over.setdefault("bootstrap_modes", over["plot_modes"])
     return io.merge(cfg, {"waves": over})

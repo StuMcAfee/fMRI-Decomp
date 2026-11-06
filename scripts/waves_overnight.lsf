@@ -3,9 +3,10 @@
 # motion-corrected echoes of an mbme_tedana run made with --keep-intermediates:
 #   1. front ends on mc, with and without motion regression (built only if missing);
 #   2. data-only tissue classes (built only if missing);
-#   3. waves, primary: no-regression channels (waves.channels_primary), with figures and full bootstrap/null;
-#   4. waves, sensitivity: motion-regressed channels; band-passed motion projected out (motion-orthogonal);
-#      no slice-timing correction (shows the artifact); c0 only with per-voxel z-scoring (tedana-like path);
+#   3. waves, primary: no-regression channels with the band-passed motion projected out (user decision
+#      2026-11-06), with figures and full bootstrap/null;
+#   4. waves, comparisons: the same without the projection; motion-regressed channels; and (all / waves modes)
+#      no slice-timing correction (shows the artifact) and c0 only, z-scored (the tedana-like path);
 #   5. the Phase 4 joint-ICA sweep with tissue classes (eta by class, the partial-volume diagnostic, corrected norms).
 # Each step logs its start and end; a failed step is reported and the next one still runs.
 #
@@ -13,7 +14,7 @@
 #   bsub -q standard -n 8 -R "rusage[mem=2000] span[hosts=1]" -env "all" -J waves47159 -o waves_%J.log \
 #        "bash scripts/waves_overnight.lsf '<OUT_keep run folder>' [all|waves] [config.yaml]"
 # Second argument: all (default) = every step; waves = skip the joint-ICA sweep (step 5); batch = steps 1-3 plus
-# the motion-regressed and motion-orthogonal runs (scripts/waves_batch.lsf); full = batch plus the MAPCA rank
+# the no-projection and motion-regressed comparisons (scripts/waves_batch.lsf); full = batch plus the MAPCA rank
 # and the joint-ICA sweep (the whole pipeline per participant, scripts/pipeline_batch.lsf).
 # Third argument: a config YAML (default configs/default.yaml).
 # Wave outputs go to outputs/waves/<run>/<git commit>/, so a rerun with newer code never overwrites older results.
@@ -72,13 +73,18 @@ fi
 [ -f "$TIS/classes.npy" ] || step "tissue classes" "$PY" -m mejoint.cli tissue "${CFGARG[@]}" --frontend-dir "$FE_REG" --out "$TIS"
 TISARG=(); [ -f "$TIS/classes.npy" ] && TISARG=(--tissue-dir "$TIS")
 
-step "waves primary (no regression, figures)" \
-    "$PY" -m mejoint.cli waves "${CFGARG[@]}" --frontend-dir "$FE_NOREG" --out "$WOUT/noreg" "${TISARG[@]}"
-step "waves sensitivity: motion regression" \
-    "$PY" -m mejoint.cli waves "${CFGARG[@]}" --frontend-dir "$FE_REG" --out "$WOUT/reg" "${TISARG[@]}" --bootstrap 50 --surrogates 50
-step "waves sensitivity: motion-orthogonal" \
+# primary (user decision 2026-11-06): no-regression channels with the band-passed motion projected out
+# (waves.motion_orthogonal: true); the same channels without the projection and the motion-regressed channels
+# are the comparisons
+step "waves primary (no regression, motion projected out, figures)" \
     "$PY" -m mejoint.cli waves "${CFGARG[@]}" --frontend-dir "$FE_NOREG" --out "$WOUT/noreg_motion_orth" "${TISARG[@]}" \
-    --motion-orthogonal --bootstrap 50 --surrogates 50
+    --motion-orthogonal
+step "waves comparison: no regression, motion not projected out" \
+    "$PY" -m mejoint.cli waves "${CFGARG[@]}" --frontend-dir "$FE_NOREG" --out "$WOUT/noreg" "${TISARG[@]}" \
+    --no-motion-orthogonal --bootstrap 50 --surrogates 50 --plot-modes 1
+step "waves comparison: 24-term motion regression" \
+    "$PY" -m mejoint.cli waves "${CFGARG[@]}" --frontend-dir "$FE_REG" --out "$WOUT/reg" "${TISARG[@]}" \
+    --no-motion-orthogonal --bootstrap 50 --surrogates 50 --plot-modes 1
 if [ "$STEPS" = "all" ] || [ "$STEPS" = "waves" ]; then
 step "waves sensitivity: no slice-timing correction" \
     "$PY" -m mejoint.cli waves "${CFGARG[@]}" --frontend-dir "$FE_NOREG" --out "$WOUT/noreg_no_stc" "${TISARG[@]}" --no-slice-timing \
