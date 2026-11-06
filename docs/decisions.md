@@ -863,3 +863,22 @@ User: "run the entire pipeline for everyone for which there's suitable data" (th
 - Each job (`scripts/pipeline_batch.lsf`): mbme_tedana `run --index i --keep-intermediates` into OUT_keep with the existing analysis settings (`--echo-times 16.20 31.22 46.24 61.26 --interp spline --ica-method robustica --n-robust-runs 30 --tedpca aic --tree tedana_orig --seed 42`, from the source pasted 2026-11-02; mbme_tedana skips runs already finished, e.g. P04), FSL 6 via modules, tedana env python by full path; then `waves_overnight.lsf <run> full`: front ends (with and without regression), tissue classes, rank (`mejoint rank --mapca-only`: spectrum and MAPCA AIC / KIC / MDL, the k values the sweep needs; the slow phase-randomized estimators are skipped), waves (primary, motion-regressed, motion-orthogonal), joint-ICA sweep with tissue classes.
 - Tested here end to end with stand-ins for mbme_tedana and bsub (two simulated participants): list cleaning (an excluded subject dropped), check, submission commands, both jobs through every stage.
 - Not verified here: the cluster run of mbme_tedana itself (module name `fsl/6` and the options are as recorded; the first job's log will show).
+
+### 2026-11-06: whole-pipeline batch on all 15 runs: wave summary (code e67f906)
+
+All 15 runs completed (mbme_tedana with --keep-intermediates, front ends, tissue, rank (MAPCA), waves, joint-ICA sweep). Wave summary (`outputs/waves_batch/e67f906/`), leading mode (mode 1):
+
+| | No regression | 24-term motion regression | Band-passed motion projected out |
+|---|---|---|---|
+| Above the energy null | 15 / 15 | 15 / 15 | 12 / 15 |
+| Motion-coupled (largest motion r above its null) | 12 / 15 | 6 / 15 | 0 / 15 (by construction) |
+| Strongest parameter | trans_z 6, trans_y 5, rot_x 1 | trans_y 4, trans_z 1, rot_z 1 | - |
+| r with trans_y, median (range) | 0.57 (0.12-0.82) | 0.24 (0.10-0.60) | 0 |
+
+- **Not unique to P04.** In 12 of 15 runs the leading mode follows the y and z translations or the x rotation. With the 52 x 64 x 48 axes (phase encoding along x, left-right) these are probably anterior-posterior and superior-inferior translation and pitch, i.e. motion in the sagittal plane (mcflirt parameter axes not verified).
+- **Coupling does not track the amount of motion.** Mean FD 0.09-0.46 mm; r = 0.82 at FD 0.095 mm (P07) and 0.88 at 0.16 mm (P03). Small slow motion common to all participants, or a shared driver of signal and apparent motion (for example breathing-depth changes, which affect both CO2-driven BOLD and head position; no physiological recordings to test this).
+- **The 24-term regression removes only part** of the in-band coupling (6 runs still coupled); it is fitted over the whole band, where the motion traces are mostly drift.
+- **A leading mode survives motion projection** in 12 of 15 runs (eigenvalue / null 0.88-2.67), usually weaker than without projection (e.g. P04 2.79 to 1.88, P14 2.72 to 1.12, P15 3.00 to 1.15); in 3 runs it is unchanged or stronger (P16, P17, P11). The projection also removes any non-motion signal that happens to share the motion's in-band time course, so this is conservative.
+- The three runs whose mode 1 is not motion-coupled (P16, P17, P05) include the two with the highest eta (0.54, 0.49) and many sign-opposed dS0 voxels in edge and interior alike.
+- Sign-opposed dS0 per present voxel is somewhat higher at the edge than in the interior in most runs, but substantial in the interior too; dS0 counts fall with regression or projection in the motion-coupled runs (e.g. P04: 2198, 2067, 871; P14: 19145, 2874, 853).
+- **Direction is not consistent across participants** (posterior, superior, inferior, left, anterior), so the leading mode shows no common traveling wave.
