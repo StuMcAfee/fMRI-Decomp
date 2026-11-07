@@ -146,6 +146,7 @@ def main(argv=None) -> int:
     ir.add_argument("--mbme-run", help="mbme_tedana run folder of the injected echoes (tedana comparison, pairing check)")
     ir.add_argument("--baseline-k-dir", help="the same k of the original run (do the other components survive?)")
     ir.add_argument("--no-te-check", action="store_true", help="skip the te-check profile and curvature")
+    ir.add_argument("--out-name", default="recovery", help="output file stem in the injection folder (default recovery; e.g. recovery_k150)")
     ir.add_argument("--config", help="config YAML (default: configs/default.yaml)")
     isu = sub.add_parser("inject-summary", help="Phase 5 injection: pool every recovery.json under a folder")
     isu.add_argument("--root", default="outputs/inject", help="folder searched for recovery.json")
@@ -262,8 +263,8 @@ def main(argv=None) -> int:
     elif args.cmd == "inject-recover":
         from . import inject
         inject.recover_dir(args.inject_dir, args.frontend_dir, args.k_dir, mbme_run=args.mbme_run,
-                           baseline_k_dir=args.baseline_k_dir, te_check=not args.no_te_check)
-        print(open(f"{args.inject_dir}/recovery.md").read())
+                           baseline_k_dir=args.baseline_k_dir, te_check=not args.no_te_check, out_name=args.out_name)
+        print(open(f"{args.inject_dir}/{args.out_name}.md").read())
     elif args.cmd == "inject-summary":
         from pathlib import Path
 

@@ -435,7 +435,7 @@ def footprint_profile(ch: dict, mu, sigma, ratios, use, te_ms, M, w, core: float
 
 
 def recover(c0, c1, R, Q, M, W, U, a, b, te_ms, maps: dict, footprint=None, comp_rows=None, te_rows=None,
-            tedana=None, fp_inputs: dict | None = None, pca: dict | None = None) -> list[dict]:
+            tedana=None, fp_inputs: dict | None = None, pca: dict | None = None, null_tc=None) -> list[dict]:
     """Per injected source: the best component and what it carries.
 
     c0, c1 (V, T) channels; R (V, 2, 2); Q (T, p) nuisance basis or None; M (T, k) component time courses;
@@ -444,7 +444,9 @@ def recover(c0, c1, R, Q, M, W, U, a, b, te_ms, maps: dict, footprint=None, comp
     (default W > 0); comp_rows / te_rows: components.json and te_check.json rows; tedana: {"mixing": (T, K),
     "metrics": list of rows} or None; fp_inputs: {"ch": c0/c1/r0/r1, "mu", "sigma", "ratios", "use"} for the
     echo profile and curvature in the source's own voxels (footprint_profile); pca: {"V": (T, K) temporal
-    eigenvectors of the stacked channels, largest first, "n_rows": stacked rows} for detectability."""
+    eigenvectors of the stacked channels, largest first, "n_rows": stacked rows} for detectability; null_tc (T, n):
+    time courses drawn like the injected ones but not injected (chance levels: the share of a slow time course
+    the top-k dimensions hold by chance, and the background energy a fixed slow regressor picks up in a footprint)."""
     from scipy.optimize import linear_sum_assignment
 
     from . import decompose, metrics
@@ -466,6 +468,13 @@ def recover(c0, c1, R, Q, M, W, U, a, b, te_ms, maps: dict, footprint=None, comp
     if tedana is not None and tedana.get("mixing") is not None and tedana["mixing"].shape[0] == T:
         X = tedana["mixing"]
         tmix = (X - X.mean(0)) / X.std(0)
+    Nz, m0n, m1n, cap_null = None, None, None, None
+    if null_tc is not None:
+        Nn = null_tc - Q @ (Q.T @ null_tc) if Q is not None else np.array(null_tc, float)
+        Nz = (Nn - Nn.mean(0)) / Nn.std(0)
+        m0n, m1n, _ = metrics._single_regression_maps(c0, c1, Nz)
+        if pca is not None:
+            cap_null = np.cumsum((pca["V"].T @ (Nz / np.linalg.norm(Nz, axis=0))) ** 2, axis=0)   # (K, n)
     rows = []
     for i in range(n):
         j = int(np.argmax(np.abs(C[i])))
@@ -510,7 +519,8 @@ def recover(c0, c1, R, Q, M, W, U, a, b, te_ms, maps: dict, footprint=None, comp
         # detectability: the source's channel variance summed over its footprint (noise-debiased; unit-noise
         # channels), against the white-noise PCA detection limit sqrt(rows / T); and how much of its time course
         # the top-k PCA dimensions of the data contain (spatial ICA only sees those dimensions)
-        S = float(np.where(f, m0o[:, 0] ** 2 - vbo, 0.0).sum() + np.where(f & np.isfinite(m1o[:, 0]), m1o[:, 0] ** 2 - vbo, 0.0).sum())
+        S = float(np.where(f & np.isfinite(m0o[:, 0]), m0o[:, 0] ** 2 - vbo, 0.0).sum()
+                  + np.where(f & np.isfinite(m1o[:, 0]), m1o[:, 0] ** 2 - vbo, 0.0).sum())
         row["source_energy"] = round(S, 2)
         if pca is not None:
             row["detection_limit_white"] = round(float(np.sqrt(pca["n_rows"] / T)), 2)
@@ -521,6 +531,22 @@ def recover(c0, c1, R, Q, M, W, U, a, b, te_ms, maps: dict, footprint=None, comp
                     row[f"captured_top{kk}"] = round(float(cap[kk - 1]), 4)
             hit = np.flatnonzero(cap >= 0.8)
             row["k_for_80pct"] = int(hit[0]) + 1 if hit.size else None
+            if cap_null is not None:
+                for kk in (50, 90, 150, 300):
+                    if kk <= cap_null.shape[0]:
+                        row[f"captured_top{kk}_chance"] = round(float(np.median(cap_null[kk - 1])), 4)
+                        row[f"captured_top{kk}_chance95"] = round(float(np.quantile(cap_null[kk - 1], 0.95)), 4)
+        if m0n is not None:
+            # background: what a slow regressor that was never injected picks up in this footprint (energies and
+            # eta), and the oracle eta with that background removed
+            ff = f[:, None]
+            en_n = metrics.energies(np.where(ff, m0n, np.nan), np.where(ff, m1n, np.nan), R, vbo)
+            bs0, br2 = float(np.mean(en_n["E_S0"])), float(np.mean(en_n["E_R2"]))
+            row["background_energy_footprint"] = round(bs0 + br2, 2)
+            row["background_eta_footprint"] = round(bs0 / (bs0 + br2), 4) if bs0 + br2 > 0 else None
+            row["source_over_background"] = round(float(en_fp["total"][0]) / (bs0 + br2), 2) if bs0 + br2 > 0 else None
+            es, er = float(en_fp["E_S0"][0]) - bs0, float(en_fp["E_R2"][0]) - br2
+            row["eta_oracle_footprint_bgfree"] = round(es / (es + er), 4) if es + er > 0 else None
         # ICA: eta of the component and of its footprint only (cross-fitted maps, as in the sweep)
         vcf = maps.get("vb_cf")
         vbj = vcf[:, [j]] if vcf is not None else vb[j]
@@ -632,7 +658,8 @@ def _tedana(run_dir) -> dict | None:
     return out
 
 
-def recover_dir(inject_dir, frontend_dir, k_dir, mbme_run=None, baseline_k_dir=None, te_check: bool = True) -> dict:
+def recover_dir(inject_dir, frontend_dir, k_dir, mbme_run=None, baseline_k_dir=None, te_check: bool = True,
+                out_name: str = "recovery") -> dict:
     """recover() on folders; writes recovery.json, recovery.md and recovery.png in inject_dir."""
     import nibabel as nib
     from scipy import ndimage
@@ -682,7 +709,10 @@ def recover_dir(inject_dir, frontend_dir, k_dir, mbme_run=None, baseline_k_dir=N
     a = [float(s["a_sd"]) for s in src]
     b = [float(s["b_sd_per_s"]) for s in src]
     pca = stacked_pca(c0, c1)
-    rows = recover(c0, c1, R, Q, M, W, U, a, b, truth["te_ms"], maps, FP, cj["components"], te_rows, ted, fpi, pca)
+    # 50 time courses drawn like the injected ones (same band), made orthogonal to the injected ones
+    G = time_courses(U.shape[0], float(truth.get("tr_s", 0.75)), truth.get("band_hz", [0.01, 0.1]), 50, np.random.default_rng(12345))
+    G = G - U @ np.linalg.lstsq(U, G, rcond=None)[0]
+    rows = recover(c0, c1, R, Q, M, W, U, a, b, truth["te_ms"], maps, FP, cj["components"], te_rows, ted, fpi, pca, null_tc=G)
     for r, s in zip(rows, src):
         r.update({"id": s["id"], "type": s["type"], "region": s["region"], "center": s["center"], "n_voxels": s.get("n_voxels"),
                   "n_spheres": len(s.get("centers", [s["center"]])), "a_sd": s["a_sd"],
@@ -704,10 +734,10 @@ def recover_dir(inject_dir, frontend_dir, k_dir, mbme_run=None, baseline_k_dir=N
            "baseline_k_dir": None if baseline_k_dir is None else str(baseline_k_dir), "notes": notes,
            "tedana_found": ted is not None, "null_threshold": cj.get("null", {}).get("threshold"),
            "sources": rows, "natives": nat, **io.provenance({}, {})}
-    io.write_json(idir / "recovery.json", out)
-    io.write_text(idir / "recovery.md", render(out, truth))
+    io.write_json(idir / f"{out_name}.json", out)
+    io.write_text(idir / f"{out_name}.md", render(out, truth))
     try:
-        figure(out, truth, kd, mask3d, W3, U, M, idir / "recovery.png")
+        figure(out, truth, kd, mask3d, W3, U, M, idir / f"{out_name}.png")
     except Exception as exc:                                           # the numbers matter more than the figure
         print(f"recovery figure failed: {exc}")
     return out
@@ -745,13 +775,16 @@ def render(out: dict, truth: dict) -> str:
         L += ["", "## Could the decomposition see it?", "",
               "Source energy: the source's channel variance summed over its footprint (noise-debiased; unit thermal noise). "
               "The white-noise PCA limit is sqrt(rows / T); real data also hold large structured signals above it. "
-              "Captured: share of the injected time course inside the top-k PCA dimensions of the data (ICA at k sees only those; a time course unrelated to the data scores k / T, e.g. 0.06 at k = 50, T = 800).", "",
-              "| source | source energy | white-noise limit | captured top 50 | top 90 | top 150 | top 300 | k for 80 % |",
-              "|---|---|---|---|---|---|---|---|"]
+              "Captured: share of the injected time course inside the top-k PCA dimensions of the data (ICA at k sees only those); "
+              "in brackets the median for slow time courses that were never injected (chance). Background: energy a never-injected "
+              "slow time course picks up in the footprint; oracle eta without background removes it.", "",
+              "| source | source energy | white-noise limit | source / background | captured top 50 (chance) | top 90 (chance) | top 150 (chance) | top 300 (chance) | k for 80 % | oracle eta without background (background eta) |",
+              "|---|---|---|---|---|---|---|---|---|---|"]
+        cc = lambda r, kk: f"{_f(r.get(f'captured_top{kk}'), '.2f')} ({_f(r.get(f'captured_top{kk}_chance'), '.2f')})"
         for r in out["sources"]:
             L.append(f"| {r['id']} | {_f(r.get('source_energy'), '.1f')} | {_f(r.get('detection_limit_white'), '.1f')} | "
-                     f"{_f(r.get('captured_top50'))} | {_f(r.get('captured_top90'))} | {_f(r.get('captured_top150'))} | "
-                     f"{_f(r.get('captured_top300'))} | {r.get('k_for_80pct', 'n/a')} |")
+                     f"{_f(r.get('source_over_background'), '.1f')} | {cc(r, 50)} | {cc(r, 90)} | {cc(r, 150)} | {cc(r, 300)} | "
+                     f"{r.get('k_for_80pct', 'n/a')} | {_f(r.get('eta_oracle_footprint_bgfree'), '.2f')} ({_f(r.get('background_eta_footprint'), '.2f')}) |")
     L += ["", "## Physics: eta and the dS0/dR2* ratio", "",
           "eta oracle: the true time course as a fixed regressor (no ICA); eta ICA: the matched component "
           "(cross-fitted maps, as in the sweep). Ratio = recovered dS0/S0 over dR2* at the sphere, in ms "
@@ -867,32 +900,35 @@ def figure(out, truth, kd, mask3d, W3, U, M, path) -> None:
 # ============================================================================ across runs
 def summary(root, out_dir=None) -> dict:
     """Pool every recovery.json under root: real-data positions of known sources, by type and level."""
+    import warnings
+
     from . import io
+    warnings.filterwarnings("ignore", message="All-NaN slice")         # groups with no recovered source
     root = Path(root)
     out_dir = Path(out_dir) if out_dir else root
-    recs = [json.loads(p.read_text()) for p in sorted(root.glob("**/recovery.json"))]
+    recs = [json.loads(p.read_text()) for p in sorted(root.glob("**/recovery*.json"))]
     rows, nat_eta, nat_curv = [], [], []
     for rc in recs:
         for r in rc["sources"]:
-            rows.append({"run": rc["run"], "level": rc["level"], "layout": rc.get("layout", "focal"), "seed": rc["seed"], **r})
+            rows.append({"run": rc["run"], "level": rc["level"], "layout": rc.get("layout", "focal"), "k": rc["k"], "seed": rc["seed"], **r})
         nat_eta += rc["natives"].get("native_eta_above_null") or []
         nat_curv += rc["natives"].get("native_curvature_fraction") or []
     groups = {}
     for r in rows:
-        groups.setdefault((r["layout"], r["type"], r["level"]), []).append(r)
+        groups.setdefault((r["layout"], r["k"], r["type"], r["level"]), []).append(r)
     rec_r = None
     try:
         rec_r = float(io.load_config()["inject"]["recovered_r"])
     except Exception:
         rec_r = 0.9
     table = []
-    for (layout, kind, level), rs in sorted(groups.items()):
+    for (layout, kk_, kind, level), rs in sorted(groups.items()):
         found = [r for r in rs if r["r"] >= rec_r]
         med = lambda key, src=found: (float(np.nanmedian([np.nan if r.get(key) is None else float(r[key]) for r in src]))
                                       if src else None)
         rng_ = lambda key: ([round(float(np.nanmin(v)), 3), round(float(np.nanmax(v)), 3)]
                             if (v := [float(r[key]) for r in found if r.get(key) is not None]) else None)
-        table.append({"layout": layout, "type": kind, "level": level, "n": len(rs), "n_recovered": len(found),
+        table.append({"layout": layout, "k": kk_, "type": kind, "level": level, "n": len(rs), "n_recovered": len(found),
                       "n_above_null": sum(bool(r.get("above_null")) for r in found),
                       "eta_ica_median": med("eta_ica"), "eta_ica_range": rng_("eta_ica"),
                       "eta_oracle_median": med("eta_oracle", rs), "eta_oracle_range": ([round(float(np.nanmin(v)), 3), round(float(np.nanmax(v)), 3)]
@@ -908,6 +944,12 @@ def summary(root, out_dir=None) -> dict:
                       "source_energy_median": med("source_energy", rs),
                       "detection_limit_white": med("detection_limit_white", rs),
                       "captured_top50_median": med("captured_top50", rs),
+                      "captured_top50_chance": med("captured_top50_chance", rs),
+                      "captured_top150_median": med("captured_top150", rs),
+                      "captured_top150_chance": med("captured_top150_chance", rs),
+                      "eta_oracle_footprint_bgfree_median": med("eta_oracle_footprint_bgfree", rs),
+                      "background_eta_footprint_median": med("background_eta_footprint", rs),
+                      "source_over_background_median": med("source_over_background", rs),
                       "k_for_80pct_median": med("k_for_80pct", rs),
                       "labels": {lab: sum(r.get("label") == lab for r in found) for lab in
                                  sorted({str(r.get("label")) for r in found})}})
@@ -929,23 +971,29 @@ def render_summary(res: dict) -> str:
     L = ["# Injection calibration: known sources through the real pipeline", "",
          f"{res['n_recoveries']} injection runs. Recovered = best component |r| >= {res['recovered_r']}. "
          "eta ICA, ratio and curvature are over recovered sources; eta oracle (true time course, no ICA) over all.", "",
-         "| sources | type | level | n | recovered | above null | eta ICA median [range] | eta oracle median [range] | ratio ICA (ms) | ratio oracle (ms) | dR2* rec/true | dS0 rec/true | curvature te-check | curvature at source (ICA / oracle) | te-check zero crossings | labels |",
-         "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+         "| sources | k | type | level | n | recovered | above null | eta ICA median [range] | eta oracle median [range] | ratio ICA (ms) | ratio oracle (ms) | dR2* rec/true | dS0 rec/true | curvature te-check | curvature at source (ICA / oracle) | te-check zero crossings | labels |",
+         "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for t in res["table"]:
-        L.append(f"| {t.get('layout', 'focal')} | {t['type']} | {t['level']} | {t['n']} | {t['n_recovered']} | {t['n_above_null']} | "
+        L.append(f"| {t.get('layout', 'focal')} | {t.get('k')} | {t['type']} | {t['level']} | {t['n']} | {t['n_recovered']} | {t['n_above_null']} | "
                  f"{_f(t['eta_ica_median'])} {_f(t['eta_ica_range'])} | {_f(t['eta_oracle_median'])} {_f(t['eta_oracle_range'])} | "
                  f"{_f(t['ratio_ms_ica_median'], '.1f')} | {_f(t['ratio_ms_oracle_median'], '.1f')} | {_f(t['b_ratio_median'], '.2f')} | "
                  f"{_f(t['a_ratio_median'], '.2f')} | {_f(t['curvature_fraction_median'], '.4f')} | "
                  f"{_f(t['curvature_footprint_median'], '.4f')} / {_f(t['curvature_footprint_oracle_median'], '.4f')} | {t['zero_crossings']} | "
                  f"{', '.join(f'{k} {v}' for k, v in t['labels'].items())} |")
-    L += ["", "All sources (found or not): best component |r|, the oracle eta at the source's own voxels, and detectability "
-              "(source energy vs the white-noise PCA limit; share of the time course in the top 50 PCA dimensions, chance 50 / T; k needed for 80 %).", "",
-          "| sources | type | level | best r median (max) | eta oracle at source | source energy | white-noise limit | captured top 50 | k for 80 % |",
-          "|---|---|---|---|---|---|---|---|---|"]
+    L += ["", "All sources (found or not). Best component |r|. Captured: share of the injected time course in the top 50 / 150 "
+              "PCA dimensions of the data, with the chance level of slow time courses that were never injected in brackets "
+              "(the data's top dimensions are slow, so chance is well above k / T). Source / background: the source's energy "
+              "in its footprint over the energy a never-injected slow time course picks up there. Oracle eta at the source "
+              "(true time course): as measured, and with that background removed; the background's own eta in brackets.", "",
+          "| sources | k | type | level | best r median (max) | captured top 50 (chance) | top 150 (chance) | k for 80 % | source energy | source / background | oracle eta at source | without background (background eta) |",
+          "|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for t in res["table"]:
-        L.append(f"| {t.get('layout', 'focal')} | {t['type']} | {t['level']} | {_f(t.get('best_r_median'), '.2f')} ({_f(t.get('best_r_max'), '.2f')}) | "
-                 f"{_f(t.get('eta_oracle_footprint_median'))} | {_f(t.get('source_energy_median'), '.1f')} | "
-                 f"{_f(t.get('detection_limit_white'), '.1f')} | {_f(t.get('captured_top50_median'))} | {_f(t.get('k_for_80pct_median'), '.0f')} |")
+        L.append(f"| {t.get('layout', 'focal')} | {t.get('k')} | {t['type']} | {t['level']} | {_f(t.get('best_r_median'), '.2f')} ({_f(t.get('best_r_max'), '.2f')}) | "
+                 f"{_f(t.get('captured_top50_median'), '.2f')} ({_f(t.get('captured_top50_chance'), '.2f')}) | "
+                 f"{_f(t.get('captured_top150_median'), '.2f')} ({_f(t.get('captured_top150_chance'), '.2f')}) | "
+                 f"{_f(t.get('k_for_80pct_median'), '.0f')} | {_f(t.get('source_energy_median'), '.1f')} | "
+                 f"{_f(t.get('source_over_background_median'), '.1f')} | {_f(t.get('eta_oracle_footprint_median'), '.2f')} | "
+                 f"{_f(t.get('eta_oracle_footprint_bgfree_median'), '.2f')} ({_f(t.get('background_eta_footprint_median'), '.2f')}) |")
     ne = res["native_eta_above_null"]
     if ne["n"]:
         L += ["", f"Native components above the null in the same decompositions: eta median {ne['median']:.3f} "

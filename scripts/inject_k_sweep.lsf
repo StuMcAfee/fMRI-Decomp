@@ -1,0 +1,34 @@
+#!/bin/bash
+# Injection at higher k: re-run only the joint ICA of one injection folder's saved front end at each k given, then
+# find the injected sources (recovery_k<k>.md / .json / .png in the injection folder). No new preprocessing.
+# Arguments: <injection folder, e.g. outputs/inject/<run>/network_strong_s1> [k ...] (default: 90 150)
+# Submitted by scripts/submit_inject_k_sweep.sh (one job per injection folder).
+set -uo pipefail
+IDIR="${1:-}"; shift || true
+KS=("$@"); [ ${#KS[@]} -gt 0 ] || KS=(90 150)
+PY="${MEJOINT_PY:-$HOME/miniconda3_new/envs/mejoint/bin/python}"
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}" PYTHONUNBUFFERED=1
+NT="${LSB_DJOB_NUMPROC:-8}"
+threads() { export OMP_NUM_THREADS="$1" MKL_NUM_THREADS="$1" OPENBLAS_NUM_THREADS="$1"; }
+IDIR="${IDIR%/}"
+FE1="$IDIR/frontend_mc"
+[ -f "$IDIR/truth.json" ] && [ -f "$FE1/c0.npy" ] || { echo "PREFLIGHT FAILED: $IDIR has no truth.json or front end" >&2; exit 2; }
+NAME="$(basename "$(dirname "$IDIR")")"
+IRUN="$(ls -d "$IDIR"/OUT/*/ 2>/dev/null | head -n 1)"; IRUN="${IRUN%/}"
+echo "== injection k sweep | $IDIR | k ${KS[*]} | $(date) | host $(hostname) | job ${LSB_JOBID:-interactive} | cores $NT | git $(git rev-parse --short HEAD 2>/dev/null || echo '?')"
+for K in "${KS[@]}"; do
+    KD="$IDIR/decompose/k$K"
+    if [ ! -f "$KD/components.json" ]; then
+        threads 1                                                  # the ICA restarts parallelize with joblib
+        echo; echo "== [joint ICA k=$K] start $(date)"
+        "$PY" -m mejoint.cli decompose --frontend-dir "$FE1" --out "$IDIR/decompose" --k "$K" || { echo "== [joint ICA k=$K] FAILED"; continue; }
+    fi
+    threads "$NT"
+    ARGS=(); [ -n "$IRUN" ] && ARGS+=(--mbme-run "$IRUN")
+    BASEK="outputs/phase5/$NAME/phase4_sweep_mc/k$K"; [ -f "$BASEK/time_courses.tsv" ] && ARGS+=(--baseline-k-dir "$BASEK")
+    echo; echo "== [inject-recover k=$K] start $(date)"
+    "$PY" -m mejoint.cli inject-recover --inject-dir "$IDIR" --frontend-dir "$FE1" --k-dir "$KD" --out-name "recovery_k$K" "${ARGS[@]}" \
+        > "$IDIR/recovery_k$K.log" 2>&1 && echo "   ok: $IDIR/recovery_k$K.md" || { echo "   FAILED, see $IDIR/recovery_k$K.log"; tail -5 "$IDIR/recovery_k$K.log"; }
+done
+echo; echo "== done $(date)"
