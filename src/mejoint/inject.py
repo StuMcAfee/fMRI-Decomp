@@ -339,7 +339,7 @@ def footprint_profile(ch: dict, mu, sigma, ratios, use, te_ms, M, w, core: float
 
 
 def recover(c0, c1, R, Q, M, W, U, a, b, te_ms, maps: dict, footprint=None, comp_rows=None, te_rows=None,
-            tedana=None, fp_inputs: dict | None = None) -> list[dict]:
+            tedana=None, fp_inputs: dict | None = None, pca: dict | None = None) -> list[dict]:
     """Per injected source: the best component and what it carries.
 
     c0, c1 (V, T) channels; R (V, 2, 2); Q (T, p) nuisance basis or None; M (T, k) component time courses;
@@ -347,7 +347,8 @@ def recover(c0, c1, R, Q, M, W, U, a, b, te_ms, maps: dict, footprint=None, comp
     and m0_cf, m1_cf (cross-fitted), each (V, k); footprint (V, n) bool: sphere plus a 2-voxel margin
     (default W > 0); comp_rows / te_rows: components.json and te_check.json rows; tedana: {"mixing": (T, K),
     "metrics": list of rows} or None; fp_inputs: {"ch": c0/c1/r0/r1, "mu", "sigma", "ratios", "use"} for the
-    echo profile and curvature in the source's own voxels (footprint_profile)."""
+    echo profile and curvature in the source's own voxels (footprint_profile); pca: {"V": (T, K) temporal
+    eigenvectors of the stacked channels, largest first, "n_rows": stacked rows} for detectability."""
     from scipy.optimize import linear_sum_assignment
 
     from . import decompose, metrics
@@ -410,6 +411,20 @@ def recover(c0, c1, R, Q, M, W, U, a, b, te_ms, maps: dict, footprint=None, comp
         row["a_hat_oracle"] = round(aho, 6)
         row["b_hat_oracle_per_s"] = round(bho, 5)
         row["ratio_ms_oracle"] = round(aho / bho * 1000.0, 2) if bho != 0 and np.isfinite(bho) else None
+        # detectability: the source's channel variance summed over its footprint (noise-debiased; unit-noise
+        # channels), against the white-noise PCA detection limit sqrt(rows / T); and how much of its time course
+        # the top-k PCA dimensions of the data contain (spatial ICA only sees those dimensions)
+        S = float(np.where(f, m0o[:, 0] ** 2 - vbo, 0.0).sum() + np.where(f & np.isfinite(m1o[:, 0]), m1o[:, 0] ** 2 - vbo, 0.0).sum())
+        row["source_energy"] = round(S, 2)
+        if pca is not None:
+            row["detection_limit_white"] = round(float(np.sqrt(pca["n_rows"] / T)), 2)
+            uu = Ut[:, i] - Ut[:, i].mean()
+            cap = np.cumsum((pca["V"].T @ (uu / np.linalg.norm(uu))) ** 2)
+            for kk in (50, 90, 150, 300):
+                if kk <= cap.size:
+                    row[f"captured_top{kk}"] = round(float(cap[kk - 1]), 4)
+            hit = np.flatnonzero(cap >= 0.8)
+            row["k_for_80pct"] = int(hit[0]) + 1 if hit.size else None
         # ICA: eta of the component and of its footprint only (cross-fitted maps, as in the sweep)
         vcf = maps.get("vb_cf")
         vbj = vcf[:, [j]] if vcf is not None else vb[j]
@@ -473,6 +488,24 @@ def natives(M_inj, M_base, inj_comps: set, rows_inj=None, rows_base=None) -> dic
         nat = [float(rows_inj[j]["eta"]) for j in keep if rows_inj[j].get("above_null") and rows_inj[j].get("eta") is not None]
         out["native_eta_above_null"] = nat
     return out
+
+
+def stacked_pca(c0, c1, chunk: int = 20000) -> dict:
+    """Temporal eigenvectors (T, T), largest first, of the stacked channel rows [c0 | c1] (rows with all frames
+    finite, demeaned over time), as the decomposition's PCA step sees them (T x T Gram, float64)."""
+    T = c0.shape[1]
+    G = np.zeros((T, T))
+    n = 0
+    for X in (c0, c1):
+        for i in range(0, X.shape[0], chunk):
+            x = np.asarray(X[i:i + chunk], np.float64)
+            x = x[np.isfinite(x).all(1)]
+            x -= x.mean(1, keepdims=True)
+            G += x.T @ x
+            n += x.shape[0]
+    lam, V = np.linalg.eigh(G)
+    o = np.argsort(lam)[::-1]
+    return {"V": V[:, o], "lam_per_row": lam[o] / max(n, 1), "n_rows": n}
 
 
 def _tsv_matrix(path) -> np.ndarray:
@@ -552,7 +585,8 @@ def recover_dir(inject_dir, frontend_dir, k_dir, mbme_run=None, baseline_k_dir=N
                "sigma": mapv("sigma"), "ratios": fs["echo_noise_ratios_used"], "use": mapv("usable") > 0.5}
     a = [float(s["a_sd"]) for s in src]
     b = [float(s["b_sd_per_s"]) for s in src]
-    rows = recover(c0, c1, R, Q, M, W, U, a, b, truth["te_ms"], maps, FP, cj["components"], te_rows, ted, fpi)
+    pca = stacked_pca(c0, c1)
+    rows = recover(c0, c1, R, Q, M, W, U, a, b, truth["te_ms"], maps, FP, cj["components"], te_rows, ted, fpi, pca)
     for r, s in zip(rows, src):
         r.update({"id": s["id"], "type": s["type"], "region": s["region"], "center": s["center"], "a_sd": s["a_sd"],
                   "b_sd_per_s": s["b_sd_per_s"]})
@@ -610,6 +644,17 @@ def render(out: dict, truth: dict) -> str:
     for r in out["sources"]:
         L.append(f"| {r['id']} | {_f(r['a_sd'], '.4f')} | {_f(r['b_sd_per_s'], '.2f')} | {r['best_component']} | {_f(r['r'])} | "
                  f"{_f(r['second_r'])} | {_f(r.get('above_null'))} | {r.get('label', 'n/a')} | {_f(r['energy_share_in_footprint'])} |")
+    if any("captured_top50" in r for r in out["sources"]):
+        L += ["", "## Could the decomposition see it?", "",
+              "Source energy: the source's channel variance summed over its footprint (noise-debiased; unit thermal noise). "
+              "The white-noise PCA limit is sqrt(rows / T); real data also hold large structured signals above it. "
+              "Captured: share of the injected time course inside the top-k PCA dimensions of the data (ICA at k sees only those; a time course unrelated to the data scores k / T, e.g. 0.06 at k = 50, T = 800).", "",
+              "| source | source energy | white-noise limit | captured top 50 | top 90 | top 150 | top 300 | k for 80 % |",
+              "|---|---|---|---|---|---|---|---|"]
+        for r in out["sources"]:
+            L.append(f"| {r['id']} | {_f(r.get('source_energy'), '.1f')} | {_f(r.get('detection_limit_white'), '.1f')} | "
+                     f"{_f(r.get('captured_top50'))} | {_f(r.get('captured_top90'))} | {_f(r.get('captured_top150'))} | "
+                     f"{_f(r.get('captured_top300'))} | {r.get('k_for_80pct', 'n/a')} |")
     L += ["", "## Physics: eta and the dS0/dR2* ratio", "",
           "eta oracle: the true time course as a fixed regressor (no ICA); eta ICA: the matched component "
           "(cross-fitted maps, as in the sweep). Ratio = recovered dS0/S0 over dR2* at the sphere, in ms "
@@ -761,6 +806,12 @@ def summary(root, out_dir=None) -> dict:
                       "curvature_footprint_median": med("curvature_fraction_footprint"),
                       "curvature_footprint_oracle_median": med("curvature_fraction_footprint_oracle", rs),
                       "zero_crossings": sum(r.get("te_profile_zero_crossing_ms") is not None for r in found),
+                      "best_r_median": med("r", rs), "best_r_max": max(float(r["r"]) for r in rs),
+                      "eta_oracle_footprint_median": med("eta_oracle_footprint", rs),
+                      "source_energy_median": med("source_energy", rs),
+                      "detection_limit_white": med("detection_limit_white", rs),
+                      "captured_top50_median": med("captured_top50", rs),
+                      "k_for_80pct_median": med("k_for_80pct", rs),
                       "labels": {lab: sum(r.get("label") == lab for r in found) for lab in
                                  sorted({str(r.get("label")) for r in found})}})
     res = {"n_recoveries": len(recs), "recovered_r": rec_r, "table": table, "rows": rows,
@@ -790,6 +841,14 @@ def render_summary(res: dict) -> str:
                  f"{_f(t['a_ratio_median'], '.2f')} | {_f(t['curvature_fraction_median'], '.4f')} | "
                  f"{_f(t['curvature_footprint_median'], '.4f')} / {_f(t['curvature_footprint_oracle_median'], '.4f')} | {t['zero_crossings']} | "
                  f"{', '.join(f'{k} {v}' for k, v in t['labels'].items())} |")
+    L += ["", "All sources (found or not): best component |r|, the oracle eta at the source's own voxels, and detectability "
+              "(source energy vs the white-noise PCA limit; share of the time course in the top 50 PCA dimensions, chance 50 / T; k needed for 80 %).", "",
+          "| type | level | best r median (max) | eta oracle at source | source energy | white-noise limit | captured top 50 | k for 80 % |",
+          "|---|---|---|---|---|---|---|---|"]
+    for t in res["table"]:
+        L.append(f"| {t['type']} | {t['level']} | {_f(t.get('best_r_median'), '.2f')} ({_f(t.get('best_r_max'), '.2f')}) | "
+                 f"{_f(t.get('eta_oracle_footprint_median'))} | {_f(t.get('source_energy_median'), '.1f')} | "
+                 f"{_f(t.get('detection_limit_white'), '.1f')} | {_f(t.get('captured_top50_median'))} | {_f(t.get('k_for_80pct_median'), '.0f')} |")
     ne = res["native_eta_above_null"]
     if ne["n"]:
         L += ["", f"Native components above the null in the same decompositions: eta median {ne['median']:.3f} "
