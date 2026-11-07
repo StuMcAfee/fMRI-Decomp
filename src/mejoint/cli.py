@@ -137,6 +137,7 @@ def main(argv=None) -> int:
     im.add_argument("--out", required=True, help="injection folder (echoes/, truth.json, list.txt)")
     im.add_argument("--baseline-frontend", required=True, help="front end of the original run (analysis_mask.nii.gz)")
     im.add_argument("--tissue-dir", help="tissue classes of the original run (sources kept out of CSF and dropout)")
+    im.add_argument("--layout", choices=["focal", "network"], help="one sphere per source, or networks of spheres (default: inject.layout)")
     im.add_argument("--config", help="config YAML (default: configs/default.yaml)")
     ir = sub.add_parser("inject-recover", help="Phase 5 injection: find the injected sources in a decomposition")
     ir.add_argument("--inject-dir", required=True, help="injection folder (truth.json)")
@@ -255,7 +256,8 @@ def main(argv=None) -> int:
         return 1 if any("error" in r for r in rows) else 0
     elif args.cmd == "inject-make":
         from . import inject
-        tr = inject.make_dir(args.run_dir, cfg, args.level, args.seed, args.out, args.baseline_frontend, args.tissue_dir)
+        tr = inject.make_dir(args.run_dir, cfg, args.level, args.seed, args.out, args.baseline_frontend, args.tissue_dir,
+                             layout=args.layout)
         print(f"{len(tr['sources'])} sources; injected echo 1: {tr['echo1_injected']}; list for mbme_tedana: {args.out}/list.txt")
     elif args.cmd == "inject-recover":
         from . import inject

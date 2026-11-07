@@ -203,3 +203,34 @@ def test_files_end_to_end(tmp_path):
             assert r["eta_oracle_footprint"] > 0.85, r
     summ = inject.summary(tmp_path / "inject")
     assert summ["n_recoveries"] == 1 and (tmp_path / "inject" / "inject_summary.md").exists()
+
+
+def test_place_networks_mirrored_and_separated():
+    """Network layout: one network per type, each 3 mirrored cortical pairs + 1 inferior sphere, every sphere of
+    every network at least network.min_separation_mm from every other; pairs on opposite sides of the midline."""
+    shape = (52, 64, 48)
+    idx = np.indices(shape).astype(float)
+    c = np.array([25.5, 31.5, 23.5])[:, None, None, None]
+    mask = (((idx - c) / np.array([22, 28, 20])[:, None, None, None]) ** 2).sum(0) <= 1
+    aff = np.diag([3.281, 3.281, 3.3, 1.0])                            # RAS: axis 0 left-right
+    cfg = io.load_config()
+    vox = np.array([3.281, 3.281, 3.3])
+    src = inject.place_networks(mask, aff, vox, cfg, np.random.default_rng(SEED))
+    N = cfg["inject"]["network"]
+    assert sorted(s["type"] for s in src) == sorted(inject.TYPES)
+    allc = np.array([p for s in src for p in s["centers"]])
+    assert len(allc) == 3 * (2 * N["cortical_pairs"] + N["inferior"])
+    D = np.sqrt((((allc[:, None] - allc[None]) * vox) ** 2).sum(-1)) + np.eye(len(allc)) * 1e9
+    assert D.min() >= N["min_separation_mm"] - 1e-9
+    mid = np.argwhere(mask)[:, 0].mean()
+    for s in src:
+        cs = np.array(s["centers"])
+        for a, b in zip(cs[0:6:2], cs[1:6:2]):                         # pairs: opposite hemispheres, near-mirror
+            assert (a[0] - mid) * (b[0] - mid) < 0
+            mirror = a.astype(float).copy(); mirror[0] = 2 * mid - mirror[0]
+            assert np.sqrt((((b - mirror) * vox) ** 2).sum()) <= N["mirror_tolerance_mm"] + 1e-9
+        assert s["sphere_regions"][-1] == "inferior"
+    W = inject.weight_maps(shape, [s["centers"] for s in src], cfg["inject"]["radius_mm"], vox, mask)
+    n = (W > 0).sum(axis=(0, 1, 2))
+    assert np.all(n > 6 * 80), n                                         # ~7 spheres of ~118 voxels each
+    assert np.all((W > 0).sum(-1) <= 1)                                  # networks do not overlap

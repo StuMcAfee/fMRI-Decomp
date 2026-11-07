@@ -7,17 +7,20 @@
 #      correction, tedana robustica), into <injection folder>/OUT;
 #   3. mejoint front end (motion-corrected echoes, motion regression), joint ICA at inject.k (same seeds as the
 #      original run's sweep), and inject-recover (recovery.md / .json / .png in the injection folder).
-# Arguments: <OUT_keep run folder> <mbme_tedana.py> <level> [seed=N] [config=file.yaml] [clean]
+# Arguments: <OUT_keep run folder> <mbme_tedana.py> <level> [seed=N] [layout=focal|network] [config=file.yaml] [clean]
+#   layout: focal = one sphere per source (the first runs); network = each source a set of spheres sharing one time
+#   course (inject.network in the config); default inject.layout.
 #   clean: delete the injected raw echoes and the motion-corrected copies once the front end exists (saves ~4 GB;
 #   both can be remade from the seed).
-# Outputs: outputs/inject/<run>/<level>_s<seed>/
+# Outputs: outputs/inject/<run>/<level>_s<seed>/ (focal) or outputs/inject/<run>/network_<level>_s<seed>/
 set -uo pipefail
 RUN_DIR="${1:-}"; MBME="${2:-}"; LEVEL="${3:-}"; shift 3 2>/dev/null || true
-SEED=1; CONFIG=""; CLEAN=0
+SEED=1; CONFIG=""; CLEAN=0; LAYOUT=""
 for a in "$@"; do
     case "$a" in
         seed=*) SEED="${a#seed=}" ;;
         config=*) CONFIG="${a#config=}" ;;
+        layout=*) LAYOUT="${a#layout=}" ;;
         clean) CLEAN=1 ;;
         *) echo "unknown argument: $a" >&2; exit 2 ;;
     esac
@@ -38,10 +41,12 @@ TIS0="outputs/tissue/$NAME/mc"
 [ -f "$FE0/analysis_mask.nii.gz" ] || fail "no front end of the original run at $FE0 (run the pipeline for $NAME first)"
 K="$("$PY" -c "import sys; from mejoint import io; print(io.load_config(sys.argv[1] or None)['inject']['k'])" "$CONFIG")" \
     || fail "cannot read inject.k from the config"
-IDIR="outputs/inject/$NAME/${LEVEL}_s${SEED}"
+[ -n "$LAYOUT" ] || LAYOUT="$("$PY" -c "import sys; from mejoint import io; print(io.load_config(sys.argv[1] or None)['inject'].get('layout', 'focal'))" "$CONFIG")"
+case "$LAYOUT" in focal) IDIR="outputs/inject/$NAME/${LEVEL}_s${SEED}" ;; network) IDIR="outputs/inject/$NAME/network_${LEVEL}_s${SEED}" ;;
+    *) fail "layout must be focal or network (got $LAYOUT)" ;; esac
 NT="${LSB_DJOB_NUMPROC:-8}"
 threads() { export OMP_NUM_THREADS="$1" MKL_NUM_THREADS="$1" OPENBLAS_NUM_THREADS="$1"; }
-echo "== injection | $NAME | level $LEVEL | seed $SEED | k $K | $(date) | host $(hostname) | job ${LSB_JOBID:-interactive} | cores $NT | git $(git rev-parse --short HEAD 2>/dev/null || echo '?')"
+echo "== injection | $NAME | $LAYOUT | level $LEVEL | seed $SEED | k $K | $(date) | host $(hostname) | job ${LSB_JOBID:-interactive} | cores $NT | git $(git rev-parse --short HEAD 2>/dev/null || echo '?')"
 threads "$NT"
 
 # --- 1. injected raw echoes (skipped when they already exist with the same settings)
@@ -51,7 +56,7 @@ if [ -f "$FE1/c0.npy" ] && [ -f "$IDIR/truth.json" ]; then
     echo "injected front end exists: inject-make and mbme_tedana skipped"
 else
     echo; echo "== [inject-make] start $(date)"
-    "$PY" -m mejoint.cli inject-make "${CFGARG[@]}" --run-dir "$RUN_DIR" --level "$LEVEL" --seed "$SEED" --out "$IDIR" \
+    "$PY" -m mejoint.cli inject-make "${CFGARG[@]}" --run-dir "$RUN_DIR" --level "$LEVEL" --seed "$SEED" --layout "$LAYOUT" --out "$IDIR" \
         --baseline-frontend "$FE0" "${TISARG[@]}" || fail "inject-make failed"
 fi
 E1="$(head -n 1 "$IDIR/list.txt")"

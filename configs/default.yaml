@@ -227,6 +227,12 @@ inject:                       # Phase 5 injection calibration (user decision 202
   min_separation_mm: 30.0       # between source centres
   k: 50                         # decomposition of the injected data (the k of the te-check and sweep tables)
   recovered_r: 0.9              # a source counts as recovered when its best component time course has |r| >= this
+  layout: focal                 # focal: one sphere per source (first runs); network: each source a set of spheres sharing one time course
+  network:                      # network layout (user decision 2026-11-07): ~7 x 118 = ~800 voxels per network
+    cortical_pairs: 3           # sphere pairs mirrored across the midline, cortical region
+    inferior: 1                 # spheres in the inferior region (approximate posterior fossa)
+    min_separation_mm: 25.0     # between any two spheres of any networks
+    mirror_tolerance_mm: 12.0   # partner centre within this distance of the mirror point
 
 mask:                         # analysis mask built from the input echoes (mask.py); user decision 2026-11-02
   border_vox: 3               # image border used to measure the air (noise) level

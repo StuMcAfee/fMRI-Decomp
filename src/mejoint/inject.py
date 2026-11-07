@@ -74,12 +74,17 @@ def ball(radius_mm: float, voxel_mm) -> np.ndarray:
 
 
 def weight_maps(shape, centers, radius_mm: float, voxel_mm, mask3d=None) -> np.ndarray:
-    """(X, Y, Z, n) weights: cos^2(pi d / (2 R)) inside radius R of each centre, 0 outside (and outside the mask)."""
+    """(X, Y, Z, n) weights: cos^2(pi d / (2 R)) inside radius R of each centre, 0 outside (and outside the mask).
+    An entry of centers is one centre [i, j, k] (focal source) or a list of centres (network: the spheres
+    share the source's time course; the weight is the largest of the spheres')."""
     idx = np.indices(shape).astype(float)
     out = np.zeros(tuple(shape) + (len(centers),), np.float32)
-    for i, c in enumerate(centers):
-        d = np.sqrt(sum(((idx[a] - c[a]) * float(voxel_mm[a])) ** 2 for a in range(3)))
-        w = np.where(d < radius_mm, np.cos(np.pi * d / (2.0 * radius_mm)) ** 2, 0.0)
+    for i, cs in enumerate(centers):
+        cs = np.atleast_2d(np.asarray(cs, float))
+        w = np.zeros(tuple(shape))
+        for c in cs:
+            d = np.sqrt(sum(((idx[a] - c[a]) * float(voxel_mm[a])) ** 2 for a in range(3)))
+            w = np.maximum(w, np.where(d < radius_mm, np.cos(np.pi * d / (2.0 * radius_mm)) ** 2, 0.0))
         if mask3d is not None:
             w = w * mask3d
         out[..., i] = w
@@ -204,6 +209,89 @@ def inject_file(src, dst, e: int, frames_raw: np.ndarray, W3: np.ndarray, U: np.
             "max_abs_change_pct": round(float(np.abs(np.expm1(y)).max() * 100), 3)}
 
 
+def _tissue_fraction(mask3d, voxel_mm, R, classes3d):
+    from scipy import ndimage
+    k = ball(R, voxel_mm)
+    nb = ndimage.convolve(mask3d.astype(float), k, mode="constant")
+    good = mask3d if classes3d is None else (mask3d & np.isin(classes3d, (1, 2)))
+    return ndimage.convolve(good.astype(float), k, mode="constant") / np.maximum(nb, 1.0)
+
+
+def place_networks(mask3d, affine, voxel_mm, cfg: dict, rng, classes3d=None) -> list[dict]:
+    """One network per type (user decision 2026-11-07): inject.network.cortical_pairs pairs of spheres mirrored
+    across the midline (left-right axis; the partner is the nearest admissible centre within
+    mirror_tolerance_mm of the mirror point) in the cortical region, plus inject.network.inferior spheres in the
+    inferior region (approximate posterior fossa). Every sphere of every network at least
+    network.min_separation_mm from every other; spheres mostly in tissue or mixed classes (relaxed in 0.1 steps)."""
+    import nibabel as nib
+    I = cfg["inject"]
+    N = I.get("network", {})
+    types = list(I.get("types", TYPES))
+    R = float(I["radius_mm"])
+    vox = np.asarray(voxel_mm, float)
+    tf = _tissue_fraction(mask3d, vox, R, classes3d)
+    cand = region_masks(mask3d, affine, vox, cfg)
+    sep = float(N.get("min_separation_mm", 25.0))
+    tol = float(N.get("mirror_tolerance_mm", 12.0))
+    n_pairs, n_inf = int(N.get("cortical_pairs", 3)), int(N.get("inferior", 1))
+    lr = next(i for i, c in enumerate(nib.aff2axcodes(affine)) if c in ("L", "R"))
+    mid = float(np.argwhere(mask3d)[:, lr].mean())
+    allc: list = []
+    far = lambda p, others: all(np.sqrt((((p - o) * vox) ** 2).sum()) >= sep for o in others)
+
+    def pick(region, need, others, near=None):
+        pts = np.argwhere(cand[region] & (tf >= need))
+        if near is not None:
+            d = np.sqrt((((pts - near) * vox) ** 2).sum(1))
+            pts = pts[d <= tol][np.argsort(d[d <= tol])]
+        else:
+            pts = pts[rng.permutation(len(pts))]
+        for p in pts:
+            if far(p, others):
+                return p
+        return None
+
+    out = []
+    for kind in rng.permutation(types):
+        centers, regions, need_used = [], [], []
+        for _ in range(n_pairs):
+            need, got = float(I["min_tissue_fraction"]), None
+            while got is None and need >= 0.4 - 1e-9:
+                pts = np.argwhere(cand["cortical"] & (tf >= need))
+                for p in pts[rng.permutation(len(pts))][:400]:
+                    if not far(p, allc + centers):
+                        continue
+                    m = p.astype(float).copy()
+                    m[lr] = 2 * mid - m[lr]
+                    q = pick("cortical", need, allc + centers + [p], near=m)
+                    if q is not None:
+                        got = (p, q)
+                        break
+                if got is None:
+                    need -= 0.1
+            if got is None:
+                raise RuntimeError(f"no mirrored cortical pair left for the {kind} network (separation {sep} mm)")
+            centers += list(got)
+            regions += ["cortical_pair", "cortical_pair"]
+            need_used.append(round(need, 2))
+        for _ in range(n_inf):
+            need, p = float(I["min_tissue_fraction"]), None
+            while p is None and need >= 0.4 - 1e-9:
+                p = pick("inferior", need, allc + centers)
+                if p is None:
+                    need -= 0.1
+            if p is None:
+                raise RuntimeError(f"no inferior sphere left for the {kind} network (separation {sep} mm)")
+            centers.append(p)
+            regions.append("inferior")
+            need_used.append(round(need, 2))
+        allc += centers
+        out.append({"id": f"network_{kind}", "region": "network", "type": str(kind),
+                    "centers": [[int(x) for x in c] for c in centers], "center": [int(x) for x in centers[0]],
+                    "sphere_regions": regions, "tissue_fraction_required_min": min(need_used)})
+    return out
+
+
 def mirror_path(e1: Path, root: Path) -> Path:
     """Where the injected echo 1 goes: root / <path from the first all-digit folder (the subject) down>,
     so a subject number found in the path stays the same (mbme_tedana and mejoint read it from there)."""
@@ -213,7 +301,8 @@ def mirror_path(e1: Path, root: Path) -> Path:
     return root / rel
 
 
-def make_dir(run_dir, cfg: dict, level: str, seed: int, out_dir, baseline_frontend, tissue_dir=None, log=print) -> dict:
+def make_dir(run_dir, cfg: dict, level: str, seed: int, out_dir, baseline_frontend, tissue_dir=None, log=print,
+             layout: str | None = None) -> dict:
     """Write injected raw echoes for one run, plus the truth (sources, weights, time courses) and an
     mbme_tedana list file. Skips when truth.json already holds the same settings."""
     import hashlib
@@ -226,7 +315,10 @@ def make_dir(run_dir, cfg: dict, level: str, seed: int, out_dir, baseline_fronte
     I = cfg["inject"]
     if level not in I["levels"]:
         raise ValueError(f"level must be one of {list(I['levels'])}")
-    params = {"run": run_dir.name, "level": level, "seed": int(seed), "inject": I,
+    layout = layout or str(I.get("layout", "focal"))
+    if layout not in ("focal", "network"):
+        raise ValueError("layout must be focal or network")
+    params = {"run": run_dir.name, "level": level, "seed": int(seed), "inject": I, "layout": layout,
               "project_seed": int(cfg["project_seed"])}
     phash = hashlib.sha256(json.dumps(params, sort_keys=True).encode()).hexdigest()[:16]
     tj = out_dir / "truth.json"
@@ -249,12 +341,16 @@ def make_dir(run_dir, cfg: dict, level: str, seed: int, out_dir, baseline_fronte
             classes3d = np.zeros(mask3d.shape, np.int8)
             classes3d[mask3d] = cl
     subj = int(info["subject"]) if str(info["subject"]).isdigit() else 0
-    rng = np.random.default_rng(io.seed_sequence(cfg, subj, 7, list(I["levels"]).index(level), int(seed)))
-    src = place_sources(mask3d, mimg.affine, voxel_mm, cfg, rng, classes3d)
+    key = (subj, 7, list(I["levels"]).index(level), int(seed)) + ((1,) if layout == "network" else ())
+    rng = np.random.default_rng(io.seed_sequence(cfg, *key))
+    if layout == "network":
+        src = place_networks(mask3d, mimg.affine, voxel_mm, cfg, rng, classes3d)
+    else:
+        src = place_sources(mask3d, mimg.affine, voxel_mm, cfg, rng, classes3d)
     for s in src:
         a, b = amplitudes(s["type"], I["levels"][level], float(I["mixed_ratio_ms"]))
         s.update({"a_sd": a, "b_sd_per_s": b})
-    W3 = weight_maps(mask3d.shape, [s["center"] for s in src], float(I["radius_mm"]), voxel_mm, mask3d)
+    W3 = weight_maps(mask3d.shape, [s.get("centers", s["center"]) for s in src], float(I["radius_mm"]), voxel_mm, mask3d)
     U = time_courses(T, float(cfg["acquisition"]["tr_s"]), I["band_hz"], len(src), rng)
     for i, s in enumerate(src):
         s["n_voxels"] = int((W3[..., i] > 0).sum())
@@ -280,7 +376,7 @@ def make_dir(run_dir, cfg: dict, level: str, seed: int, out_dir, baseline_fronte
     np.savetxt(out_dir / "volumes_used_injected.tsv", vols, fmt="%d", delimiter="\t",
                header="\t".join(f"echo{k + 1}" for k in range(vols.shape[1])), comments="")
     (out_dir / "list.txt").write_text(str(e1_new) + "\n")
-    truth = {"run": run_dir.name, "run_dir": str(run_dir), "level": level, "seed": int(seed), "params_hash": phash,
+    truth = {"run": run_dir.name, "run_dir": str(run_dir), "level": level, "layout": layout, "seed": int(seed), "params_hash": phash,
              "te_ms": te, "n_frames": int(T), "radius_mm": float(I["radius_mm"]), "voxel_mm": voxel_mm,
              "mixed_ratio_ms": float(I["mixed_ratio_ms"]), "band_hz": list(I["band_hz"]),
              "baseline_frontend": str(fe), "tissue_dir": None if tissue_dir is None else str(tissue_dir),
@@ -588,7 +684,8 @@ def recover_dir(inject_dir, frontend_dir, k_dir, mbme_run=None, baseline_k_dir=N
     pca = stacked_pca(c0, c1)
     rows = recover(c0, c1, R, Q, M, W, U, a, b, truth["te_ms"], maps, FP, cj["components"], te_rows, ted, fpi, pca)
     for r, s in zip(rows, src):
-        r.update({"id": s["id"], "type": s["type"], "region": s["region"], "center": s["center"], "a_sd": s["a_sd"],
+        r.update({"id": s["id"], "type": s["type"], "region": s["region"], "center": s["center"], "n_voxels": s.get("n_voxels"),
+                  "n_spheres": len(s.get("centers", [s["center"]])), "a_sd": s["a_sd"],
                   "b_sd_per_s": s["b_sd_per_s"]})
     inj = {r["best_component"] - 1 for r in rows if r["r"] >= 0.5}
     nat = {"available": False}
@@ -602,7 +699,7 @@ def recover_dir(inject_dir, frontend_dir, k_dir, mbme_run=None, baseline_k_dir=N
         nat["native_curvature_fraction"] = [te_rows[j]["curvature_fraction"] for j in range(len(te_rows))
                                             if j not in inj and cj["components"][j].get("above_null")
                                             and te_rows[j].get("curvature_fraction") is not None]
-    out = {"run": truth["run"], "level": truth["level"], "seed": truth["seed"], "k": int(M.shape[1]),
+    out = {"run": truth["run"], "level": truth["level"], "layout": truth.get("layout", "focal"), "seed": truth["seed"], "k": int(M.shape[1]),
            "inject_dir": str(idir), "frontend_dir": str(fe), "k_dir": str(kd), "mbme_run": None if mbme_run is None else str(mbme_run),
            "baseline_k_dir": None if baseline_k_dir is None else str(baseline_k_dir), "notes": notes,
            "tedana_found": ted is not None, "null_threshold": cj.get("null", {}).get("threshold"),
@@ -633,7 +730,7 @@ def _f(v, fmt=".3f"):
 
 
 def render(out: dict, truth: dict) -> str:
-    L = [f"# Injection recovery: {out['run']}, level {out['level']}, seed {out['seed']}, k = {out['k']}", ""]
+    L = [f"# Injection recovery: {out['run']}, {out.get('layout', 'focal')} sources, level {out['level']}, seed {out['seed']}, k = {out['k']}", ""]
     L += [f"{len(out['sources'])} sources injected into the raw echoes (radius {truth['radius_mm']} mm, band "
           f"{truth['band_hz'][0]}-{truth['band_hz'][1]} Hz), then the unchanged pipeline. Amplitudes are temporal SDs at "
           "the source centre; 'kept' = the share that survives the nuisance projection.", ""]
@@ -734,7 +831,7 @@ def figure(out, truth, kd, mask3d, W3, U, M, path) -> None:
                      fontsize=8.5, loc="left")
         if i == 0:
             ax.legend(fontsize=7, frameon=False)
-        z = int(r["center"][2])
+        z = int(np.argmax(W3[..., i].sum(axis=(0, 1))))                # the slice holding most of the source
         cont = W3[:, :, z, i].T > 0
         for col, vol, name, unit in ((1, q4, "dR2*", "s^-1"), (2, s4, "dS0/S0", "")):
             ax = axs[i, col]
@@ -760,7 +857,7 @@ def figure(out, truth, kd, mask3d, W3, U, M, path) -> None:
             ax.legend(fontsize=7, frameon=False)
     axs[-1, 0].set_xlabel("time (s)")
     axs[-1, 3].set_xlabel("TE (ms)")
-    fig.suptitle(f"{out['run']}, {out['level']} (seed {out['seed']}), k {out['k']}: injected sources and their best components",
+    fig.suptitle(f"{out['run']}, {out.get('layout', 'focal')} {out['level']} (seed {out['seed']}), k {out['k']}: injected sources and their best components",
                  x=0.01, ha="left", fontsize=10)
     fig.tight_layout()
     fig.savefig(path, dpi=100)
@@ -777,25 +874,25 @@ def summary(root, out_dir=None) -> dict:
     rows, nat_eta, nat_curv = [], [], []
     for rc in recs:
         for r in rc["sources"]:
-            rows.append({"run": rc["run"], "level": rc["level"], "seed": rc["seed"], **r})
+            rows.append({"run": rc["run"], "level": rc["level"], "layout": rc.get("layout", "focal"), "seed": rc["seed"], **r})
         nat_eta += rc["natives"].get("native_eta_above_null") or []
         nat_curv += rc["natives"].get("native_curvature_fraction") or []
     groups = {}
     for r in rows:
-        groups.setdefault((r["type"], r["level"]), []).append(r)
+        groups.setdefault((r["layout"], r["type"], r["level"]), []).append(r)
     rec_r = None
     try:
         rec_r = float(io.load_config()["inject"]["recovered_r"])
     except Exception:
         rec_r = 0.9
     table = []
-    for (kind, level), rs in sorted(groups.items()):
+    for (layout, kind, level), rs in sorted(groups.items()):
         found = [r for r in rs if r["r"] >= rec_r]
         med = lambda key, src=found: (float(np.nanmedian([np.nan if r.get(key) is None else float(r[key]) for r in src]))
                                       if src else None)
         rng_ = lambda key: ([round(float(np.nanmin(v)), 3), round(float(np.nanmax(v)), 3)]
                             if (v := [float(r[key]) for r in found if r.get(key) is not None]) else None)
-        table.append({"type": kind, "level": level, "n": len(rs), "n_recovered": len(found),
+        table.append({"layout": layout, "type": kind, "level": level, "n": len(rs), "n_recovered": len(found),
                       "n_above_null": sum(bool(r.get("above_null")) for r in found),
                       "eta_ica_median": med("eta_ica"), "eta_ica_range": rng_("eta_ica"),
                       "eta_oracle_median": med("eta_oracle", rs), "eta_oracle_range": ([round(float(np.nanmin(v)), 3), round(float(np.nanmax(v)), 3)]
@@ -832,10 +929,10 @@ def render_summary(res: dict) -> str:
     L = ["# Injection calibration: known sources through the real pipeline", "",
          f"{res['n_recoveries']} injection runs. Recovered = best component |r| >= {res['recovered_r']}. "
          "eta ICA, ratio and curvature are over recovered sources; eta oracle (true time course, no ICA) over all.", "",
-         "| type | level | n | recovered | above null | eta ICA median [range] | eta oracle median [range] | ratio ICA (ms) | ratio oracle (ms) | dR2* rec/true | dS0 rec/true | curvature te-check | curvature at source (ICA / oracle) | te-check zero crossings | labels |",
-         "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+         "| sources | type | level | n | recovered | above null | eta ICA median [range] | eta oracle median [range] | ratio ICA (ms) | ratio oracle (ms) | dR2* rec/true | dS0 rec/true | curvature te-check | curvature at source (ICA / oracle) | te-check zero crossings | labels |",
+         "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for t in res["table"]:
-        L.append(f"| {t['type']} | {t['level']} | {t['n']} | {t['n_recovered']} | {t['n_above_null']} | "
+        L.append(f"| {t.get('layout', 'focal')} | {t['type']} | {t['level']} | {t['n']} | {t['n_recovered']} | {t['n_above_null']} | "
                  f"{_f(t['eta_ica_median'])} {_f(t['eta_ica_range'])} | {_f(t['eta_oracle_median'])} {_f(t['eta_oracle_range'])} | "
                  f"{_f(t['ratio_ms_ica_median'], '.1f')} | {_f(t['ratio_ms_oracle_median'], '.1f')} | {_f(t['b_ratio_median'], '.2f')} | "
                  f"{_f(t['a_ratio_median'], '.2f')} | {_f(t['curvature_fraction_median'], '.4f')} | "
@@ -843,10 +940,10 @@ def render_summary(res: dict) -> str:
                  f"{', '.join(f'{k} {v}' for k, v in t['labels'].items())} |")
     L += ["", "All sources (found or not): best component |r|, the oracle eta at the source's own voxels, and detectability "
               "(source energy vs the white-noise PCA limit; share of the time course in the top 50 PCA dimensions, chance 50 / T; k needed for 80 %).", "",
-          "| type | level | best r median (max) | eta oracle at source | source energy | white-noise limit | captured top 50 | k for 80 % |",
-          "|---|---|---|---|---|---|---|---|"]
+          "| sources | type | level | best r median (max) | eta oracle at source | source energy | white-noise limit | captured top 50 | k for 80 % |",
+          "|---|---|---|---|---|---|---|---|---|"]
     for t in res["table"]:
-        L.append(f"| {t['type']} | {t['level']} | {_f(t.get('best_r_median'), '.2f')} ({_f(t.get('best_r_max'), '.2f')}) | "
+        L.append(f"| {t.get('layout', 'focal')} | {t['type']} | {t['level']} | {_f(t.get('best_r_median'), '.2f')} ({_f(t.get('best_r_max'), '.2f')}) | "
                  f"{_f(t.get('eta_oracle_footprint_median'))} | {_f(t.get('source_energy_median'), '.1f')} | "
                  f"{_f(t.get('detection_limit_white'), '.1f')} | {_f(t.get('captured_top50_median'))} | {_f(t.get('k_for_80pct_median'), '.0f')} |")
     ne = res["native_eta_above_null"]
