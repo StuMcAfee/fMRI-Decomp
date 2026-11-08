@@ -187,7 +187,11 @@ def test_files_end_to_end(tmp_path):
     (ird / "result.json").write_text(json.dumps({**res, "input_echo1": files[0]}))
     frontend.run_subject(ird, cfg, tmp_path / "fe1", source="raw")
     decompose.run_dir(tmp_path / "fe1", cfg, tmp_path / "dec" / "k6", 6)
+    from mejoint import eta_background
+    eb = eta_background.run_dir(tmp_path / "fe1", tmp_path / "dec" / "k6", io.merge(cfg, {"metrics": {"background": {"n": 10}}}))
+    assert len(eb["components"]) == 6 and (tmp_path / "dec" / "k6" / "eta_background.md").exists()
     out = inject.recover_dir(idir, tmp_path / "fe1", tmp_path / "dec" / "k6", mbme_run=ird)
+    assert all("bgc_eta_shift" in r and "bgc_eta_support_phase" in r for r in out["sources"])
     for f in ("recovery.json", "recovery.md", "recovery.png"):
         assert (idir / f).exists(), f
     assert out["notes"] == []

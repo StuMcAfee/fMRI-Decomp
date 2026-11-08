@@ -197,7 +197,7 @@ decompose:                    # Phase 4 option 1: joint spatial ICA on [c0 | c1]
   max_iter: 1000
   tol: 1.0e-6
   fun: logcosh
-  k_sweep_fixed: [50, 70, 90]   # plus MAPCA AIC / KIC / MDL from the Phase 3 rank output (no gated k; user decision 2026-11-04)
+  k_sweep_fixed: [50, 70, 90, 150]   # plus MAPCA AIC / KIC / MDL (no gated k; 2026-11-04); 150 added 2026-11-08: the working k (injection: networks separate there)
 
 metrics:                      # Phase 4 per-component measurements
   n_null: 200                   # single random Gaussian / phase-randomized time courses (reported only: they ignore that components are top-variance directions)
@@ -211,6 +211,10 @@ metrics:                      # Phase 4 per-component measurements
   band_mc: 100                  # Monte Carlo draws per component for the matched-SNR eta bands
   n_boot: 100                   # block bootstrap of frames for ||s||, ||q|| intervals
   boot_block_frames: 20         # 15 s blocks at TR 0.75 s
+  background:                   # background-corrected eta (eta_background.py; user decision 2026-11-08)
+    n: 50                       # surrogates per component and method
+    methods: [shift, phase]     # shift: circular shift of the component's own time course (primary); phase: phase randomization
+    min_shift_s: 30.0           # smallest circular shift (s): beyond the autocorrelation of slow signals
 
 inject:                       # Phase 5 injection calibration (user decision 2026-11-06): known sources added to the RAW echoes
   radius_mm: 10.0               # each source: cos^2 taper from its centre to zero at this radius (~100 voxels)
@@ -225,7 +229,7 @@ inject:                       # Phase 5 injection calibration (user decision 202
   deep_min_mm: 15.0             # deep: centre at least radius + 15 mm from the mask edge, upper two thirds
   min_tissue_fraction: 0.8      # share of the sphere in tissue or mixed classes (data-only classes); relaxed in 0.1 steps if needed
   min_separation_mm: 30.0       # between source centres
-  k: 50                         # decomposition of the injected data (the k of the te-check and sweep tables)
+  k: 150                        # decomposition of new injection runs (user decision 2026-11-08: working k = 150; the first runs used 50)
   recovered_r: 0.9              # a source counts as recovered when its best component time course has |r| >= this
   layout: focal                 # focal: one sphere per source (first runs); network: each source a set of spheres sharing one time course
   network:                      # network layout (user decision 2026-11-07): ~7 x 118 = ~800 voxels per network

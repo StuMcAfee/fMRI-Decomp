@@ -1,0 +1,46 @@
+#!/bin/bash
+# Background-corrected eta for one participant (user decision 2026-11-08):
+#   native components: the joint ICA of the original run at each k (k = 150 is computed here if missing, into the
+#   same sweep folder), then `mejoint eta-background` in each k folder;
+#   injected sources: every injection folder of this run (outputs/inject/<run>/*_s*/) that has a decomposition at
+#   that k: `mejoint eta-background`, then the recovery again (it reads the corrected eta of the matched component).
+# Arguments: <subject number or run folder name> [k ...] (default: 50 90 150)
+# Submitted by scripts/submit_eta_background.sh.
+set -uo pipefail
+RUNARG="${1:-}"; shift || true
+KS=("$@"); [ ${#KS[@]} -gt 0 ] || KS=(50 90 150)
+PY="${MEJOINT_PY:-$HOME/miniconda3_new/envs/mejoint/bin/python}"
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}" PYTHONUNBUFFERED=1
+NT="${LSB_DJOB_NUMPROC:-8}"
+threads() { export OMP_NUM_THREADS="$1" MKL_NUM_THREADS="$1" OPENBLAS_NUM_THREADS="$1"; }
+if [ -d "outputs/phase2/$RUNARG" ]; then NAME="$RUNARG"; else NAME="$(ls -d outputs/phase2/sub-"$RUNARG"_* 2>/dev/null | head -n 1)"; NAME="${NAME:+$(basename "$NAME")}"; fi
+FE="outputs/phase2/$NAME/mc"; P4="outputs/phase5/$NAME/phase4_sweep_mc"; TIS="outputs/tissue/$NAME/mc"
+[ -n "$NAME" ] && [ -f "$FE/c0.npy" ] || { echo "PREFLIGHT FAILED: no front end for '$RUNARG' (outputs/phase2/<run>/mc)" >&2; exit 2; }
+TISARG=(); [ -f "$TIS/classes.npy" ] && TISARG=(--tissue-dir "$TIS")
+echo "== background-corrected eta | $NAME | k ${KS[*]} | $(date) | host $(hostname) | job ${LSB_JOBID:-interactive} | cores $NT | git $(git rev-parse --short HEAD 2>/dev/null || echo '?')"
+step() { local name="$1"; shift; echo; echo "== [$name] start $(date)"; if "$@"; then echo "== [$name] ok $(date)"; else echo "== [$name] FAILED (exit $?) $(date)"; fi; }
+for K in "${KS[@]}"; do
+    if [ ! -f "$P4/k$K/components.json" ]; then
+        threads 1
+        step "native joint ICA k=$K" "$PY" -m mejoint.cli decompose --frontend-dir "$FE" --out "$P4" --k "$K" "${TISARG[@]}"
+    fi
+    threads "$NT"
+    [ -f "$P4/k$K/time_courses.tsv" ] && step "native eta-background k=$K" "$PY" -m mejoint.cli eta-background --frontend-dir "$FE" --k-dir "$P4/k$K"
+done
+for IDIR in outputs/inject/"$NAME"/*_s*/; do
+    IDIR="${IDIR%/}"; FE1="$IDIR/frontend_mc"
+    [ -f "$FE1/c0.npy" ] || continue
+    IRUN="$(ls -d "$IDIR"/OUT/*/ 2>/dev/null | head -n 1)"; IRUN="${IRUN%/}"
+    for K in "${KS[@]}"; do
+        KD="$IDIR/decompose/k$K"
+        [ -f "$KD/components.json" ] || { echo "$KD: no decomposition (run scripts/submit_inject_k_sweep.sh); skipped"; continue; }
+        threads "$NT"
+        step "injection eta-background $(basename "$IDIR") k=$K" "$PY" -m mejoint.cli eta-background --frontend-dir "$FE1" --k-dir "$KD"
+        OUTN="recovery_k$K"; [ "$K" = 50 ] && OUTN="recovery"
+        ARGS=(); [ -n "$IRUN" ] && ARGS+=(--mbme-run "$IRUN"); [ -f "$P4/k$K/time_courses.tsv" ] && ARGS+=(--baseline-k-dir "$P4/k$K")
+        step "injection recovery $(basename "$IDIR") k=$K" "$PY" -m mejoint.cli inject-recover --inject-dir "$IDIR" --frontend-dir "$FE1" \
+            --k-dir "$KD" --out-name "$OUTN" "${ARGS[@]}"
+    done
+done
+echo; echo "== done $(date)"

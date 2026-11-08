@@ -153,6 +153,18 @@ def main(argv=None) -> int:
     isu.add_argument("--out", help="output folder (default: --root)")
     isu.add_argument("--config", help="config YAML (default: configs/default.yaml)")
 
+    ebg = sub.add_parser("eta-background", help="background-corrected eta per component (circular-shift and phase surrogates)")
+    ebg.add_argument("--frontend-dir", required=True, help="front end the decomposition was run on")
+    ebg.add_argument("--k-dir", required=True, help="decomposition folder (time_courses.tsv)")
+    ebg.add_argument("--n", type=int, help="surrogates per component and method (default metrics.background.n)")
+    ebg.add_argument("--config", help="config YAML (default: configs/default.yaml)")
+    ebs = sub.add_parser("eta-background-summary", help="native components across runs: background-corrected eta by k")
+    ebs.add_argument("--phase5-root", default="outputs/phase5")
+    ebs.add_argument("--out", default="outputs/eta_background")
+    ebs.add_argument("--k", type=int, action="append", help="k (repeatable; default 50, 90, 150)")
+    ebs.add_argument("--runs", nargs="*", help="only runs whose folder name contains one of these (e.g. P04 P12)")
+    ebs.add_argument("--config", help="config YAML (default: configs/default.yaml)")
+
     args = ap.parse_args(argv)
     if args.cmd == "inventory" and not (args.nifti_dir or args.run_dir):
         ap.error("give --run-dir (preferred) or --nifti-dir")
@@ -271,6 +283,16 @@ def main(argv=None) -> int:
         from . import inject
         inject.summary(args.root, args.out)
         print(open(Path(args.out or args.root) / "inject_summary.md").read())
+    elif args.cmd == "eta-background":
+        from . import eta_background
+        eta_background.run_dir(args.frontend_dir, args.k_dir, cfg, n=args.n)
+        print(open(f"{args.k_dir}/eta_background.md").read().split("\n| comp")[0])
+    elif args.cmd == "eta-background-summary":
+        from pathlib import Path
+
+        from . import eta_background
+        eta_background.summary(args.phase5_root, args.out, ks=tuple(args.k or [50, 90, 150]), runs=args.runs)
+        print(open(Path(args.out) / "eta_background_summary.md").read())
     elif args.cmd == "inventory-summary":
         from . import inventory
         inventory.write_summary(args.out, cfg)

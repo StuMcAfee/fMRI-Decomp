@@ -720,6 +720,14 @@ def recover_dir(inject_dir, frontend_dir, k_dir, mbme_run=None, baseline_k_dir=N
         r.update({"id": s["id"], "type": s["type"], "region": s["region"], "center": s["center"], "n_voxels": s.get("n_voxels"),
                   "n_spheres": len(s.get("centers", [s["center"]])), "a_sd": s["a_sd"],
                   "b_sd_per_s": s["b_sd_per_s"]})
+    ebj = kd / "eta_background.json"
+    if ebj.exists():
+        eb_rows = {c["component"]: c for c in json.loads(ebj.read_text())["components"]}
+        for r in rows:
+            c = eb_rows.get(r["best_component"], {})
+            for key, v in c.items():
+                if key.startswith(("eta_", "p_", "background_eta_", "energy_over_background_", "n_support")) and key != "eta_reported":
+                    r[f"bgc_{key}"] = v
     inj = {r["best_component"] - 1 for r in rows if r["r"] >= 0.5}
     nat = {"available": False}
     if baseline_k_dir is not None and (Path(baseline_k_dir) / "time_courses.tsv").exists():
@@ -953,6 +961,10 @@ def summary(root, out_dir=None) -> dict:
                       "eta_oracle_footprint_bgfree_median": med("eta_oracle_footprint_bgfree", rs),
                       "background_eta_footprint_median": med("background_eta_footprint", rs),
                       "source_over_background_median": med("source_over_background", rs),
+                      "n_r07": sum(float(r["r"]) >= 0.7 for r in rs),
+                      **{f"bgc_{key}_median": med(f"bgc_{key}", [r for r in rs if float(r["r"]) >= 0.7])
+                         for key in ("eta_shift", "eta_support_shift", "eta_phase", "eta_support_phase", "p_shift", "p_support_shift")},
+                      "eta_reported_r07_median": med("eta_ica", [r for r in rs if float(r["r"]) >= 0.7]),
                       "k_for_80pct_median": med("k_for_80pct", rs),
                       "labels": {lab: sum(r.get("label") == lab for r in found) for lab in
                                  sorted({str(r.get("label")) for r in found})}})
@@ -997,6 +1009,21 @@ def render_summary(res: dict) -> str:
                  f"{_f(t.get('k_for_80pct_median'), '.0f')} | {_f(t.get('source_energy_median'), '.1f')} | "
                  f"{_f(t.get('source_over_background_median'), '.1f')} | {_f(t.get('eta_oracle_footprint_median'), '.2f')} | "
                  f"{_f(t.get('eta_oracle_footprint_bgfree_median'), '.2f')} ({_f(t.get('background_eta_footprint_median'), '.2f')}) |")
+    if any(t.get("n_r07") for t in res["table"]):
+        L += ["", "Background-corrected eta of the matched component (`mejoint eta-background`), sources whose best component "
+                  "has |r| >= 0.7. Whole brain and support (the component's own voxels, chosen in one half of the run and "
+                  "measured in the other); circular-shift and phase surrogates; p: share of circular shifts with at least the "
+                  "component's energy. Truth: the oracle eta at the source without background.", "",
+              "| sources | k | type | level | n (r >= 0.7) | eta reported | shift: brain | shift: support | phase: brain | phase: support | p shift (brain / support) | truth |",
+              "|---|---|---|---|---|---|---|---|---|---|---|---|"]
+        for t in res["table"]:
+            if not t.get("n_r07"):
+                continue
+            L.append(f"| {t['layout']} | {t['k']} | {t['type']} | {t['level']} | {t['n_r07']} | {_f(t.get('eta_reported_r07_median'), '.2f')} | "
+                     f"{_f(t.get('bgc_eta_shift_median'), '.2f')} | {_f(t.get('bgc_eta_support_shift_median'), '.2f')} | "
+                     f"{_f(t.get('bgc_eta_phase_median'), '.2f')} | {_f(t.get('bgc_eta_support_phase_median'), '.2f')} | "
+                     f"{_f(t.get('bgc_p_shift_median'), '.3f')} / {_f(t.get('bgc_p_support_shift_median'), '.3f')} | "
+                     f"{_f(t.get('eta_oracle_footprint_bgfree_median'), '.2f')} |")
     ne = res["native_eta_above_null"]
     if ne["n"]:
         L += ["", f"Native components above the null in the same decompositions: eta median {ne['median']:.3f} "
