@@ -566,14 +566,17 @@ def recover(c0, c1, R, Q, M, W, U, a, b, te_ms, maps: dict, footprint=None, comp
         sb = np.sign(b[i]) if b[i] != 0 else 1.0
         row["profile_expected_pct"] = [round(float(100 * rho[i] * (sb * a[i] - t / 1000.0 * abs(b[i]))), 4) for t in te]
         if fp_inputs is not None:
-            fpp = footprint_profile(fp_inputs["ch"], fp_inputs["mu"], fp_inputs["sigma"], fp_inputs["ratios"], fp_inputs["use"],
-                                    te, np.column_stack([sg * Mz[:, j], Ut[:, i]]), w)
-            row["profile_footprint_pct"] = [round(float(100 * x), 4) for x in fpp["profile"][:, 0]]
-            row["profile_footprint_oracle_pct"] = [round(float(100 * x), 4) for x in fpp["profile"][:, 1]]
-            row["curvature_fraction_footprint"] = round(float(fpp["curvature_fraction"][0]), 5) if np.isfinite(fpp["curvature_fraction"][0]) else None
-            row["curvature_fraction_footprint_oracle"] = (round(float(fpp["curvature_fraction"][1]), 5)
-                                                          if np.isfinite(fpp["curvature_fraction"][1]) else None)
-            row["footprint_profile_voxels"] = fpp["n_voxels"]
+            # the component and the true time course are fitted SEPARATELY (fitted together, two near-copies of the
+            # same time course split the signal between them; fixed 2026-11-08)
+            fp_args = (fp_inputs["ch"], fp_inputs["mu"], fp_inputs["sigma"], fp_inputs["ratios"], fp_inputs["use"], te)
+            fpc = footprint_profile(*fp_args, (sg * Mz[:, j])[:, None], w)
+            fpo = footprint_profile(*fp_args, Ut[:, [i]], w)
+            row["profile_footprint_pct"] = [round(float(100 * x), 4) for x in fpc["profile"][:, 0]]
+            row["profile_footprint_oracle_pct"] = [round(float(100 * x), 4) for x in fpo["profile"][:, 0]]
+            cfc, cfo = fpc["curvature_fraction"][0], fpo["curvature_fraction"][0]
+            row["curvature_fraction_footprint"] = round(float(cfc), 5) if np.isfinite(cfc) else None
+            row["curvature_fraction_footprint_oracle"] = round(float(cfo), 5) if np.isfinite(cfo) else None
+            row["footprint_profile_voxels"] = fpc["n_voxels"]
             row["profile_expected_signed_pct"] = [round(float(100 * rho[i] * (a[i] - t / 1000.0 * b[i])), 4) for t in te]
         if tmix is not None:
             ct = Ut[:, i] @ tmix / T

@@ -234,3 +234,36 @@ def test_place_networks_mirrored_and_separated():
     n = (W > 0).sum(axis=(0, 1, 2))
     assert np.all(n > 6 * 80), n                                         # ~7 spheres of ~118 voxels each
     assert np.all((W > 0).sum(-1) <= 1)                                  # networks do not overlap
+
+
+def test_footprint_profile_recovers_the_echo_profile():
+    """Synthetic channels built like the front end's (per-voxel QR of the whitened design, first two column signs
+    fixed): footprint_profile of the true time course returns the injected echo profile (-TE b) at the centre,
+    with no curvature; a second regressor that copies the time course would split it (why the component and the
+    oracle are fitted separately since 2026-11-08)."""
+    from mejoint import te_check as tc
+    rng = np.random.default_rng(SEED)
+    V, T = 60, 600
+    te = np.array(TE)
+    mu = 1000 * np.exp(-te[None, :] / rng.uniform(35, 55, (V, 1)))
+    sigma = np.full(V, 10.0)
+    ratios = np.array([1, 0.721, 0.631, 0.560])
+    m = (mu / ratios[None, :]) / sigma[:, None]
+    Q, R = np.linalg.qr(m[:, :, None] * tc.design(te)[None])
+    sg = np.sign(np.diagonal(R, axis1=1, axis2=2)[:, :2]); Q[:, :, :2] *= sg[:, None, :]
+    u = inject.time_courses(T, 0.75, [0.01, 0.1], 1, rng)[:, 0]
+    w = np.ones(V)
+    b = 0.5
+    y = (-te[None, :, None] / 1000 * b) * u[None, None, :] + rng.standard_normal((V, 4, T)) * (ratios[None, :, None] * sigma[:, None, None] / mu[:, :, None])
+    ch4 = np.einsum("veq,vet->vqt", Q, m[:, :, None] * y)
+    ch = {"c0": ch4[:, 0], "c1": ch4[:, 1], "r0": ch4[:, 2], "r1": ch4[:, 3]}
+    use = np.ones((V, 4), bool)
+    one = inject.footprint_profile(ch, mu, sigma, ratios, use, te, u[:, None], w)
+    assert np.allclose(one["profile"][:, 0], -te / 1000 * b, atol=0.002), one["profile"][:, 0]
+    assert abs(one["curvature_fraction"][0]) < 0.02
+    comp = u + 0.4 * rng.standard_normal(T)                            # a component: the truth plus estimation noise
+    sep = inject.footprint_profile(ch, mu, sigma, ratios, use, te, comp[:, None] / comp.std(), w)
+    two = inject.footprint_profile(ch, mu, sigma, ratios, use, te, np.column_stack([comp / comp.std(), u]), w)
+    full = np.abs(te / 1000 * b).max()
+    assert np.abs(sep["profile"][:, 0]).max() > 0.8 * full             # fitted alone: most of the profile
+    assert np.abs(two["profile"][:, 0]).max() < 0.2 * full             # fitted with the truth: the truth takes it
