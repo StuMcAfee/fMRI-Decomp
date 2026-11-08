@@ -1033,3 +1033,11 @@ The focal test asked the decomposition to find 10 mm spheres; the aim is distrib
 - **The circular-shift p is descriptive, not a significance test:** a component's time course is fitted to the same data, so it beats shifted copies of itself even on pure noise (dry run: all six noise components p <= 0.02). Which components count stays with the pipeline null (surrogate data through the same selection, `above_null`); the summaries select components that way.
 - **Also:** a single-k decomposition into an existing sweep folder now adds its row to sweep.json / sweep.md instead of replacing them. Recovery reads `eta_background.json` of the k folder and reports the corrected eta of the matched component next to the truth (oracle eta at the source without background).
 - **Next:** validation on the injected networks at k = 150 (corrected eta near 0 for dR2*, 1 for dS0, ~0.4 for the 32 ms mixed source), then the native components of P04 and P12 at k = 50, 90, 150.
+
+### 2026-11-08: route B planned; cerebellum excluded as an outcome region (user)
+
+User: route B (region-level separation of BOLD-like and S0-like signal, BOLD-like connectivity and integration
+measures) makes sense; work is on planning while the cluster connection is down. Cerebellar BOLD is not a focus:
+anatomy, damage and radiation delivery vary too much to interpret it; those factors are estimated in separate efforts
+and used as independent variables for their remote effects on the cerebral cortex. Draft plan for approval:
+`docs/ROUTE_B_PLAN.md` (decisions D1 to D6 listed there). Nothing is built until it is approved.
