@@ -154,8 +154,10 @@ def run_dir(anat_dir, frontend_dir, cfg: dict, tissue_dir=None, atlas: str = "20
     io.write_json(A / f"regions_{atlas}.json", summ)
     try:
         qc_figure(A, mimg, res["labels"], A / f"qc_{atlas}.png")
-        if (A / "t1_mni.nii.gz").exists() and (A / "mni_template.nii.gz").exists():
+        if (A / "t1_mni.nii.gz").exists() and ((A / "mni_template.nii.gz").exists() or (A / "mni_template_brain.nii.gz").exists()):
             qc_mni(A, A / "qc_t1_to_mni.png")
+        if all((A / f).exists() for f in ("epi2t1.nii.gz", "t1_wmseg.nii.gz", "t1.nii.gz")):
+            qc_epi_in_t1(A, A / "qc_epi_to_t1.png")
     except Exception as exc:                                           # the labels matter more than the figures
         print(f"QC figure failed: {exc}")
     return summ
@@ -169,51 +171,82 @@ def qc_mni(A: Path, path) -> None:
     import nibabel as nib
     from scipy import ndimage
     t1 = np.asarray(nib.load(str(A / "t1_mni.nii.gz")).dataobj, np.float64)
-    tpl = np.asarray(nib.load(str(A / "mni_template.nii.gz")).dataobj, np.float64)
-    brain = tpl > np.percentile(tpl[tpl > 0], 30) if (tpl > 0).any() else tpl > 0
+    if (A / "mni_template_brain.nii.gz").exists():                      # the template's brain: outline at the brain surface
+        brain = np.asarray(nib.load(str(A / "mni_template_brain.nii.gz")).dataobj, np.float64) > 0
+    else:
+        tpl = np.asarray(nib.load(str(A / "mni_template.nii.gz")).dataobj, np.float64)
+        brain = tpl > np.percentile(tpl[tpl > 0], 30) if (tpl > 0).any() else tpl > 0
     fig, axs = plt.subplots(1, 6, figsize=(15.6, 3))
     cuts = [("z", int(t1.shape[2] * f)) for f in (0.35, 0.5, 0.65)] + [("x", t1.shape[0] // 3), ("x", t1.shape[0] // 2), ("y", t1.shape[1] // 2)]
     lim = np.percentile(t1[t1 > 0], 99) if (t1 > 0).any() else 1
     for ax, (axis, i) in zip(axs, cuts):
         sl = {"x": (t1[i], brain[i]), "y": (t1[:, i], brain[:, i]), "z": (t1[:, :, i], brain[:, :, i])}[axis]
         ax.imshow(sl[0].T, origin="lower", cmap="gray", vmin=0, vmax=lim)
-        edge = sl[1] & ~ndimage.binary_erosion(sl[1])
-        ax.imshow(np.ma.masked_where(~edge.T, edge.T), origin="lower", cmap="autumn", alpha=0.9)
+        b = ndimage.binary_fill_holes(sl[1]).astype(float).T
+        if (b > 0.5).any():
+            ax.contour(b, levels=[0.5], colors="orange", linewidths=0.7)
         ax.set_xticks([]); ax.set_yticks([]); ax.set_title(f"{axis} = {i}", fontsize=8)
-    fig.suptitle(f"{A.name}: T1 in MNI space, template brain outline in orange (check by eye)", x=0.01, ha="left", fontsize=10)
+    fig.suptitle(f"{A.name}: T1 in MNI space, template brain surface in orange (check by eye)", x=0.01, ha="left", fontsize=10)
     fig.tight_layout()
     fig.savefig(path, dpi=110)
     plt.close(fig)
 
 
 def qc_figure(A: Path, mimg, labels: np.ndarray, path) -> None:
-    """Rows: the EPI mean with the T1 white-matter boundary (registration check); the region labels on the EPI."""
+    """The region labels on the EPI mean (native EPI grid), six axial slices."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     import nibabel as nib
-    from scipy import ndimage
     epi = np.asarray(nib.load(str(A / "epi_mean.nii.gz")).dataobj, np.float64)
-    wm = np.asarray(nib.load(str(A / "wm_epi.nii.gz")).dataobj) > 0.5 if (A / "wm_epi.nii.gz").exists() else None
     zs = np.linspace(int(labels.shape[2] * 0.25), int(labels.shape[2] * 0.85), 6).astype(int)
-    fig, axs = plt.subplots(2, len(zs), figsize=(2.6 * len(zs), 6))
+    fig, axs = plt.subplots(1, len(zs), figsize=(2.6 * len(zs), 3.2))
     lim = np.percentile(epi[epi > 0], 99) if (epi > 0).any() else 1
     cmap = plt.get_cmap("tab20")
-    for i, z in enumerate(zs):
-        for row in (0, 1):
-            ax = axs[row, i]
-            ax.imshow(epi[:, :, z].T, origin="lower", cmap="gray", vmin=0, vmax=lim)
-            if row == 0 and wm is not None:
-                edge = wm[:, :, z] & ~ndimage.binary_erosion(wm[:, :, z])
-                ax.imshow(np.ma.masked_where(~edge.T, edge.T), origin="lower", cmap="autumn", alpha=0.9)
-            if row == 1:
-                L = labels[:, :, z].T.astype(float)
-                ax.imshow(np.ma.masked_where(L == 0, (L % 20) / 20.0), origin="lower", cmap=cmap, vmin=0, vmax=1, alpha=0.6)
+    for ax, z in zip(axs, zs):
+        ax.imshow(epi[:, :, z].T, origin="lower", cmap="gray", vmin=0, vmax=lim)
+        L = labels[:, :, z].T.astype(float)
+        ax.imshow(np.ma.masked_where(L == 0, (L % 20) / 20.0), origin="lower", cmap=cmap, vmin=0, vmax=1, alpha=0.6)
+        ax.set_xticks([]); ax.set_yticks([])
+        ax.set_title(f"slice {z}", fontsize=8)
+    fig.suptitle(f"{A.name}: regions on the EPI (cortex parcels, thalamus, striatum)", x=0.01, ha="left", fontsize=10)
+    fig.tight_layout()
+    fig.savefig(path, dpi=110)
+    plt.close(fig)
+
+
+def _cuts(shape):
+    return [("z", int(shape[2] * f)) for f in (0.35, 0.5, 0.65)] + [("x", int(shape[0] * 0.35)), ("x", shape[0] // 2), ("y", shape[1] // 2)]
+
+
+def _slice(vol, axis, i):
+    return {"x": vol[i], "y": vol[:, i], "z": vol[:, :, i]}[axis]
+
+
+def qc_epi_in_t1(A: Path, path) -> None:
+    """Registration check at T1 resolution: the EPI mean resampled into T1 space by epi_reg (top) and the T1
+    (bottom), both with the T1 white-matter boundary (red). If the EPI is well aligned, its white matter fills
+    the red outline and the cortical ribbon sits just outside it."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import nibabel as nib
+    epi = np.asarray(nib.load(str(A / "epi2t1.nii.gz")).dataobj, np.float64)
+    wm = np.asarray(nib.load(str(A / "t1_wmseg.nii.gz")).dataobj, np.float64)
+    t1 = np.asarray(nib.load(str(A / "t1.nii.gz")).dataobj, np.float64)
+    cuts = _cuts(epi.shape)
+    fig, axs = plt.subplots(2, len(cuts), figsize=(2.7 * len(cuts), 5.8))
+    for row, img, name in ((0, epi, "EPI in T1 space"), (1, t1, "T1")):
+        pos = img[img > 0]
+        lim = np.percentile(pos, 99) if pos.size else 1
+        for ax, (axis, i) in zip(axs[row], cuts):
+            ax.imshow(_slice(img, axis, i).T, origin="lower", cmap="gray", vmin=0, vmax=lim)
+            w = _slice(wm, axis, i).T
+            if (w > 0.5).any() and (w <= 0.5).any():
+                ax.contour(w, levels=[0.5], colors="red", linewidths=0.5)
             ax.set_xticks([]); ax.set_yticks([])
-            ax.set_title(f"slice {z}", fontsize=8)
-    axs[0, 0].set_ylabel("T1 white-matter edge on EPI", fontsize=8)
-    axs[1, 0].set_ylabel("regions on EPI", fontsize=8)
-    fig.suptitle(f"{A.name}: registration and regions (check by eye)", x=0.01, ha="left", fontsize=10)
+            ax.set_title(f"{name}, {axis} = {i}", fontsize=7)
+    fig.suptitle(f"{A.name}: EPI-to-T1 registration, T1 white-matter boundary in red (check by eye)", x=0.01, ha="left", fontsize=10)
     fig.tight_layout()
     fig.savefig(path, dpi=110)
     plt.close(fig)

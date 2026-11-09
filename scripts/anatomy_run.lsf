@@ -6,7 +6,8 @@
 #   subcortical atlas into EPI space (nearest neighbour) and the grey-matter probability (trilinear). The functional
 #   data are not resampled. Then `mejoint anatomy` builds the region labels and the QC figures.
 # Arguments: <subject number or run folder name> [T1 list file]   (T1 search: list file, else regions.t1_root)
-# Outputs: outputs/anatomy/<run>/ (labels_200_7.nii.gz, regions_200_7.tsv/.json, qc_200_7.png, qc_t1_to_mni.png, ...)
+# Outputs: outputs/anatomy/<run>/ (labels_200_7.nii.gz, regions_200_7.tsv/.json, qc_epi_to_t1.png, qc_t1_to_mni.png, qc_200_7.png)
+# Rerunning skips the registrations that already exist (bet/fast, epi_reg, fnirt, invwarp) and redoes the rest.
 set -uo pipefail
 RUNARG="${1:-}"; T1LIST="${2:-}"
 PY="${MEJOINT_PY:-$HOME/miniconda3_new/envs/mejoint/bin/python}"
@@ -64,9 +65,10 @@ run flirt -in "$A/t1_fast_pve_1" -ref "$A/epi_mean" -applyxfm -init "$A/t12epi.m
 run flirt -in "$A/t1_wmseg" -ref "$A/epi_mean" -applyxfm -init "$A/t12epi.mat" -interp nearestneighbour -o "$A/wm_epi"
 run applywarp -i "$A/t1" -r "$MNI" -w "$A/t12mni_warp" -o "$A/t1_mni"
 run imcp "$MNI" "$A/mni_template"
+run imcp "$MNIB" "$A/mni_template_brain"
 # --- region labels and QC figures
 TISARG=(); [ -f "$TIS/classes.npy" ] && TISARG=(--tissue-dir "$TIS")
 for at in 200_7 400_17; do
     run "$PY" -m mejoint.cli anatomy --anat-dir "$A" --frontend-dir "$FE" --atlas "$at" "${TISARG[@]}"
 done
-echo "== done $(date): check $PWD/$A/qc_200_7.png and qc_t1_to_mni.png"
+echo "== done $(date): check $PWD/$A/qc_epi_to_t1.png, qc_t1_to_mni.png and qc_200_7.png"

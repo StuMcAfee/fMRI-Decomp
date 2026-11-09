@@ -1070,3 +1070,21 @@ approval. Work starts with the simulation tests (plan step 2), which need no clu
 ### 2026-11-09: CLAUDE.md edits approved and applied (D6)
 
 User approved all ten proposed edits (`docs/CLAUDE_md_proposal.md`, E1-E10) and they are applied: title and goal (scientific aim; route B main, joint decomposition descriptive; cerebellum excluded as an outcome region); working branch `claude/decomposition`; output folder (MEJOINT_QC) and FSL 6; participants, T1 location and the built T1 option; architecture; section 7 marked descriptive with working k = 150 and the background-corrected eta; Phase 5 outcome and route B phases R1-R5 with gates (old Phase 6 replaced by R5; waves paused); region averaging is not smoothing; three new pitfalls; outcomes (primary: effective dimensionality of cortical BOLD-like activity).
+
+### 2026-11-10: background-corrected eta fails validation; anatomy QC improved
+
+**Corrected eta against known truth (injection, k = 50 / 90 / 150; P04 and P12).** Matched components with |r| >= 0.7:
+
+| injected | k | n | eta reported | corrected, circular shift: brain / support | corrected, phase: brain / support | truth |
+|---|---|---|---|---|---|---|
+| dR2* network, strong | 150 | 2 | 0.22 | 0.21 / 0.17 | 0.22 / 0.18 | 0.05 |
+| dR2* network, weak | 150 | 1 | 0.27 | 0.20 / 0.18 | 0.20 / 0.18 | -0.06 |
+| dS0 network, strong | 150 | 2 | 0.48 | 0.43 / 0.44 | 0.43 / 0.48 | 0.88 |
+| dR2* network, strong | 50 / 90 | 1 / 1 | 0.29 / 0.24 | 0.26 / 0.22, 0.22 / 0.18 | same | 0.05 / 0.06 |
+| dR2* focal, strong | 150 | 1 | 0.39 | n/a / 0.60 | n/a / 0.92 | -0.02 |
+
+- **The correction barely moves a component's eta, and the corrected values stay pulled toward ~0.2-0.45 whatever the truth** (the dS0 network reads 0.43-0.48 against 0.88). What the surrogates remove (chance overlap with the background) is not what biases a component. A component time course that matches the injected one at |r| ~0.9 still carries ~20 % of its variance from other, native signal, and its maps pick up that native structure (eta ~0.4) by genuine covariance, over the whole brain and inside its own voxels alike.
+- **Conclusion: component-level eta cannot classify components as BOLD-like or S0-like in these data, with or without the correction.** The native components' corrected eta (k = 150: median 0.42, 10-13 of 300 below 0.2, 4-10 above 0.8) is therefore not interpretable as physiology. The joint decomposition stays descriptive (CLAUDE.md section 7), as already decided; no further work on component eta is proposed. Route B is unaffected: it uses no component time courses, and the region-level separation with the true timing gave the truth (0.05 for dR2*, 0.88 for dS0, background removed).
+- Observation, not followed up: in both participants the native eta histograms have two peaks (~0.22 and ~0.47) at every k, reported and corrected alike.
+
+**Anatomy (R2), first look (P04, P12).** T1 to MNI: the template outline follows the brain in both participants (the speckle outside the head was the outline method; it now draws the template's brain surface). Regions on the EPI: cortical parcels follow the cortex, thalamus and striatum sit in the deep grey matter, no regions in the cerebellum. EPI to T1: the old panel (white-matter edge at EPI resolution) could not be judged; replaced by `qc_epi_to_t1.png` (the EPI resampled into T1 space by epi_reg, and the T1, both with the T1 white-matter boundary at 1 mm). Rerunning `scripts/anatomy_run.lsf` reuses the registrations and only redoes the figures and labels. The R2 gate waits for that figure.
