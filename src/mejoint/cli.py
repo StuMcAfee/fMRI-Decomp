@@ -165,6 +165,13 @@ def main(argv=None) -> int:
     ebs.add_argument("--runs", nargs="*", help="only runs whose folder name contains one of these (e.g. P04 P12)")
     ebs.add_argument("--config", help="config YAML (default: configs/default.yaml)")
 
+    an = sub.add_parser("anatomy", help="route B: region labels in EPI space from the FSL outputs of scripts/anatomy_run.lsf")
+    an.add_argument("--anat-dir", required=True, help="outputs/anatomy/<run> (FSL outputs)")
+    an.add_argument("--frontend-dir", required=True, help="front end of the run (analysis_mask.nii.gz)")
+    an.add_argument("--atlas", default=None, help="Schaefer parcels_networks, e.g. 200_7 or 400_17 (default regions.atlas)")
+    an.add_argument("--tissue-dir", help="data-only tissue classes (CSF-dominated and dropout voxels left out)")
+    an.add_argument("--config", help="config YAML (default: configs/default.yaml)")
+
     args = ap.parse_args(argv)
     if args.cmd == "inventory" and not (args.nifti_dir or args.run_dir):
         ap.error("give --run-dir (preferred) or --nifti-dir")
@@ -293,6 +300,13 @@ def main(argv=None) -> int:
         from . import eta_background
         eta_background.summary(args.phase5_root, args.out, ks=tuple(args.k or [50, 90, 150]), runs=args.runs)
         print(open(Path(args.out) / "eta_background_summary.md").read())
+    elif args.cmd == "anatomy":
+        from . import anatomy
+        r = anatomy.run_dir(args.anat_dir, args.frontend_dir, cfg, tissue_dir=args.tissue_dir,
+                            atlas=args.atlas or cfg.get("regions", {}).get("atlas", "200_7"))
+        print(f"{r['atlas']}: {r['n_usable']} of {r['n_regions']} regions usable; {r['cortex_voxels']} cortical voxels "
+              f"(median {r['median_cortex_region_voxels']:.0f} per region); secondary: "
+              + ", ".join(f"{x['name']} {x['n_voxels']}" for x in r["secondary"]))
     elif args.cmd == "inventory-summary":
         from . import inventory
         inventory.write_summary(args.out, cfg)

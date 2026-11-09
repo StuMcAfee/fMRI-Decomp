@@ -10,3 +10,5 @@ outputs
 *.nii
 *.nii.gz
 logs/
+# bundled atlases (small, MIT-licensed; atlases/schaefer2018/README.md)
+!atlases/**/*.nii.gz

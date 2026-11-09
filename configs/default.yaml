@@ -216,6 +216,15 @@ metrics:                      # Phase 4 per-component measurements
     methods: [shift, phase]     # shift: circular shift of the component's own time course (primary); phase: phase randomization
     min_shift_s: 30.0           # smallest circular shift (s): beyond the autocorrelation of slow signals
 
+regions:                      # route B (docs/ROUTE_B_PLAN.md; approved 2026-11-09)
+  atlas: "200_7"                # Schaefer parcels_networks: 200_7 primary (D2), 400_17 sensitivity
+  gm_min: 0.3                   # cortical voxels need FAST grey-matter probability >= this (in EPI space)
+  min_voxels: 20                # regions with fewer voxels are kept in the table but flagged unusable (injection test sets the final value)
+  secondary: true               # left / right thalamus and striatum from Harvard-Oxford subcortical (D1)
+  t1_list: null                 # file with one T1 path per line (quotes allowed); found by subject and scan time
+  t1_root: /research_jude/rgs01_jude/dept/DI/tir/vision_lab/stu/CSIMemphis/Data/Rad   # fallback search: <t1_root>/<subject>/**/*T1*MPRAGE*.nii*
+  bet_f: 0.4                    # FSL bet fractional threshold for the T1 (children and patients: check the QC figure)
+
 inject:                       # Phase 5 injection calibration (user decision 2026-11-06): known sources added to the RAW echoes
   radius_mm: 10.0               # each source: cos^2 taper from its centre to zero at this radius (~100 voxels)
   regions: [cortical, deep, inferior]   # one source of every type per region (data-only placement, see inject.py)

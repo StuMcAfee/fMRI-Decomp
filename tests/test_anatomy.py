@@ -1,0 +1,116 @@
+"""Route B step 3, the Python side (anatomy.py); the FSL registrations run only on the cluster.
+
+- the T1 is found by subject and scan time (list file with quotes, then a folder search);
+- the bundled Schaefer label tables parse into 200 / 400 regions with hemisphere and network;
+- Harvard-Oxford subcortical labels group into left / right thalamus and striatum;
+- region labels: cortex limited to the mask, grey matter >= gm_min, no CSF / dropout voxels; thalamus and striatum
+  added after the cortex; regions below min_voxels flagged; run_dir writes labels, table and QC figure.
+"""
+from pathlib import Path
+
+import nibabel as nib
+import numpy as np
+
+from mejoint import anatomy, io
+
+REPO = Path(__file__).resolve().parents[1]
+
+
+def test_find_t1(tmp_path):
+    lst = tmp_path / "t1.txt"
+    lst.write_text('"/data/Rad/P04/SCANDATE/x/2_-_SAG/2_-_SAG_3D_T1_MPRAGE_TIMESTAMP_2.nii.gz"\n'
+                   '"/data/Rad/P04/20250101/x/SAG_3D_T1_MPRAGE_20250101000000_2.nii.gz"\n'
+                   '"/data/Rad/P15/SCANDATE/x/SAG_3D_T1_MPRAGE_TIMESTAMP_2.nii.gz"\n')
+    assert anatomy.find_t1("sub-P04_acq-TIMESTAMP_ser-5", lst).endswith("TIMESTAMP_2.nii.gz")
+    assert "P15" in anatomy.find_t1("sub-P15_acq-TIMESTAMP_ser-5", lst)
+    root = tmp_path / "Rad"
+    f = root / "P12" / "SCANDATE" / "MR" / "SAG_3D_T1_MPRAGE_TIMESTAMP_2.nii.gz"
+    f.parent.mkdir(parents=True)
+    f.write_bytes(b"")
+    assert anatomy.find_t1("sub-P12_acq-TIMESTAMP_ser-5", lst, root) == str(f)
+    assert anatomy.find_t1("sub-99999_acq-1_ser-1", lst, root) is None
+
+
+def test_schaefer_tables():
+    for n, k in ((200, 7), (400, 17)):
+        t = anatomy.schaefer_table(REPO / "atlases" / "schaefer2018" / f"Schaefer2018_{n}Parcels_{k}Networks_order.txt")
+        assert sorted(t) == list(range(1, n + 1))
+        assert {v["hemisphere"] for v in t.values()} == {"LH", "RH"}
+        nets = {v["network"] for v in t.values()}
+        assert len(nets) == k, nets
+    t7 = anatomy.schaefer_table(REPO / "atlases" / "schaefer2018" / "Schaefer2018_200Parcels_7Networks_order.txt")
+    assert {v["network"] for v in t7.values()} == {"Vis", "SomMot", "DorsAttn", "SalVentAttn", "Limbic", "Cont", "Default"}
+    img = nib.load(str(REPO / "atlases" / "schaefer2018" / "Schaefer2018_200Parcels_7Networks_order_FSLMNI152_2mm.nii.gz"))
+    assert img.shape == (91, 109, 91) and int(np.asarray(img.dataobj).max()) == 200
+
+
+def test_subcortical_groups(tmp_path):
+    names = ["Left Cerebral White Matter", "Left Cerebral Cortex", "Left Lateral Ventrical", "Left Thalamus", "Left Caudate",
+             "Left Putamen", "Left Pallidum", "Brain-Stem", "Left Hippocampus", "Left Amygdala", "Left Accumbens",
+             "Right Cerebral White Matter", "Right Cerebral Cortex", "Right Lateral Ventricle", "Right Thalamus",
+             "Right Caudate", "Right Putamen", "Right Pallidum", "Right Hippocampus", "Right Amygdala", "Right Accumbens"]
+    xml = tmp_path / "ho.xml"
+    xml.write_text("<atlas><data>" + "".join(f'<label index="{i}" x="0" y="0" z="0">{n}</label>' for i, n in enumerate(names))
+                   + "</data></atlas>")
+    vals = anatomy.ho_subcortical_values(xml)
+    assert vals[4] == "Left Thalamus" and vals[21] == "Right Accumbens"
+    g = anatomy.subcortical_groups(vals)
+    assert g[("L", "thalamus")] == [4] and sorted(g[("L", "striatum")]) == [5, 6, 11]
+    assert g[("R", "thalamus")] == [15] and sorted(g[("R", "striatum")]) == [16, 17, 21]
+    assert all(8 not in v for v in g.values())                          # brainstem never a region
+
+
+def _toy(shape=(12, 12, 8)):
+    mask = np.zeros(shape, bool); mask[1:-1, 1:-1, 1:-1] = True
+    cortex = np.zeros(shape); cortex[1:6, 1:-1, 1:-1] = 1; cortex[6:-1, 1:-1, 1:-1] = 2
+    gm = np.full(shape, 0.8); gm[1:3] = 0.1                             # a low grey-matter strip in region 1
+    sub = np.zeros(shape); sub[3:5, 3:5, 3:5] = 4; sub[8:10, 3:5, 3:5] = 16    # L thalamus inside region 1, R caudate in 2
+    classes = np.ones(shape, np.int8); classes[:, :, 1] = 3                # a CSF-dominated slice
+    table = {1: {"name": "7Networks_LH_Vis_1", "hemisphere": "LH", "network": "Vis"},
+             2: {"name": "7Networks_RH_Default_1", "hemisphere": "RH", "network": "Default"}}
+    groups = {("L", "thalamus"): [4], ("R", "thalamus"): [15], ("L", "striatum"): [5, 6, 11], ("R", "striatum"): [16, 17, 21]}
+    return mask, cortex, gm, sub, classes, table, groups
+
+
+def test_build_labels_rules():
+    mask, cortex, gm, sub, classes, table, groups = _toy()
+    r = anatomy.build_labels(cortex, sub, gm, mask, classes, table, groups, gm_min=0.3, min_voxels=20)
+    lab = r["labels"]
+    assert lab[~mask].max() == 0
+    assert np.all(lab[:, :, 1] == 0)                                   # CSF-dominated slice left out
+    assert np.all(lab[1:3] == 0)                                       # low grey matter left out (cortex)
+    ids = {row["name"]: row["id"] for row in r["regions"]}
+    assert set(ids) == {"7Networks_LH_Vis_1", "7Networks_RH_Default_1", "L_thalamus", "R_thalamus", "L_striatum", "R_striatum"}
+    # subcortical voxels inside a cortical parcel stay cortex (cortex first); R caudate in parcel 2 likewise
+    assert (lab == ids["L_thalamus"]).sum() == 0
+    rows = {row["name"]: row for row in r["regions"]}
+    assert rows["R_thalamus"]["n_voxels"] == 0 and not rows["R_thalamus"]["usable"]
+    assert rows["7Networks_LH_Vis_1"]["usable"] and rows["7Networks_LH_Vis_1"]["kind"] == "cortex"
+    r2 = anatomy.build_labels(cortex, sub, gm, mask, classes, table, groups, secondary=False)
+    assert len(r2["regions"]) == 2
+
+
+def test_run_dir_writes_outputs(tmp_path):
+    mask, cortex, gm, sub, classes, table, groups = _toy((20, 22, 16))
+    aff = np.diag([3.28, 3.28, 3.3, 1.0])
+    fe, A = tmp_path / "fe", tmp_path / "anat"
+    fe.mkdir(); A.mkdir()
+    ref = nib.Nifti1Image(mask.astype(np.uint8), aff)
+    nib.save(ref, str(fe / "analysis_mask.nii.gz"))
+    atl = np.zeros(mask.shape); atl[mask] = np.where(np.indices(mask.shape)[0][mask] < 10, 1, 101)   # LH Vis_1, RH region 101
+    for name, arr in (("schaefer_200_7_epi", atl), ("ho_sub_epi", sub), ("gm_epi", gm), ("epi_mean", mask * 100.0),
+                      ("wm_epi", (np.indices(mask.shape)[2] == 8) & mask)):
+        nib.save(nib.Nifti1Image(np.asarray(arr, np.float32), aff), str(A / f"{name}.nii.gz"))
+    names = ["Left Cerebral White Matter", "Left Cerebral Cortex", "Left Lateral Ventrical", "Left Thalamus", "Left Caudate",
+             "Left Putamen", "Left Pallidum", "Brain-Stem", "Left Hippocampus", "Left Amygdala", "Left Accumbens",
+             "Right Cerebral White Matter", "Right Cerebral Cortex", "Right Lateral Ventricle", "Right Thalamus",
+             "Right Caudate", "Right Putamen", "Right Pallidum", "Right Hippocampus", "Right Amygdala", "Right Accumbens"]
+    (A / "HarvardOxford-Subcortical.xml").write_text(
+        "<atlas><data>" + "".join(f'<label index="{i}">{n}</label>' for i, n in enumerate(names)) + "</data></atlas>")
+    cfg = io.load_config()
+    out = anatomy.run_dir(A, fe, cfg, atlas="200_7")
+    assert out["n_regions"] == 200 + 4
+    used = [r for r in out["regions"] if r["n_voxels"] > 0]
+    assert {r["id"] for r in used} == {1, 101}
+    for f in ("labels_200_7.nii.gz", "regions_200_7.tsv", "regions_200_7.json", "qc_200_7.png"):
+        assert (A / f).exists(), f

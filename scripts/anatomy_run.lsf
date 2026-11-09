@@ -1,0 +1,72 @@
+#!/bin/bash
+# Route B step 3: regions in one participant's own EPI space (docs/ROUTE_B_PLAN.md).
+#   T1: reoriented (fslreorient2std), brain-extracted (bet -R), segmented (fast); EPI (front end's mean echo 1 within
+#   the analysis mask) to T1 by boundary-based registration (epi_reg); T1 to MNI152 2 mm (flirt 12 dof, then fnirt
+#   T1_2_MNI152_2mm); the inverse warps bring the Schaefer atlases (atlases/schaefer2018) and FSL's Harvard-Oxford
+#   subcortical atlas into EPI space (nearest neighbour) and the grey-matter probability (trilinear). The functional
+#   data are not resampled. Then `mejoint anatomy` builds the region labels and the QC figures.
+# Arguments: <subject number or run folder name> [T1 list file]   (T1 search: list file, else regions.t1_root)
+# Outputs: outputs/anatomy/<run>/ (labels_200_7.nii.gz, regions_200_7.tsv/.json, qc_200_7.png, qc_t1_to_mni.png, ...)
+set -uo pipefail
+RUNARG="${1:-}"; T1LIST="${2:-}"
+PY="${MEJOINT_PY:-$HOME/miniconda3_new/envs/mejoint/bin/python}"
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}" PYTHONUNBUFFERED=1
+fail() { echo "PREFLIGHT FAILED: $*" >&2; exit 2; }
+if [ -d "outputs/phase2/$RUNARG" ]; then NAME="$RUNARG"; else NAME="$(ls -d outputs/phase2/sub-"$RUNARG"_* 2>/dev/null | head -n 1)"; NAME="${NAME:+$(basename "$NAME")}"; fi
+FE="outputs/phase2/$NAME/mc"; TIS="outputs/tissue/$NAME/mc"
+[ -n "$NAME" ] && [ -f "$FE/analysis_mask.nii.gz" ] && [ -f "$FE/mean_echo1_unmasked.nii.gz" ] || fail "no front end for '$RUNARG' (outputs/phase2/<run>/mc)"
+T1="$("$PY" -c "
+import sys
+from mejoint import anatomy, io
+c = io.load_config().get('regions', {})
+print(anatomy.find_t1(sys.argv[1], sys.argv[2] or c.get('t1_list'), c.get('t1_root')) or '')" "$NAME" "$T1LIST")"
+[ -n "$T1" ] && [ -f "$T1" ] || fail "no T1 found for $NAME (give a T1 list file as the second argument)"
+BETF="$("$PY" -c "from mejoint import io; print(io.load_config().get('regions', {}).get('bet_f', 0.4))")"
+for init in /usr/share/Modules/init/bash /etc/profile.d/modules.sh /cm/local/apps/environment-modules/*/init/bash; do
+    [ -f "$init" ] && { source "$init"; break; }
+done
+if command -v module >/dev/null 2>&1; then module load fsl/6 || echo "warning: module load fsl/6 failed"; fi
+export FSLOUTPUTTYPE=NIFTI_GZ                                  # fsl/6 does not set it
+command -v epi_reg >/dev/null 2>&1 && [ -n "${FSLDIR:-}" ] || fail "FSL not available (epi_reg / FSLDIR)"
+MNI="$FSLDIR/data/standard/MNI152_T1_2mm"; MNIB="${MNI}_brain"
+HO="$FSLDIR/data/atlases/HarvardOxford/HarvardOxford-sub-maxprob-thr25-2mm.nii.gz"; HOX="$FSLDIR/data/atlases/HarvardOxford-Subcortical.xml"
+for f in "$MNI.nii.gz" "$MNIB.nii.gz" "$HO" "$HOX"; do [ -f "$f" ] || fail "missing FSL file $f"; done
+A="outputs/anatomy/$NAME"; mkdir -p "$A"
+echo "== anatomy | $NAME | T1 $T1 | $(date) | host $(hostname) | job ${LSB_JOBID:-interactive} | git $(git rev-parse --short HEAD 2>/dev/null || echo '?')"
+run() { echo "+ $*"; "$@" || fail "command failed: $1"; }
+# --- T1: orientation, brain, tissue segmentation
+[ -f "$A/t1_fast_pve_2.nii.gz" ] || {
+    run fslreorient2std "$T1" "$A/t1"
+    run bet "$A/t1" "$A/t1_brain" -R -f "$BETF"
+    run fast -t 1 -n 3 -o "$A/t1_fast" "$A/t1_brain"
+}
+run fslmaths "$A/t1_fast_pve_2" -thr 0.5 -bin "$A/t1_wmseg"
+# --- EPI to T1 (boundary-based)
+run fslmaths "$FE/mean_echo1_unmasked" -mas "$FE/analysis_mask" "$A/epi_mean"
+[ -f "$A/epi2t1.mat" ] || run epi_reg --epi="$A/epi_mean" --t1="$A/t1" --t1brain="$A/t1_brain" --wmseg="$A/t1_wmseg" --out="$A/epi2t1"
+run convert_xfm -omat "$A/t12epi.mat" -inverse "$A/epi2t1.mat"
+# --- T1 to MNI (affine, then nonlinear) and the inverse warp
+[ -f "$A/t12mni_warp.nii.gz" ] || {
+    run flirt -in "$A/t1_brain" -ref "$MNIB" -omat "$A/t12mni_aff.mat" -dof 12
+    run fnirt --in="$A/t1" --aff="$A/t12mni_aff.mat" --cout="$A/t12mni_warp" --config=T1_2_MNI152_2mm
+}
+[ -f "$A/mni2t1_warp.nii.gz" ] || run invwarp -w "$A/t12mni_warp" -r "$A/t1" -o "$A/mni2t1_warp"
+# --- atlases and tissue into EPI space; QC images
+for at in 200_7 400_17; do
+    n="${at%_*}"; k="${at#*_}"
+    run applywarp -i "atlases/schaefer2018/Schaefer2018_${n}Parcels_${k}Networks_order_FSLMNI152_2mm.nii.gz" -r "$A/epi_mean" \
+        -w "$A/mni2t1_warp" --postmat="$A/t12epi.mat" --interp=nn -o "$A/schaefer_${at}_epi"
+done
+run applywarp -i "$HO" -r "$A/epi_mean" -w "$A/mni2t1_warp" --postmat="$A/t12epi.mat" --interp=nn -o "$A/ho_sub_epi"
+cp "$HOX" "$A/HarvardOxford-Subcortical.xml"
+run flirt -in "$A/t1_fast_pve_1" -ref "$A/epi_mean" -applyxfm -init "$A/t12epi.mat" -o "$A/gm_epi"
+run flirt -in "$A/t1_wmseg" -ref "$A/epi_mean" -applyxfm -init "$A/t12epi.mat" -interp nearestneighbour -o "$A/wm_epi"
+run applywarp -i "$A/t1" -r "$MNI" -w "$A/t12mni_warp" -o "$A/t1_mni"
+run imcp "$MNI" "$A/mni_template"
+# --- region labels and QC figures
+TISARG=(); [ -f "$TIS/classes.npy" ] && TISARG=(--tissue-dir "$TIS")
+for at in 200_7 400_17; do
+    run "$PY" -m mejoint.cli anatomy --anat-dir "$A" --frontend-dir "$FE" --atlas "$at" "${TISARG[@]}"
+done
+echo "== done $(date): check $PWD/$A/qc_200_7.png and qc_t1_to_mni.png"
