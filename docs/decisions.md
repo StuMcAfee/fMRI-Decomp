@@ -1041,3 +1041,20 @@ measures) makes sense; work is on planning while the cluster connection is down.
 anatomy, damage and radiation delivery vary too much to interpret it; those factors are estimated in separate efforts
 and used as independent variables for their remote effects on the cerebral cortex. Draft plan for approval:
 `docs/ROUTE_B_PLAN.md` (decisions D1 to D6 listed there). Nothing is built until it is approved.
+
+### 2026-11-09: route B plan approved (user)
+
+Decisions in `docs/ROUTE_B_PLAN.md` section 9, as recommended: D1 cortex as the outcome region, thalamus and striatum
+as secondary regions (cerebellum and brainstem excluded); D2 Schaefer 200 parcels / 7 networks primary, 400 / 17 as
+sensitivity (the injection test sets the minimum region size); D3 FSL for registration (default; ANTs / FreeSurfer
+only if verified); D4 effective dimensionality (participation ratio) of cortical BOLD-like activity as the primary
+integration outcome, segregation and the count above the circular-shift null secondary; D5 24-term motion regression
+for the primary analysis, band-passed motion projection as sensitivity; D6 CLAUDE.md edits to be proposed for
+approval. Work starts with the simulation tests (plan step 2), which need no cluster time.
+
+### 2026-11-09: output folder; route B step 2 (simulation tests) built
+
+- **Output folder (user):** future jobs write to `/research_jude/rgs01_jude/dept/DI/tir/vision_lab/stu/CSIMemphis/Analysis/MEJOINT_QC/`. Earlier results are inputs to later jobs, so the repository's `outputs/` is moved there once and replaced by a link of the same name (`scripts/use_output_root.sh`); every script keeps using `outputs/...`. `.gitignore` also ignores the link. Job logs stay in the repository's `logs/`.
+- **Route B core** (`src/mejoint/regions.py`): region averaging of the log-ratio echoes weighted by inverse thermal noise; the front end's split applied to the region signal (S0-like a(t), R2*-like b(t), two leftover channels); region noise from the leftover channels' frame-to-frame differences; shares in the 0.01-0.1 Hz band; coupling of b(t) with the noise removed from the variances; participation ratio, count of eigenvalues above the circular-shift null, segregation, global share; circular-shift null with each region shifted by its own random lag.
+- **Tests** (`tests/test_regions.py`, 3 seeds): noise-free regions return a(t) and b(t) exactly; the region noise from the leftover channels matches the truth within 15 % for independent and for correlated voxel noise (a shared 30 % makes it 18x the independent-voxel value); BOLD-like share > 0.95 for pure R2*, < 0.05 for pure S0, within 0.05 of the truth for a mixed region; leftover share < 0.05 without curvature and > 0.1 with a curved echo profile; four driven networks give participation ratio > 2.5 against < 1.5 for one shared driver, four eigenvalues above the circular-shift null, segregation > 0.5; independent regions sit inside their null (about 5 % of edges beyond it); global share within 0.1 of the truth.
+- **Observation:** an echo profile strong at echo 1 only (like several real components) is mostly absorbed as an S0 + R2* mixture at region level; only its non-linear part shows as leftover. Two test set-ups were wrong at first (time courses forced exactly uncorrelated by the generator; a first-echo-heavy profile used as the curvature case); fixed.

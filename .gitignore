@@ -6,6 +6,7 @@ build/
 dist/
 # outputs and data never go into git
 outputs/
+outputs
 *.nii
 *.nii.gz
 logs/
