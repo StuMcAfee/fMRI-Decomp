@@ -161,3 +161,74 @@ def test_global_share():
     c = regions.coupling(x, np.zeros(P), TR, BAND)
     gs = regions.global_share(c["x_band"], c["signal_var"])
     assert 0.55 < gs < 0.75, gs                                       # truth 0.64 / (0.64 + 0.36) = 0.64
+
+
+def _cfg_small():
+    from mejoint import io
+    c = io.load_config()
+    return io.merge(c, {"regions": {"n_null": 100, "n_boot": 50}})
+
+
+def test_analyze_networks_end_to_end():
+    """16 regions in 4 networks, each network driven by its own R2*-like time course (plus each region's own weak
+    signal): shares ~1 with intervals that contain them, 4 eigenvalues above the circular-shift null, positive
+    segregation; the common-set path gives the same answer on a subset of whole networks."""
+    rng = np.random.default_rng(SEED + 6)
+    P, n_per, T = 16, 40, 800
+    nets = np.repeat(np.arange(4), 4)
+    drivers = slow(rng, 4, T)
+    own = np.stack([slow(rng, 1, T)[0] for _ in range(P)])
+    b = 0.25 * drivers[nets] + 0.08 * own
+    a = np.zeros((P, T))
+    S, labels, mu, sigma, use = voxels(rng, P, n_per, T, a, b)
+    table = [{"id": i + 1, "name": f"r{i + 1}", "kind": "cortex", "hemisphere": "LH", "network": f"N{nets[i]}",
+              "n_voxels": n_per, "usable": True} for i in range(P)]
+    res = regions.analyze(S, labels, S.mean(2), sigma, RATIOS, use, TE, table, _cfg_small(), common_ids=list(range(1, 9)))
+    sh = np.array([r["bold_share"] for r in res["regions"]])
+    assert np.all(sh > 0.9), sh
+    ci = np.array([r["bold_share_ci"] for r in res["regions"]])
+    assert np.all(ci[:, 0] <= sh) and np.all(sh <= ci[:, 1])
+    full, common = res["integration"]
+    assert full["n_regions"] == 16 and full["n_eigen_above_null"] == 4, full
+    assert full["segregation"] > 0.5 and full["pr_percentile_in_null"] < 0.05, full
+    assert common["n_regions"] == 8 and common["n_eigen_above_null"] == 2, common
+    assert res["corr_b"].shape == (16, 16)
+
+
+def test_run_dir_files(tmp_path):
+    """Route B on a simulated run through the real file layout (front end folder, anatomy folder with labels and
+    the region table): outputs written, every usable region analysed."""
+    import json
+    import sys
+
+    import nibabel as nib
+
+    sys.path.insert(0, os.path.dirname(__file__))
+    from test_frontend import make_run_folder
+
+    from mejoint import frontend, io, simulate
+    cfg = io.merge(_cfg_small(), {"frontend": {"mppca": {"enabled": False}}, "nuisance": {"n_surrogates": 1}})
+    cfg = io.merge(cfg, {"simulate": {"echo_sigma_scale": cfg["frontend"]["echo_noise_ratios"]}})
+    G = {"grid": [24, 24, 14], "n_volumes": 200, "spikes": {"n": 0}, "skull_base": {"enabled": False},
+         "respiration": {"enabled": False}, "sources": []}
+    sim = simulate.simulate(cfg, seed=SEED + 21, overrides=G)
+    rd = make_run_folder(sim, tmp_path)
+    fe = tmp_path / "fe"
+    frontend.run_subject(rd, cfg, fe, source="raw")
+    mimg = nib.load(str(fe / "analysis_mask.nii.gz"))
+    mask = np.asarray(mimg.dataobj) > 0
+    lab = np.zeros(mask.shape, np.int32)
+    xs = np.indices(mask.shape)
+    blocks = (xs[0] // 6) * 4 + (xs[1] // 6) + 1                      # 16 blocks
+    lab[mask] = blocks[mask]
+    A = tmp_path / "anat"
+    io.save_volume(lab.astype(np.float32), mimg, A / "labels_200_7.nii.gz")
+    rows = [{"id": i, "name": f"r{i}", "kind": "cortex", "hemisphere": "LH", "network": f"N{(i - 1) // 4}",
+             "n_voxels": int((lab == i).sum()), "usable": bool((lab == i).sum() >= 20)} for i in range(1, 17)]
+    io.write_json(A / "regions_200_7.json", {"regions": rows})
+    out = regions.run_dir(fe, A, cfg, tmp_path / "rb")
+    for f in ("route_b.json", "route_b.md", "regions_route_b.tsv", "corr_b.npy", "route_b.png"):
+        assert (tmp_path / "rb" / f).exists(), f
+    used = [r for r in out["regions"] if r["used"]]
+    assert len(used) == sum(r["usable"] for r in rows) and out["integration"][0]["n_regions"] == len(used)
+    json.loads((tmp_path / "rb" / "route_b.json").read_text())

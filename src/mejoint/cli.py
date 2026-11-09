@@ -181,6 +181,14 @@ def main(argv=None) -> int:
     arc.add_argument("--anat-dir", required=True)
     arc.add_argument("--config", help="config YAML (default: configs/default.yaml)")
 
+    rb = sub.add_parser("route-b", help="route B on one run: region shares, BOLD-like connectivity, integration with circular-shift nulls")
+    rb.add_argument("--frontend-dir", required=True, help="front end of the run (maps, nuisance basis, echo paths in done.json)")
+    rb.add_argument("--anat-dir", required=True, help="anatomy folder (labels_<atlas>.nii.gz, regions_<atlas>.json)")
+    rb.add_argument("--out", required=True)
+    rb.add_argument("--atlas", help="200_7 or 400_17 (default regions.atlas)")
+    rb.add_argument("--common-ids", help="file with the region ids usable in every participant (common set)")
+    rb.add_argument("--config", help="config YAML (default: configs/default.yaml)")
+
     args = ap.parse_args(argv)
     if args.cmd == "inventory" and not (args.nifti_dir or args.run_dir):
         ap.error("give --run-dir (preferred) or --nifti-dir")
@@ -323,6 +331,10 @@ def main(argv=None) -> int:
         from . import anatomy
         anatomy.regcheck(args.anat_dir)
         print(open(f"{args.anat_dir}/regcheck.md").read())
+    elif args.cmd == "route-b":
+        from . import regions
+        regions.run_dir(args.frontend_dir, args.anat_dir, cfg, args.out, atlas=args.atlas, common_ids_file=args.common_ids)
+        print(open(f"{args.out}/route_b.md").read())
     elif args.cmd == "inventory-summary":
         from . import inventory
         inventory.write_summary(args.out, cfg)
