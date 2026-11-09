@@ -1,5 +1,7 @@
 # Proposed CLAUDE.md edits (decision D6, for the user's approval)
 
+**Status: approved and applied to CLAUDE.md on 2026-11-09 (all ten items, E1-E10).**
+
 Drafted 2026-11-09. Each item gives the section, what changes, and the exact new text. Sections not listed (5 core
 physics, 12 efficiency, 13 literature) stay as they are. Nothing is applied until the user approves; approval can be
 for all items or item by item.
