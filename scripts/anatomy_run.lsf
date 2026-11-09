@@ -44,7 +44,16 @@ run() { echo "+ $*"; "$@" || fail "command failed: $1"; }
 }
 run fslmaths "$A/t1_fast_pve_2" -thr 0.5 -bin "$A/t1_wmseg"
 # --- EPI to T1 (boundary-based)
-run fslmaths "$FE/mean_echo1_unmasked" -mas "$FE/analysis_mask" "$A/epi_mean"
+EPIREF="$("$PY" -c "from mejoint import io; print(io.load_config().get('regions', {}).get('epi_ref', 'echo1'))")"
+if [ "$EPIREF" = echo1 ] && [ ! -f "$A/ref_echo1.nii.gz" ]; then
+    run fslmaths "$FE/mean_echo1_unmasked" -mas "$FE/analysis_mask" "$A/epi_mean"
+else
+    run "$PY" -m mejoint.cli anatomy-refs --frontend-dir "$FE" --out "$A" --refs "$EPIREF"
+    run imcp "$A/ref_$EPIREF" "$A/epi_mean"
+fi
+# a different EPI reference than last time: redo the EPI-to-T1 registration
+[ "$(cat "$A/epi_ref.txt" 2>/dev/null || echo echo1)" = "$EPIREF" ] || rm -f "$A/epi2t1.mat"
+echo "$EPIREF" > "$A/epi_ref.txt"
 [ -f "$A/epi2t1.mat" ] || run epi_reg --epi="$A/epi_mean" --t1="$A/t1" --t1brain="$A/t1_brain" --wmseg="$A/t1_wmseg" --out="$A/epi2t1"
 run convert_xfm -omat "$A/t12epi.mat" -inverse "$A/epi2t1.mat"
 # --- T1 to MNI (affine, then nonlinear) and the inverse warp
@@ -71,4 +80,5 @@ TISARG=(); [ -f "$TIS/classes.npy" ] && TISARG=(--tissue-dir "$TIS")
 for at in 200_7 400_17; do
     run "$PY" -m mejoint.cli anatomy --anat-dir "$A" --frontend-dir "$FE" --atlas "$at" "${TISARG[@]}"
 done
+run "$PY" -m mejoint.cli anatomy-regcheck --anat-dir "$A"
 echo "== done $(date): check $PWD/$A/qc_epi_to_t1.png, qc_t1_to_mni.png and qc_200_7.png"

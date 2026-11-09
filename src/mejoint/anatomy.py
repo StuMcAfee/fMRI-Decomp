@@ -250,3 +250,149 @@ def qc_epi_in_t1(A: Path, path) -> None:
     fig.tight_layout()
     fig.savefig(path, dpi=110)
     plt.close(fig)
+
+
+# ============================================================================ registration check (R2, 2026-11-10)
+EPI_REFS = ("echo1", "echo2", "echo3", "t2sw")
+
+
+def reference_images(frontend_dir, out_dir, names=EPI_REFS) -> list:
+    """Candidate EPI reference images for epi_reg, on the EPI grid, zero outside the analysis mask: the temporal
+    mean of echo 1, 2 or 3 (front end mu maps), and t2sw, the echoes' means combined with the T2*-weighted
+    weights TE exp(-TE / T2*) (more grey / white contrast than echo 1)."""
+    import nibabel as nib
+
+    from . import io
+    fe, out = Path(frontend_dir), Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    mimg = nib.load(str(fe / "analysis_mask.nii.gz"))
+    mu = np.nan_to_num(np.asarray(nib.load(str(fe / "mu.nii.gz")).dataobj, np.float64))
+    te = np.asarray(json.loads((fe / "summary.json").read_text())["te_ms"], float)
+    written = []
+    for name in names:
+        if name.startswith("echo"):
+            k = int(name[4:]) - 1
+            vol = mu[..., k]
+        elif name == "t2sw":
+            t2 = np.nan_to_num(np.asarray(nib.load(str(fe / "t2s_ms.nii.gz")).dataobj, np.float64), nan=40.0)
+            t2 = np.clip(t2, 5.0, 300.0)
+            w = te[None, None, None, :] * np.exp(-te[None, None, None, :] / t2[..., None])
+            vol = (w * mu).sum(-1) / np.maximum(w.sum(-1), 1e-12)
+        else:
+            raise ValueError(f"unknown EPI reference {name}")
+        vol = np.where(np.asarray(mimg.dataobj) > 0, vol, 0.0)
+        io.save_volume(vol, mimg, out / f"ref_{name}.nii.gz")
+        written.append(name)
+    return written
+
+
+def shift_scan(epi_t1: np.ndarray, wm: np.ndarray, affine, max_mm: float = 8.0, ring_vox: int = 2) -> dict:
+    """How far the T1 white-matter boundary sits from the EPI's white-matter contrast, per axis.
+
+    EPI (already in T1 space) is darker in white matter than in the grey matter just outside it. For a shift s of
+    the white-matter mask along one axis, contrast(s) = (mean EPI in a ring just outside the boundary - mean EPI in
+    a ring just inside) / their average, over voxels the EPI covers. The shift with the highest contrast is where
+    the boundary fits the EPI best; 0 means aligned. Returns per axis: the shifts (mm), the contrast curve, the best
+    shift, and the side the EPI is displaced toward (axis codes from the affine)."""
+    import nibabel as nib
+    from scipy import ndimage
+    E = np.asarray(epi_t1, np.float64)
+    W = np.asarray(wm) > 0.5
+    cov = E > 0
+    out_ring = ndimage.binary_dilation(W, iterations=ring_vox) & ~W
+    in_ring = W & ~ndimage.binary_erosion(W, iterations=ring_vox)
+    zooms = np.sqrt((np.asarray(affine)[:3, :3] ** 2).sum(0))
+    codes = nib.aff2axcodes(affine)
+    opposite = {"L": "R", "R": "L", "A": "P", "P": "A", "S": "I", "I": "S"}
+    res = {}
+    for a in range(3):
+        n = int(round(max_mm / zooms[a]))
+        shifts, curve = [], []
+        for s in range(-n, n + 1):
+            o = np.roll(out_ring, s, axis=a) & cov
+            i = np.roll(in_ring, s, axis=a) & cov
+            if o.sum() < 100 or i.sum() < 100:
+                curve.append(np.nan)
+            else:
+                mo, mi = E[o].mean(), E[i].mean()
+                curve.append((mo - mi) / (0.5 * (mo + mi)))
+            shifts.append(s * zooms[a])
+        curve = np.array(curve)
+        b = int(np.nanargmax(curve)) if np.isfinite(curve).any() else n
+        best = shifts[b]
+        name = {frozenset("LR"): "left-right", frozenset("AP"): "anterior-posterior", frozenset("SI"): "superior-inferior"}[frozenset(codes[a] + opposite[codes[a]])]
+        # a mask shift of +s (toward codes[a]) fits best: the EPI's anatomy sits toward codes[a] from the T1 boundary
+        side = {"L": "left", "R": "right", "A": "anterior", "P": "posterior", "S": "superior", "I": "inferior"}[codes[a] if best > 0 else opposite[codes[a]]]
+        res[name] = {"shifts_mm": [round(float(x), 2) for x in shifts], "contrast": [None if not np.isfinite(c) else round(float(c), 5) for c in curve],
+                     "best_shift_mm": round(float(best), 2), "contrast_at_0": None if not np.isfinite(curve[n]) else round(float(curve[n]), 5),
+                     "contrast_best": None if not np.isfinite(curve[b]) else round(float(curve[b]), 5),
+                     "epi_displaced_toward": side if best != 0 else "none"}
+    return res
+
+
+def regcheck(anat_dir, refs=EPI_REFS) -> dict:
+    """shift_scan for the current registration (epi2t1.nii.gz) and every candidate in reg_<ref>/; writes
+    regcheck.json / .md and regcheck.png in anat_dir."""
+    import nibabel as nib
+
+    from . import io
+    A = Path(anat_dir)
+    wimg = nib.load(str(A / "t1_wmseg.nii.gz"))
+    wm = np.asarray(wimg.dataobj)
+    cands = [("current", A / "epi2t1.nii.gz")] + [(r, A / f"reg_{r}" / "epi2t1.nii.gz") for r in refs]
+    rows = {}
+    for name, path in cands:
+        if not path.exists():
+            continue
+        e = np.asarray(nib.load(str(path)).dataobj, np.float64)
+        rows[name] = shift_scan(e, wm, wimg.affine)
+    out = {"anat_dir": str(A), "candidates": rows}
+    io.write_json(A / "regcheck.json", out)
+    L = [f"# Registration check: {A.name}", "",
+         "Best shift of the T1 white-matter boundary against the EPI's white-matter contrast (0 = aligned; the EPI is "
+         "displaced toward the side named). Contrast: (just outside - just inside the boundary) / average, at 0 shift "
+         "and at the best shift; higher means a sharper fit.", "",
+         "| EPI reference | left-right | anterior-posterior | superior-inferior | contrast at 0 / best (left-right) |", "|---|---|---|---|---|"]
+    for name, r in rows.items():
+        cell = lambda k: f"{r[k]['best_shift_mm']:+.1f} mm ({r[k]['epi_displaced_toward']})"
+        L.append(f"| {name} | {cell('left-right')} | {cell('anterior-posterior')} | {cell('superior-inferior')} | "
+                 f"{r['left-right']['contrast_at_0']} / {r['left-right']['contrast_best']} |")
+    io.write_text(A / "regcheck.md", "\n".join(L) + "\n")
+    try:
+        _regcheck_figure(A, rows, cands, wm, A / "regcheck.png")
+    except Exception as exc:
+        print(f"regcheck figure failed: {exc}")
+    return out
+
+
+def _regcheck_figure(A, rows, cands, wm, path) -> None:
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import nibabel as nib
+    names = [n for n, _ in cands if n in rows]
+    fig, axs = plt.subplots(len(names), 4, figsize=(14, 3.0 * len(names)), squeeze=False)
+    for r, name in enumerate(names):
+        ax = axs[r, 0]
+        for k, col in (("left-right", "#2a78d6"), ("anterior-posterior", "#a3a19b"), ("superior-inferior", "#1baf7a")):
+            ax.plot(rows[name][k]["shifts_mm"], rows[name][k]["contrast"], color=col, label=k)
+        ax.axvline(0, color="#52514e", lw=0.6)
+        ax.set_title(f"{name}: left-right best {rows[name]['left-right']['best_shift_mm']:+.1f} mm", fontsize=8, loc="left")
+        ax.set_xlabel("shift of the white-matter boundary (mm)", fontsize=7)
+        if r == 0:
+            ax.legend(fontsize=6, frameon=False)
+        e = np.asarray(nib.load(str(dict(cands)[name])).dataobj, np.float64)
+        cuts = [("z", int(e.shape[2] * f)) for f in (0.4, 0.55)] + [("y", e.shape[1] // 2)]
+        lim = np.percentile(e[e > 0], 99) if (e > 0).any() else 1
+        for c, (axis, i) in enumerate(cuts, start=1):
+            ax = axs[r, c]
+            ax.imshow(_slice(e, axis, i).T, origin="lower", cmap="gray", vmin=0, vmax=lim)
+            w = _slice(wm.astype(float), axis, i).T
+            if (w > 0.5).any() and (w <= 0.5).any():
+                ax.contour(w, levels=[0.5], colors="red", linewidths=0.4)
+            ax.set_xticks([]); ax.set_yticks([])
+            ax.set_title(f"{name}, {axis} = {i}", fontsize=7)
+    fig.suptitle(f"{A.name}: EPI reference candidates, T1 white-matter boundary in red", x=0.01, ha="left", fontsize=10)
+    fig.tight_layout()
+    fig.savefig(path, dpi=100)
+    plt.close(fig)

@@ -224,6 +224,7 @@ regions:                      # route B (docs/ROUTE_B_PLAN.md; approved 2026-11-
   t1_list: null                 # file with one T1 path per line (quotes allowed); found by subject and scan time
   t1_root: /research_jude/rgs01_jude/dept/DI/tir/vision_lab/stu/CSIMemphis/Data/Rad   # fallback search: <t1_root>/<subject>/**/*T1*MPRAGE*.nii*
   bet_f: 0.4                    # FSL bet fractional threshold for the T1 (children and patients: check the QC figure)
+  epi_ref: echo1                # EPI image registered to the T1 (echo1, echo2, echo3, t2sw); R2 gate failed with echo1 (left-right shift, 2026-11-10): set from regcheck
 
 inject:                       # Phase 5 injection calibration (user decision 2026-11-06): known sources added to the RAW echoes
   radius_mm: 10.0               # each source: cos^2 taper from its centre to zero at this radius (~100 voxels)

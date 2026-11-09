@@ -114,3 +114,42 @@ def test_run_dir_writes_outputs(tmp_path):
     assert {r["id"] for r in used} == {1, 101}
     for f in ("labels_200_7.nii.gz", "regions_200_7.tsv", "regions_200_7.json", "qc_200_7.png"):
         assert (A / f).exists(), f
+
+
+def _blob(shape, cx, radii=(35, 42, 32)):
+    g = np.indices(shape).astype(float)
+    c = np.array([cx, shape[1] / 2, shape[2] / 2])[:, None, None, None]
+    return np.sqrt((((g - c) / np.array(radii)[:, None, None, None]) ** 2).sum(0))
+
+
+def test_shift_scan_finds_a_left_right_shift():
+    """EPI anatomy displaced 3 voxels along the left-right axis from the T1 white matter: the scan reports 3 mm on
+    that axis toward the right side, 0 on the others; with no displacement, 0 everywhere."""
+    shape = (90, 100, 80)
+    wm = _blob(shape, 45) < 0.6
+    aff = np.diag([-1.0, 1.0, 1.0, 1.0])                                # axis 0 increases toward subject left
+    for d, side in ((3, "left"), (-3, "right"), (0, "none")):
+        r = _blob(shape, 45 + d)
+        epi = np.where(r < 1, np.where(r < 0.6, 100.0, 160.0), 0.0)
+        res = anatomy.shift_scan(epi, wm, aff)
+        assert res["left-right"]["best_shift_mm"] == abs(d) * np.sign(d), res["left-right"]
+        assert res["left-right"]["epi_displaced_toward"] == side
+        assert res["anterior-posterior"]["best_shift_mm"] == 0 and res["superior-inferior"]["best_shift_mm"] == 0
+
+
+def test_reference_images(tmp_path):
+    shape = (12, 12, 8)
+    mask = np.zeros(shape, bool); mask[2:-2, 2:-2, 2:-2] = True
+    aff = np.diag([3.28, 3.28, 3.3, 1.0])
+    te = [16.20, 31.22, 46.24, 61.26]
+    mu = np.zeros(shape + (4,)); mu[mask] = 1000 * np.exp(-np.array(te) / 40.0)
+    nib.save(nib.Nifti1Image(mask.astype(np.uint8), aff), str(tmp_path / "analysis_mask.nii.gz"))
+    nib.save(nib.Nifti1Image(np.where(mask[..., None], mu, np.nan).astype(np.float32), aff), str(tmp_path / "mu.nii.gz"))
+    nib.save(nib.Nifti1Image(np.where(mask, 40.0, np.nan).astype(np.float32), aff), str(tmp_path / "t2s_ms.nii.gz"))
+    (tmp_path / "summary.json").write_text('{"te_ms": [16.20, 31.22, 46.24, 61.26]}')
+    names = anatomy.reference_images(tmp_path, tmp_path / "anat")
+    assert names == list(anatomy.EPI_REFS)
+    e2 = np.asarray(nib.load(str(tmp_path / "anat" / "ref_echo2.nii.gz")).dataobj)
+    assert np.allclose(e2[mask], 1000 * np.exp(-te[1] / 40.0), rtol=1e-5) and np.all(e2[~mask] == 0)
+    sw = np.asarray(nib.load(str(tmp_path / "anat" / "ref_t2sw.nii.gz")).dataobj)
+    assert np.all(np.isfinite(sw)) and mu[mask][:, 3].max() < sw[mask].min() < mu[mask][:, 0].min()

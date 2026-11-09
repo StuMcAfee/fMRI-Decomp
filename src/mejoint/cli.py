@@ -172,6 +172,15 @@ def main(argv=None) -> int:
     an.add_argument("--tissue-dir", help="data-only tissue classes (CSF-dominated and dropout voxels left out)")
     an.add_argument("--config", help="config YAML (default: configs/default.yaml)")
 
+    ar = sub.add_parser("anatomy-refs", help="route B: candidate EPI reference images for epi_reg (echo 1-3 means, T2*-weighted)")
+    ar.add_argument("--frontend-dir", required=True)
+    ar.add_argument("--out", required=True, help="folder for ref_<name>.nii.gz (the anatomy folder)")
+    ar.add_argument("--refs", nargs="*", help="subset of echo1 echo2 echo3 t2sw (default all)")
+    ar.add_argument("--config", help="config YAML (default: configs/default.yaml)")
+    arc = sub.add_parser("anatomy-regcheck", help="route B: residual shift of the T1 white-matter boundary on the EPI, per EPI reference")
+    arc.add_argument("--anat-dir", required=True)
+    arc.add_argument("--config", help="config YAML (default: configs/default.yaml)")
+
     args = ap.parse_args(argv)
     if args.cmd == "inventory" and not (args.nifti_dir or args.run_dir):
         ap.error("give --run-dir (preferred) or --nifti-dir")
@@ -307,6 +316,13 @@ def main(argv=None) -> int:
         print(f"{r['atlas']}: {r['n_usable']} of {r['n_regions']} regions usable; {r['cortex_voxels']} cortical voxels "
               f"(median {r['median_cortex_region_voxels']:.0f} per region); secondary: "
               + ", ".join(f"{x['name']} {x['n_voxels']}" for x in r["secondary"]))
+    elif args.cmd == "anatomy-refs":
+        from . import anatomy
+        print("written:", ", ".join(anatomy.reference_images(args.frontend_dir, args.out, tuple(args.refs or anatomy.EPI_REFS))))
+    elif args.cmd == "anatomy-regcheck":
+        from . import anatomy
+        anatomy.regcheck(args.anat_dir)
+        print(open(f"{args.anat_dir}/regcheck.md").read())
     elif args.cmd == "inventory-summary":
         from . import inventory
         inventory.write_summary(args.out, cfg)
