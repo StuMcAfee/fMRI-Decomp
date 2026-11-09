@@ -155,6 +155,8 @@ def test_reference_images(tmp_path):
     (tmp_path / "summary.json").write_text('{"te_ms": [16.20, 31.22, 46.24, 61.26]}')
     names = anatomy.reference_images(tmp_path, tmp_path / "anat")
     assert names == list(anatomy.EPI_REFS)
+    t2 = np.asarray(nib.load(str(tmp_path / "anat" / "ref_t2s.nii.gz")).dataobj)
+    assert np.allclose(t2[mask], 40.0) and np.all(t2[~mask] == 0)
     e2 = np.asarray(nib.load(str(tmp_path / "anat" / "ref_echo2.nii.gz")).dataobj)
     assert np.allclose(e2[mask], 1000 * np.exp(-te[1] / 40.0), rtol=1e-5) and np.all(e2[~mask] == 0)
     sw = np.asarray(nib.load(str(tmp_path / "anat" / "ref_t2sw.nii.gz")).dataobj)

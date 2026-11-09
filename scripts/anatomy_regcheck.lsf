@@ -1,7 +1,7 @@
 #!/bin/bash
 # R2 registration check (2026-11-10): the user saw the T1 white-matter boundary shifted left-right on the EPI in
 # both pilots (left-right = this EPI's phase-encoding axis). For each candidate EPI reference (temporal mean of
-# echo 1, 2, 3; T2*-weighted combination of the echo means) run epi_reg into <anat>/reg_<ref>/ and measure the
+# echo 1, 2, 3; T2*-weighted combination of the echo means; the static T2* map) run epi_reg into <anat>/reg_<ref>/ and measure the
 # remaining shift of the white-matter boundary against the EPI's white-matter contrast on every axis
 # (`mejoint anatomy-regcheck`: regcheck.md / .json / .png). Needs the T1 steps of scripts/anatomy_run.lsf done.
 # Arguments: <subject number or run folder name>
@@ -22,8 +22,9 @@ export FSLOUTPUTTYPE=NIFTI_GZ
 command -v epi_reg >/dev/null 2>&1 || fail "FSL not available (epi_reg)"
 echo "== registration check | $NAME | $(date) | host $(hostname) | job ${LSB_JOBID:-interactive} | git $(git rev-parse --short HEAD 2>/dev/null || echo '?')"
 "$PY" -m mejoint.cli anatomy-refs --frontend-dir "$FE" --out "$A" || fail "anatomy-refs failed"
-for ref in echo1 echo2 echo3 t2sw; do
+for ref in echo1 echo2 echo3 t2sw t2s; do
     mkdir -p "$A/reg_$ref"
+    [ -f "$A/reg_$ref/epi2t1.mat" ] && { echo "  $ref: registration exists (kept)"; continue; }
     echo "+ epi_reg ($ref)"
     epi_reg --epi="$A/ref_$ref" --t1="$A/t1" --t1brain="$A/t1_brain" --wmseg="$A/t1_wmseg" --out="$A/reg_$ref/epi2t1" \
         > "$A/reg_$ref/epi_reg.log" 2>&1 || echo "epi_reg failed for $ref (see $A/reg_$ref/epi_reg.log)"

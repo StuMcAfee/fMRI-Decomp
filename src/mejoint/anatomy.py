@@ -215,8 +215,17 @@ def qc_figure(A: Path, mimg, labels: np.ndarray, path) -> None:
     plt.close(fig)
 
 
-def _cuts(shape):
-    return [("z", int(shape[2] * f)) for f in (0.35, 0.5, 0.65)] + [("x", int(shape[0] * 0.35)), ("x", shape[0] // 2), ("y", shape[1] // 2)]
+def _cuts(shape, cover=None):
+    """Three axial slices in the upper brain (above the dropout zone) and three coronal slices (front, middle,
+    back): a left-right shift shows in both. With cover (the EPI's footprint in T1 space) the slices are placed
+    within the covered extent; otherwise at fixed fractions of the grid."""
+    if cover is not None and cover.any():
+        zs = np.flatnonzero(cover.any(axis=(0, 1)))
+        ys = np.flatnonzero(cover.any(axis=(0, 2)))
+        z0, z1, y0, y1 = zs.min(), zs.max(), ys.min(), ys.max()
+        return ([("z", int(z0 + (z1 - z0) * f)) for f in (0.5, 0.65, 0.8)] +
+                [("y", int(y0 + (y1 - y0) * f)) for f in (0.3, 0.5, 0.7)])
+    return [("z", int(shape[2] * f)) for f in (0.55, 0.62, 0.7)] + [("y", int(shape[1] * f)) for f in (0.4, 0.5, 0.6)]
 
 
 def _slice(vol, axis, i):
@@ -234,7 +243,7 @@ def qc_epi_in_t1(A: Path, path) -> None:
     epi = np.asarray(nib.load(str(A / "epi2t1.nii.gz")).dataobj, np.float64)
     wm = np.asarray(nib.load(str(A / "t1_wmseg.nii.gz")).dataobj, np.float64)
     t1 = np.asarray(nib.load(str(A / "t1.nii.gz")).dataobj, np.float64)
-    cuts = _cuts(epi.shape)
+    cuts = _cuts(epi.shape, epi > 0)
     fig, axs = plt.subplots(2, len(cuts), figsize=(2.7 * len(cuts), 5.8))
     for row, img, name in ((0, epi, "EPI in T1 space"), (1, t1, "T1")):
         pos = img[img > 0]
@@ -253,7 +262,7 @@ def qc_epi_in_t1(A: Path, path) -> None:
 
 
 # ============================================================================ registration check (R2, 2026-11-10)
-EPI_REFS = ("echo1", "echo2", "echo3", "t2sw")
+EPI_REFS = ("echo1", "echo2", "echo3", "t2sw", "t2s")
 
 
 def reference_images(frontend_dir, out_dir, names=EPI_REFS) -> list:
@@ -273,6 +282,13 @@ def reference_images(frontend_dir, out_dir, names=EPI_REFS) -> list:
         if name.startswith("echo"):
             k = int(name[4:]) - 1
             vol = mu[..., k]
+        elif name == "t2s":
+            # the static T2* map (fit to the run's mean decay) as the registration image (user, 2026-11-10): tissue
+            # contrast (white matter shorter than grey matter, CSF longer) without coil shading or intensity
+            # dependence; clipped so failed fits and CSF do not dominate
+            t2 = np.nan_to_num(np.asarray(nib.load(str(fe / "t2s_ms.nii.gz")).dataobj, np.float64), nan=0.0)
+            vol = np.clip(t2, 0.0, 150.0)
+            vol = np.where(vol >= 5.0, vol, 0.0)
         elif name == "t2sw":
             t2 = np.nan_to_num(np.asarray(nib.load(str(fe / "t2s_ms.nii.gz")).dataobj, np.float64), nan=40.0)
             t2 = np.clip(t2, 5.0, 300.0)
@@ -385,7 +401,7 @@ def _regcheck_figure(A, rows, cands, wm, path) -> None:
         if r == 0:
             ax.legend(fontsize=6, frameon=False)
         e = np.asarray(nib.load(str(dict(cands)[name])).dataobj, np.float64)
-        cuts = [("z", int(e.shape[2] * f)) for f in (0.4, 0.55)] + [("y", e.shape[1] // 2)]
+        cuts = [c for i, c in enumerate(_cuts(e.shape, e > 0)) if i in (1, 2, 4)]     # two upper axial, one mid coronal
         lim = np.percentile(e[e > 0], 99) if (e > 0).any() else 1
         for c, (axis, i) in enumerate(cuts, start=1):
             ax = axs[r, c]
