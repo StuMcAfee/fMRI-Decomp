@@ -248,6 +248,10 @@ inject:                       # Phase 5 injection calibration (user decision 202
   k: 150                        # decomposition of new injection runs (user decision 2026-11-08: working k = 150; the first runs used 50)
   recovered_r: 0.9              # a source counts as recovered when its best component time course has |r| >= this
   layout: focal                 # focal: one sphere per source (first runs); network: each source a set of spheres sharing one time course
+  region_layout:                # R3 (route B validation): networks of the participant's own cortical parcels, signal in every voxel of each parcel
+    types: [r2, r2, s0, mixed]  # one network each
+    parcels_per_network: 8
+    min_voxels: 20              # parcels smaller than this are not used as injection targets
   network:                      # network layout (user decision 2026-11-07): ~7 x 118 = ~800 voxels per network
     cortical_pairs: 3           # sphere pairs mirrored across the midline, cortical region
     inferior: 1                 # spheres in the inferior region (approximate posterior fossa)

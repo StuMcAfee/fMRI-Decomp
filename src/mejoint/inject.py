@@ -302,7 +302,7 @@ def mirror_path(e1: Path, root: Path) -> Path:
 
 
 def make_dir(run_dir, cfg: dict, level: str, seed: int, out_dir, baseline_frontend, tissue_dir=None, log=print,
-             layout: str | None = None) -> dict:
+             layout: str | None = None, anat_dir=None, condition: str = "independent") -> dict:
     """Write injected raw echoes for one run, plus the truth (sources, weights, time courses) and an
     mbme_tedana list file. Skips when truth.json already holds the same settings."""
     import hashlib
@@ -316,9 +316,12 @@ def make_dir(run_dir, cfg: dict, level: str, seed: int, out_dir, baseline_fronte
     if level not in I["levels"]:
         raise ValueError(f"level must be one of {list(I['levels'])}")
     layout = layout or str(I.get("layout", "focal"))
-    if layout not in ("focal", "network"):
-        raise ValueError("layout must be focal or network")
+    if layout not in ("focal", "network", "regions"):
+        raise ValueError("layout must be focal, network or regions")
+    if layout == "regions" and (anat_dir is None or condition not in ("independent", "shared")):
+        raise ValueError("layout regions needs the run's anatomy folder and condition independent or shared")
     params = {"run": run_dir.name, "level": level, "seed": int(seed), "inject": I, "layout": layout,
+              "condition": condition if layout == "regions" else None,
               "project_seed": int(cfg["project_seed"])}
     phash = hashlib.sha256(json.dumps(params, sort_keys=True).encode()).hexdigest()[:16]
     tj = out_dir / "truth.json"
@@ -341,17 +344,33 @@ def make_dir(run_dir, cfg: dict, level: str, seed: int, out_dir, baseline_fronte
             classes3d = np.zeros(mask3d.shape, np.int8)
             classes3d[mask3d] = cl
     subj = int(info["subject"]) if str(info["subject"]).isdigit() else 0
-    key = (subj, 7, list(I["levels"]).index(level), int(seed)) + ((1,) if layout == "network" else ())
+    key = (subj, 7, list(I["levels"]).index(level), int(seed)) + {"focal": (), "network": (1,), "regions": (2,)}[layout]
     rng = np.random.default_rng(io.seed_sequence(cfg, *key))
-    if layout == "network":
+    labels3d = None
+    if layout == "regions":
+        from . import inject_regions
+        atlas = cfg.get("regions", {}).get("atlas", "200_7")
+        labels3d = np.rint(np.asarray(nib.load(str(Path(anat_dir) / f"labels_{atlas}.nii.gz")).dataobj)).astype(int)
+        table = json.loads((Path(anat_dir) / f"regions_{atlas}.json").read_text())["regions"]
+        src = inject_regions.place(table, cfg, rng)
+        for s in src:
+            s["region"] = "network_of_parcels"
+            s["center"] = [int(x) for x in np.argwhere(np.isin(labels3d, s["parcels"])).mean(0).round()]
+    elif layout == "network":
         src = place_networks(mask3d, mimg.affine, voxel_mm, cfg, rng, classes3d)
     else:
         src = place_sources(mask3d, mimg.affine, voxel_mm, cfg, rng, classes3d)
     for s in src:
         a, b = amplitudes(s["type"], I["levels"][level], float(I["mixed_ratio_ms"]))
         s.update({"a_sd": a, "b_sd_per_s": b})
-    W3 = weight_maps(mask3d.shape, [s.get("centers", s["center"]) for s in src], float(I["radius_mm"]), voxel_mm, mask3d)
+    if layout == "regions":
+        from . import inject_regions
+        W3 = inject_regions.weights(labels3d, src)
+    else:
+        W3 = weight_maps(mask3d.shape, [s.get("centers", s["center"]) for s in src], float(I["radius_mm"]), voxel_mm, mask3d)
     U = time_courses(T, float(cfg["acquisition"]["tr_s"]), I["band_hz"], len(src), rng)
+    if layout == "regions" and condition == "shared":
+        U = np.repeat(U[:, :1], len(src), axis=1)                    # one time course drives every network
     for i, s in enumerate(src):
         s["n_voxels"] = int((W3[..., i] > 0).sum())
         s["center_mm"] = [round(float(x), 1) for x in nib.affines.apply_affine(mimg.affine, s["center"])]
@@ -376,7 +395,9 @@ def make_dir(run_dir, cfg: dict, level: str, seed: int, out_dir, baseline_fronte
     np.savetxt(out_dir / "volumes_used_injected.tsv", vols, fmt="%d", delimiter="\t",
                header="\t".join(f"echo{k + 1}" for k in range(vols.shape[1])), comments="")
     (out_dir / "list.txt").write_text(str(e1_new) + "\n")
-    truth = {"run": run_dir.name, "run_dir": str(run_dir), "level": level, "layout": layout, "seed": int(seed), "params_hash": phash,
+    truth = {"run": run_dir.name, "run_dir": str(run_dir), "level": level, "layout": layout,
+             "condition": condition if layout == "regions" else None, "anat_dir": None if anat_dir is None else str(anat_dir),
+             "seed": int(seed), "params_hash": phash,
              "te_ms": te, "n_frames": int(T), "radius_mm": float(I["radius_mm"]), "voxel_mm": voxel_mm,
              "mixed_ratio_ms": float(I["mixed_ratio_ms"]), "band_hz": list(I["band_hz"]),
              "baseline_frontend": str(fe), "tissue_dir": None if tissue_dir is None else str(tissue_dir),

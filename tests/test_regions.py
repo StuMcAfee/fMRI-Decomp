@@ -159,8 +159,11 @@ def test_global_share():
     g = slow(rng, 1, T)[0]
     x = 0.8 * g[None, :] + 0.6 * slow(rng, P, T)
     c = regions.coupling(x, np.zeros(P), TR, BAND)
-    gs = regions.global_share(c["x_band"], c["signal_var"])
-    assert 0.55 < gs < 0.75, gs                                       # truth 0.64 / (0.64 + 0.36) = 0.64
+    gs = regions.global_share(c["x_band"], c["signal_var"], c["noise_band_var"])
+    assert 0.55 < gs < 0.8, gs                                        # truth: var(mean) / mean var = (0.64 + 0.36 / 12) / 1 = 0.67
+    xi = np.stack([slow(rng, 1, T)[0] for _ in range(P)])
+    ci = regions.coupling(xi, np.zeros(P), TR, BAND)
+    assert abs(regions.global_share(ci["x_band"], ci["signal_var"], ci["noise_band_var"])) < 0.2   # independent regions
 
 
 def _cfg_small():
@@ -232,3 +235,20 @@ def test_run_dir_files(tmp_path):
     used = [r for r in out["regions"] if r["used"]]
     assert len(used) == sum(r["usable"] for r in rows) and out["integration"][0]["n_regions"] == len(used)
     json.loads((tmp_path / "rb" / "route_b.json").read_text())
+
+
+def test_inject_regions_place_and_weights():
+    from mejoint import inject_regions, io
+    cfg = io.load_config()
+    table = [{"id": i, "name": f"r{i}", "kind": "cortex", "hemisphere": "LH" if i < 60 else "RH", "network": "N",
+              "n_voxels": 15 if i % 10 == 0 else 50, "usable": i % 7 != 0} for i in range(1, 121)]
+    table += [{"id": 121, "name": "L_thalamus", "kind": "secondary", "hemisphere": "LH", "network": "Thalamus", "n_voxels": 200, "usable": True}]
+    nets = inject_regions.place(table, cfg, np.random.default_rng(SEED))
+    assert [n["type"] for n in nets] == ["r2", "r2", "s0", "mixed"]
+    ids = [p for n in nets for p in n["parcels"]]
+    assert len(ids) == 32 and len(set(ids)) == 32
+    ok = {r["id"] for r in table if r["kind"] == "cortex" and r["usable"] and r["n_voxels"] >= 20}
+    assert set(ids) <= ok
+    lab = np.zeros((10, 10, 3), int); lab.flat[:121] = np.arange(1, 122)
+    W = inject_regions.weights(lab, nets)
+    assert W.shape == (10, 10, 3, 4) and np.all(W.sum(-1) <= 1) and W[..., 0].sum() == 8

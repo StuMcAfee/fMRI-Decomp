@@ -137,7 +137,9 @@ def main(argv=None) -> int:
     im.add_argument("--out", required=True, help="injection folder (echoes/, truth.json, list.txt)")
     im.add_argument("--baseline-frontend", required=True, help="front end of the original run (analysis_mask.nii.gz)")
     im.add_argument("--tissue-dir", help="tissue classes of the original run (sources kept out of CSF and dropout)")
-    im.add_argument("--layout", choices=["focal", "network"], help="one sphere per source, or networks of spheres (default: inject.layout)")
+    im.add_argument("--layout", choices=["focal", "network", "regions"], help="one sphere per source, networks of spheres, or networks of the run's own parcels (R3) (default: inject.layout)")
+    im.add_argument("--anat-dir", help="layout regions: the run's anatomy folder (region labels)")
+    im.add_argument("--condition", choices=["independent", "shared"], default="independent", help="layout regions: own or shared time courses")
     im.add_argument("--config", help="config YAML (default: configs/default.yaml)")
     ir = sub.add_parser("inject-recover", help="Phase 5 injection: find the injected sources in a decomposition")
     ir.add_argument("--inject-dir", required=True, help="injection folder (truth.json)")
@@ -188,6 +190,16 @@ def main(argv=None) -> int:
     rb.add_argument("--atlas", help="200_7 or 400_17 (default regions.atlas)")
     rb.add_argument("--common-ids", help="file with the region ids usable in every participant (common set)")
     rb.add_argument("--config", help="config YAML (default: configs/default.yaml)")
+
+    irr = sub.add_parser("inject-regions-recover", help="R3: injected networks of parcels against the truth and the run without injection")
+    irr.add_argument("--inject-dir", required=True)
+    irr.add_argument("--route-b-dir", required=True, help="route B on the injected run")
+    irr.add_argument("--baseline-dir", required=True, help="route B on the same run without injection")
+    irr.add_argument("--config", help="config YAML (default: configs/default.yaml)")
+    irs = sub.add_parser("inject-regions-summary", help="R3: pool every recovery_regions.json")
+    irs.add_argument("--root", default="outputs/inject")
+    irs.add_argument("--out")
+    irs.add_argument("--config", help="config YAML (default: configs/default.yaml)")
 
     args = ap.parse_args(argv)
     if args.cmd == "inventory" and not (args.nifti_dir or args.run_dir):
@@ -294,7 +306,7 @@ def main(argv=None) -> int:
     elif args.cmd == "inject-make":
         from . import inject
         tr = inject.make_dir(args.run_dir, cfg, args.level, args.seed, args.out, args.baseline_frontend, args.tissue_dir,
-                             layout=args.layout)
+                             layout=args.layout, anat_dir=args.anat_dir, condition=args.condition)
         print(f"{len(tr['sources'])} sources; injected echo 1: {tr['echo1_injected']}; list for mbme_tedana: {args.out}/list.txt")
     elif args.cmd == "inject-recover":
         from . import inject
@@ -335,6 +347,16 @@ def main(argv=None) -> int:
         from . import regions
         regions.run_dir(args.frontend_dir, args.anat_dir, cfg, args.out, atlas=args.atlas, common_ids_file=args.common_ids)
         print(open(f"{args.out}/route_b.md").read())
+    elif args.cmd == "inject-regions-recover":
+        from . import inject_regions
+        inject_regions.recover_dir(args.inject_dir, args.route_b_dir, args.baseline_dir)
+        print(open(f"{args.inject_dir}/recovery_regions.md").read())
+    elif args.cmd == "inject-regions-summary":
+        from pathlib import Path
+
+        from . import inject_regions
+        inject_regions.summary(args.root, args.out)
+        print(open(Path(args.out or args.root) / "inject_regions_summary.md").read())
     elif args.cmd == "inventory-summary":
         from . import inventory
         inventory.write_summary(args.out, cfg)

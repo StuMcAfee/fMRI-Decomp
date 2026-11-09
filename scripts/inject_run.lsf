@@ -7,7 +7,11 @@
 #      correction, tedana robustica), into <injection folder>/OUT;
 #   3. mejoint front end (motion-corrected echoes, motion regression), joint ICA at inject.k (same seeds as the
 #      original run's sweep), and inject-recover (recovery.md / .json / .png in the injection folder).
-# Arguments: <OUT_keep run folder> <mbme_tedana.py> <level> [seed=N] [layout=focal|network] [config=file.yaml] [clean]
+# Arguments: <OUT_keep run folder> <mbme_tedana.py> <level> [seed=N] [layout=focal|network|regions] [condition=independent|shared]
+#            [config=file.yaml] [clean]
+#   layout regions (R3, route B validation): networks of the run's own cortical parcels (needs outputs/anatomy/<run>);
+#   route B runs on the injected and on the original run instead of the joint ICA; condition: independent or shared
+#   time courses across networks.
 #   layout: focal = one sphere per source (the first runs); network = each source a set of spheres sharing one time
 #   course (inject.network in the config); default inject.layout.
 #   clean: delete the injected raw echoes and the motion-corrected copies once the front end exists (saves ~4 GB;
@@ -15,12 +19,13 @@
 # Outputs: outputs/inject/<run>/<level>_s<seed>/ (focal) or outputs/inject/<run>/network_<level>_s<seed>/
 set -uo pipefail
 RUN_DIR="${1:-}"; MBME="${2:-}"; LEVEL="${3:-}"; shift 3 2>/dev/null || true
-SEED=1; CONFIG=""; CLEAN=0; LAYOUT=""
+SEED=1; CONFIG=""; CLEAN=0; LAYOUT=""; CONDITION=independent
 for a in "$@"; do
     case "$a" in
         seed=*) SEED="${a#seed=}" ;;
         config=*) CONFIG="${a#config=}" ;;
         layout=*) LAYOUT="${a#layout=}" ;;
+        condition=*) CONDITION="${a#condition=}" ;;
         clean) CLEAN=1 ;;
         *) echo "unknown argument: $a" >&2; exit 2 ;;
     esac
@@ -43,7 +48,15 @@ K="$("$PY" -c "import sys; from mejoint import io; print(io.load_config(sys.argv
     || fail "cannot read inject.k from the config"
 [ -n "$LAYOUT" ] || LAYOUT="$("$PY" -c "import sys; from mejoint import io; print(io.load_config(sys.argv[1] or None)['inject'].get('layout', 'focal'))" "$CONFIG")"
 case "$LAYOUT" in focal) IDIR="outputs/inject/$NAME/${LEVEL}_s${SEED}" ;; network) IDIR="outputs/inject/$NAME/network_${LEVEL}_s${SEED}" ;;
-    *) fail "layout must be focal or network (got $LAYOUT)" ;; esac
+    regions) IDIR="outputs/inject/$NAME/regions_${CONDITION}_${LEVEL}_s${SEED}" ;;
+    *) fail "layout must be focal, network or regions (got $LAYOUT)" ;; esac
+A0="outputs/anatomy/$NAME"
+ATLAS="$("$PY" -c "import sys; from mejoint import io; print(io.load_config(sys.argv[1] or None).get('regions', {}).get('atlas', '200_7'))" "$CONFIG")"
+ANATARG=()
+if [ "$LAYOUT" = regions ]; then
+    [ -f "$A0/labels_$ATLAS.nii.gz" ] || fail "layout regions needs the run's region labels ($A0/labels_$ATLAS.nii.gz)"
+    ANATARG=(--anat-dir "$A0" --condition "$CONDITION")
+fi
 NT="${LSB_DJOB_NUMPROC:-8}"
 threads() { export OMP_NUM_THREADS="$1" MKL_NUM_THREADS="$1" OPENBLAS_NUM_THREADS="$1"; }
 echo "== injection | $NAME | $LAYOUT | level $LEVEL | seed $SEED | k $K | $(date) | host $(hostname) | job ${LSB_JOBID:-interactive} | cores $NT | git $(git rev-parse --short HEAD 2>/dev/null || echo '?')"
@@ -57,7 +70,7 @@ if [ -f "$FE1/c0.npy" ] && [ -f "$IDIR/truth.json" ]; then
 else
     echo; echo "== [inject-make] start $(date)"
     "$PY" -m mejoint.cli inject-make "${CFGARG[@]}" --run-dir "$RUN_DIR" --level "$LEVEL" --seed "$SEED" --layout "$LAYOUT" --out "$IDIR" \
-        --baseline-frontend "$FE0" "${TISARG[@]}" || fail "inject-make failed"
+        --baseline-frontend "$FE0" "${TISARG[@]}" "${ANATARG[@]}" || fail "inject-make failed"
 fi
 E1="$(head -n 1 "$IDIR/list.txt")"
 
@@ -96,6 +109,21 @@ if [ ! -f "$FE1/c0.npy" ]; then
     [ -f "$IRUN/work/echo-1_desc-mc_bold.nii.gz" ] || fail "$IRUN has no motion-corrected echoes (work/)"
     echo; echo "== [front end] start $(date)"
     "$PY" -m mejoint.cli frontend "${CFGARG[@]}" --run-dir "$IRUN" --source mc --no-mppca --out "$FE1" || fail "front end failed"
+fi
+if [ "$LAYOUT" = regions ]; then
+    # route B on the original run (baseline, validation use only) and on the injected run, with the run's own labels
+    BASE="outputs/inject/$NAME/route_b_baseline/$ATLAS"
+    if [ ! -f "$BASE/route_b.json" ]; then
+        echo; echo "== [route B, original run] start $(date)"
+        "$PY" -m mejoint.cli route-b "${CFGARG[@]}" --frontend-dir "$FE0" --anat-dir "$A0" --out "$BASE" --atlas "$ATLAS" || fail "route B (original) failed"
+    fi
+    echo; echo "== [route B, injected run] start $(date)"
+    "$PY" -m mejoint.cli route-b "${CFGARG[@]}" --frontend-dir "$FE1" --anat-dir "$A0" --out "$IDIR/route_b/$ATLAS" --atlas "$ATLAS" || fail "route B (injected) failed"
+    "$PY" -m mejoint.cli inject-regions-recover --inject-dir "$IDIR" --route-b-dir "$IDIR/route_b/$ATLAS" --baseline-dir "$BASE" \
+        || fail "recovery failed"
+    if [ "$CLEAN" = 1 ]; then echo "clean: removing $IDIR/echoes and $IRUN/work"; rm -rf "$IDIR/echoes" "$IRUN/work"; fi
+    echo; echo "== done $(date): $PWD/$IDIR/recovery_regions.md"
+    exit 0
 fi
 KD="$IDIR/decompose/k$K"
 if [ ! -f "$KD/components.json" ]; then

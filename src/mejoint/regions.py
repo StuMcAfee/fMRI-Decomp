@@ -149,7 +149,8 @@ def coupling(x: np.ndarray, noise_var: np.ndarray, tr: float, band) -> dict:
     with np.errstate(divide="ignore", invalid="ignore"):
         Rr = Cn / np.outer(d, d)
     np.fill_diagonal(Rr, np.where(ok, 1.0, np.nan))
-    return {"cov": Cn, "corr": Rr, "signal_var": sig, "ok": ok, "x_band": xb}
+    return {"cov": Cn, "corr": Rr, "signal_var": sig, "ok": ok, "x_band": xb,
+            "noise_band_var": np.asarray(noise_var, float) * band_fraction(T, tr, band)}
 
 
 def participation_ratio(C: np.ndarray) -> float:
@@ -180,15 +181,18 @@ def segregation(corr: np.ndarray, networks: np.ndarray) -> float:
     return float((w - bt) / w) if w != 0 else float("nan")
 
 
-def global_share(xb: np.ndarray, signal_var: np.ndarray) -> float:
-    """Share of the regions' (noise-corrected) band variance carried by their common mean time course."""
+def global_share(xb: np.ndarray, signal_var: np.ndarray, noise_band=None) -> float:
+    """How much of the regions' signal is common to all of them: the variance of their mean time course (its own
+    noise removed: mean noise / n) over their mean noise-corrected variance. ~1 when one signal drives every region,
+    ~0 when the regions are independent."""
     ok = signal_var > 0
     if ok.sum() < 2:                                                   # no region with signal above its noise
         return float("nan")
+    msv = float(signal_var[ok].mean())
+    nb = 0.0 if noise_band is None else float(np.asarray(noise_band)[ok].mean())
     g = xb[ok].mean(0)
-    gn = g / np.linalg.norm(g)
-    expl = ((xb[ok] @ gn) ** 2).sum() / xb.shape[1]
-    return float(expl / signal_var[ok].sum())
+    gv = float(g.var()) - nb / ok.sum()
+    return float(gv / msv) if msv > 0 else float("nan")
 
 
 def shift_null(x: np.ndarray, noise_var: np.ndarray, tr: float, band, n: int, min_shift: int, rng,
@@ -328,7 +332,7 @@ def analyze(S, labels, mu, sigma, ratios, use, te_ms, table: list, cfg: dict, Q=
                 "n_eigen_above_null": int(count_above_null(eig, null["eig"])),
                 "segregation": _r(segregation(c_["corr"], nets[cx][mask_sub])),
                 "segregation_null_q95": _r(np.nanquantile(null["segregation"], 0.95)) if np.isfinite(null["segregation"]).any() else None,
-                "global_share": _r(global_share(c_["x_band"], c_["signal_var"])),
+                "global_share": _r(global_share(c_["x_band"], c_["signal_var"], c_["noise_band_var"])),
                 "eigenvalues": [round(float(x), 4) for x in eig[:30]],
                 "null_eig_q95": [round(float(x), 4) for x in np.nanquantile(null["eig"], 0.95, axis=0)[:30]] if null["eig"].size else [],
                 "edges_beyond_null": _r(_edge_fraction(c_["corr"], null["edges"]))}
@@ -350,7 +354,8 @@ def analyze(S, labels, mu, sigma, ratios, use, te_ms, table: list, cfg: dict, Q=
         sec.append(row)
     return {"regions": rows, "integration": out_int, "secondary_coupling": sec, "cortex_ids": ids[cx].tolist(),
             "cortex_networks": nets[cx].tolist(), "corr_b": cb["corr"], "corr_a": ca["corr"], "corr_oc": co["corr"],
-            "n_frames": int(T), "nuisance_rank": int(removed), "band_hz": list(band)}
+            "n_frames": int(T), "nuisance_rank": int(removed), "band_hz": list(band),
+            "a": sp["a"], "b": sp["b"], "c0": sp["c"][:, 0], "R": sp["R"], "noise_var": nv}
 
 
 def _edge_fraction(corr, null_edges, q=0.95):
@@ -402,6 +407,10 @@ def run_dir(frontend_dir, anat_dir, cfg: dict, out_dir, atlas: str | None = None
                   np.random.default_rng(int(cfg.get("project_seed", 0)) + 11), common)
     for k in ("corr_b", "corr_a", "corr_oc"):
         np.save(out / f"{k}.npy", res[k].astype(np.float32))
+    # each region's time courses (row = region id - 1) for recovery against injected truth and later analyses
+    np.savez_compressed(out / "region_timecourses.npz", a=res["a"].astype(np.float32), b=res["b"].astype(np.float32),
+                        c0=res["c0"].astype(np.float32), R=res["R"], noise_var=res["noise_var"],
+                        nuisance_Q=(np.load(fe / "nuisance_Q.npy") if (fe / "nuisance_Q.npy").exists() else np.zeros((res["n_frames"], 0))))
     rows = res["regions"]
     io.write_tsv(out / "regions_route_b.tsv", {k: [(";".join(map(str, r[k])) if isinstance(r[k], list) else r[k]) for r in rows] for k in rows[0]})
     summ = {"run": fs.get("run_id"), "atlas": atlas, "frontend_dir": str(fe), "anat_dir": str(A), "n_frames": res["n_frames"],
