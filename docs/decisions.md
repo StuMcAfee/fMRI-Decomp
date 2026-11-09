@@ -1103,3 +1103,19 @@ User: in both pilots the T1 white-matter boundary appears shifted to the left on
 - **Measurement** (`anatomy.shift_scan`, `mejoint anatomy-regcheck`): for the EPI in T1 space, the shift of the T1 white-matter boundary along each axis that maximizes the EPI's contrast across it (just outside minus just inside, over their average); 0 = aligned, sign and side in subject terms from the affine. Synthetic test: a 3-voxel left-right displacement is reported as 3 mm toward the right side, 0 on the other axes.
 - **Candidates** (`mejoint anatomy-refs`; `scripts/anatomy_regcheck.lsf`, `scripts/submit_anatomy_regcheck.sh`): epi_reg with the temporal mean of echo 1, 2 or 3 and with a T2*-weighted combination of the echo means, each measured; the current registration is measured too. The chosen reference goes into `regions.epi_ref`; `scripts/anatomy_run.lsf` then redoes epi_reg and everything downstream, and runs the check on the final registration.
 - If every reference leaves a similar left-right shift, the cause is distortion; options then (to decide with the user): a field-map-free distortion correction, or an EPI-to-T1 registration allowed to stretch along the phase-encoding axis only. A second R2 failure means stopping to ask (CLAUDE.md section 2).
+
+### 2026-11-10: registration check result; EPI reference changed to echo 3
+
+Residual left-right shift of the T1 white-matter boundary on the EPI (regcheck; only peaks inside +-8 mm count, curves rising to the edge of the range are not measurable and are now flagged as such):
+
+| EPI reference | P12 | P04 (left-right; anterior-posterior / superior-inferior) |
+|---|---|---|
+| echo 1 mean, first run ("current") | +6 mm | +3 mm; +6 / not measurable |
+| echo 1 mean (mu) | +2 mm | +3 mm; +7 / not measurable |
+| echo 2 mean | +1 mm | 0; +1 / 0 |
+| echo 3 mean | +1 mm | 0; +1 / 0 |
+| T2*-weighted combination | +1 mm | +1 mm; +1 / +1 |
+
+- The user's left-right shift is confirmed and came from the registration image: the echo-1 mean (TE 16 ms) has the weakest grey / white contrast, and epi_reg settled 2-6 mm off (and differently between two echo-1 inputs). Later echoes remove it (0-1 mm, under a third of an EPI voxel). Not a distortion problem at this scale; no distortion correction needed for now.
+- Echo 3 has the strongest contrast (the only reference with the expected sign: EPI white matter darker than the grey matter outside it) and the sharpest peaks in P04: **`regions.epi_ref: echo3`**. In P12 the superior-inferior curve has no peak for any reference (not measurable there).
+- Next: rerun `scripts/anatomy_run.lsf` for both pilots (it redoes epi_reg with echo 3 and everything downstream, keeping the T1 and MNI registrations, and runs the check on the final registration); the user then judges qc_epi_to_t1.png again for gate R2.

@@ -135,6 +135,12 @@ def test_shift_scan_finds_a_left_right_shift():
         assert res["left-right"]["best_shift_mm"] == abs(d) * np.sign(d), res["left-right"]
         assert res["left-right"]["epi_displaced_toward"] == side
         assert res["anterior-posterior"]["best_shift_mm"] == 0 and res["superior-inferior"]["best_shift_mm"] == 0
+        assert res["left-right"]["peak_inside_range"]
+    # a displacement beyond the scanned range has no peak inside it: flagged, not reported as a shift
+    r = _blob(shape, 45 + 12)
+    epi = np.where(r < 1, np.where(r < 0.6, 100.0, 160.0), 0.0)
+    far = anatomy.shift_scan(epi, wm, aff, max_mm=8.0)["left-right"]
+    assert not far["peak_inside_range"] and far["epi_displaced_toward"] == "no peak within the range"
 
 
 def test_reference_images(tmp_path):

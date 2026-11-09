@@ -323,10 +323,12 @@ def shift_scan(epi_t1: np.ndarray, wm: np.ndarray, affine, max_mm: float = 8.0, 
         name = {frozenset("LR"): "left-right", frozenset("AP"): "anterior-posterior", frozenset("SI"): "superior-inferior"}[frozenset(codes[a] + opposite[codes[a]])]
         # a mask shift of +s (toward codes[a]) fits best: the EPI's anatomy sits toward codes[a] from the T1 boundary
         side = {"L": "left", "R": "right", "A": "anterior", "P": "posterior", "S": "superior", "I": "inferior"}[codes[a] if best > 0 else opposite[codes[a]]]
+        inside = 0 < b < len(curve) - 1                                 # a peak at the edge of the range is no peak
         res[name] = {"shifts_mm": [round(float(x), 2) for x in shifts], "contrast": [None if not np.isfinite(c) else round(float(c), 5) for c in curve],
-                     "best_shift_mm": round(float(best), 2), "contrast_at_0": None if not np.isfinite(curve[n]) else round(float(curve[n]), 5),
+                     "best_shift_mm": round(float(best), 2), "peak_inside_range": bool(inside),
+                     "contrast_at_0": None if not np.isfinite(curve[n]) else round(float(curve[n]), 5),
                      "contrast_best": None if not np.isfinite(curve[b]) else round(float(curve[b]), 5),
-                     "epi_displaced_toward": side if best != 0 else "none"}
+                     "epi_displaced_toward": (side if best != 0 else "none") if inside else "no peak within the range"}
     return res
 
 
@@ -354,7 +356,8 @@ def regcheck(anat_dir, refs=EPI_REFS) -> dict:
          "and at the best shift; higher means a sharper fit.", "",
          "| EPI reference | left-right | anterior-posterior | superior-inferior | contrast at 0 / best (left-right) |", "|---|---|---|---|---|"]
     for name, r in rows.items():
-        cell = lambda k: f"{r[k]['best_shift_mm']:+.1f} mm ({r[k]['epi_displaced_toward']})"
+        cell = lambda k: (f"{r[k]['best_shift_mm']:+.1f} mm ({r[k]['epi_displaced_toward']})" if r[k].get("peak_inside_range", True)
+                          else "no peak (curve rises to the edge of +-8 mm: not measurable)")
         L.append(f"| {name} | {cell('left-right')} | {cell('anterior-posterior')} | {cell('superior-inferior')} | "
                  f"{r['left-right']['contrast_at_0']} / {r['left-right']['contrast_best']} |")
     io.write_text(A / "regcheck.md", "\n".join(L) + "\n")
