@@ -1125,3 +1125,11 @@ Residual left-right shift of the T1 white-matter boundary on the EPI (regcheck; 
 - User: with echo 3 the registrations still look somewhat off, and signal dropout makes it hard to see how. This is the second R2 failure; the user chose the next step: register the static (average) T2* map (user's report: the tedana group has shown T2*-map registration can outperform EPI registration in some examples; not checked here).
 - Built: candidate `t2s` = the front end's T2* map (fit to the run's mean decay), clipped to 5-150 ms, zero outside the analysis mask; added to `scripts/anatomy_regcheck.lsf` (existing candidate registrations are kept, only t2s is new). QC slices moved away from the dropout zone: three axial slices in the upper brain and three coronal slices (front, middle, back) within the EPI's coverage, because a left-right shift shows in axial and coronal views; the comparison figure likewise.
 - The user picks the reference from regcheck.png / regcheck.md; then `regions.epi_ref` is set and `scripts/anatomy_run.lsf` reruns.
+
+### 2026-11-10: T2* map registration accepted; gate R2 passed (user)
+
+| reference | P04: left-right / anterior-posterior / superior-inferior, contrast | P12 |
+|---|---|---|
+| t2s (static T2* map) | +1 / 0 / 0 mm, 0.041 | 0 / +1 / 0 mm (the only reference with a measurable superior-inferior peak) |
+
+User: "the t2s alignment looks good". **`regions.epi_ref: t2s`**; `scripts/anatomy_run.lsf` reuses the checked registration (`reg_t2s/epi2t1.mat`) instead of recomputing it, then redoes the atlas resampling, grey matter, labels and QC. **Gate R2 passed** for P04 and P12 with the T2* map registration; the labels from that rerun are the ones route B uses. Next: R3 (injection validation of route B).
