@@ -1188,3 +1188,28 @@ Fixed (reporting only; no measure redefined):
 - **Thalamus and striatum coupling was not noise-corrected** (plain correlations, attenuated by the larger noise of deep regions), unlike the cortical matrix. Now noise-corrected the same way (simulation: plain 0.76, corrected 0.91, truth 0.94); plain values kept in the JSON. Each secondary region is now listed separately.
 
 Observations for the user's review: right striatum coupling is lowest in both participants (0.08-0.21 and about 0); the circular-shift null of the participation ratio differs between participants (37.9 vs 43.1: different temporal autocorrelation and region counts); every eigenvalue past the fourth lies below the null in both, which partly reflects the trace taken by the first eigenvalue (~100 of ~190).
+
+### 2026-11-10: R3 rerun with the new secondary measure; R4 rerun after the fixes; noise diagnostics added
+
+**R3, participation ratio without the first pattern (before -> after injection):**
+
+| | independent, resting | independent, strong | shared, resting | shared, strong |
+|---|---|---|---|---|
+| P12 | 17.26 -> 18.91 (+1.65) | -> 18.14 (+0.88) | -> 17.13 (-0.13) | -> 14.06 (-3.20) |
+| P04 | 18.56 -> 20.22 (+1.66) | -> 19.69 (+1.13) | -> 17.80 (-0.76) | -> 14.64 (-3.92) |
+
+- The new measure separates the conditions in all 8 runs: up with independent networks, down with a shared one; the ordinary ratio rose in all 8. The global share fell in all 8 (dilution).
+- Not monotone in strength for independent networks (resting +1.65, strong +0.9 to +1.1): two opposing effects, dilution of existing correlations (raises it) and four new internally coherent networks (lower it, more so when strong). It reads the organization beyond the brain-wide pattern, not "independence" as such.
+
+**R4 rerun (fixes of the previous entry):**
+- Segregation now has a usable null: observed 0.20 (within 0.59 / 0.57, between 0.47 / 0.46) against a permutation 95 % of 0.015.
+- 26 (P12) and 13 (P04) cortical regions had S0-like energy below its noise estimate (SomMot and dorsal attention mostly): expected where the true S0-like energy is near 0 (estimates scatter around 0).
+- **P12 thalamus: noise over-corrected.** Noise-corrected coupling above 1 (L thalamus with SomMot 1.06, Limbic 1.04; R thalamus with Limbic 1.02), both thalami with bootstrap share intervals [0, 1], L thalamus leftover share 0.22. Reading: the region's noise estimate (frame differences of the leftover channels) is inflated by fast structured signal that is not thermal noise, so too much is subtracted. P04 thalami: leftover 0.02-0.07, coupling 0.04-0.37, tight intervals.
+- Striatum: S0-like share 0.25-0.67 and leftover 0.04-0.17 in both participants; right striatum coupling the lowest in both (0.14-0.37 and about 0). Suspected: CSF partial volume (caudate borders the lateral ventricles; thalamus and striatum labels have no tissue threshold, unlike cortex), and placement.
+
+**Diagnostics added (no measure redefined):**
+- `regions.leftover_noise_spectral`: median periodogram of the leftover channels above 0.1 Hz (robust to narrow-band structure such as cardiac aliases and respiration); its ratio to the frame-difference estimate per region (`noise_var_spectral_ratio`, ~1 for white noise). Test: equal on white noise; with a 0.45 Hz alias the frame-difference estimate rises from 2.0 to >3, the spectral one stays at 2.0.
+- Region noise ratio (`noise_var`: region noise over the thermal noise of independent voxels) reported for the deep regions and the cortex median.
+- Mean grey-matter and CSF probability per region (`csf_epi.nii.gz`, new in `anatomy_run.lsf`).
+- `qc_subcortical.png`: thalamus and striatum outlines on the EPI reference and the CSF probability, with the screen side taken from the header.
+- Couplings above 1 flagged; count of cortical correlations above 1 after noise correction.

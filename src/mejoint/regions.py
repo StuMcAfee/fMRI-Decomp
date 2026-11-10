@@ -86,6 +86,25 @@ def leftover_noise(r: np.ndarray, removed_df: int = 0) -> np.ndarray:
     return v * T / max(T - int(removed_df), 1)
 
 
+def leftover_noise_spectral(r: np.ndarray, tr: float, f_min: float = 0.1, removed_df: int = 0) -> np.ndarray:
+    """Robust alternative (diagnostic, 2026-11-10): the median periodogram of the leftover channels above f_min
+    (white noise: each periodogram value is the noise variance times an exponential variable, median ln 2).
+    Narrow-band structure (cardiac aliases, respiration) moves a mean-based estimate such as the frame-difference
+    one, but barely moves a median; broadband structure moves both; slow violations below f_min are ignored."""
+    r = np.nan_to_num(np.asarray(r, np.float64))
+    T = r.shape[2]
+    F = np.fft.rfft(r - r.mean(2, keepdims=True), axis=2)
+    f = np.fft.rfftfreq(T, tr)
+    keep = (f >= f_min) & (f > 0) & ~((T % 2 == 0) & (np.arange(f.size) == f.size - 1))
+    P = np.abs(F[:, :, keep]) ** 2 / T
+    present = (np.abs(r).sum(2) > 0)                                   # leftover channels that exist
+    out = np.full(r.shape[0], np.nan)
+    for p in range(r.shape[0]):
+        if present[p].any():
+            out[p] = np.median(P[p][present[p]]) / np.log(2.0)
+    return out * T / max(T - int(removed_df), 1)
+
+
 # ============================================================================ 3-4: band and shares
 def band_pass(x: np.ndarray, tr: float, band) -> np.ndarray:
     """Ideal (FFT) band-pass along the last axis; mean removed."""
@@ -317,6 +336,7 @@ def analyze(S, labels, mu, sigma, ratios, use, te_ms, table: list, cfg: dict, Q=
     removed = 0 if Q is None else Q.shape[1]
     nv = leftover_noise(sp["r"], removed)
     nv = np.where(np.isfinite(nv) & (nv > 0), nv, np.nan)
+    nv_spec = leftover_noise_spectral(sp["r"], tr, float(band[1]), removed)
     sh = shares(sp, np.nan_to_num(nv, nan=1.0), tr, band)
     lo, hi = share_ci(sp, np.nan_to_num(nv, nan=1.0), tr, band, int(G.get("n_boot", 200)),
                       max(2, int(round(float(G.get("boot_block_s", 20.0)) / tr))), rng)
@@ -328,7 +348,8 @@ def analyze(S, labels, mu, sigma, ratios, use, te_ms, table: list, cfg: dict, Q=
         below = [n for n, k in (("S0", "E_S0"), ("R2", "E_R2")) if ok and np.isfinite(sh[k][p]) and sh[k][p] < 0]
         bs = float(np.clip(sh["bold_share"][p], 0.0, 1.0)) if ok and np.isfinite(sh["bold_share"][p]) else np.nan
         rows.append({**{k: r[k] for k in ("id", "name", "kind", "hemisphere", "network", "n_voxels")}, "used": ok,
-                     "noise_var": _r(nv[p]), "bold_share": _r(bs) if ok else None,
+                     "noise_var": _r(nv[p]), "noise_var_spectral_ratio": _r(nv_spec[p] / nv[p]) if ok else None,
+                     "bold_share": _r(bs) if ok else None,
                      "bold_share_raw": _r(sh["bold_share"][p]) if ok else None,
                      "energy_below_noise": ";".join(below),
                      "bold_share_ci": [_r(np.clip(lo[p], 0, 1)), _r(np.clip(hi[p], 0, 1))] if ok else None,
@@ -365,6 +386,7 @@ def analyze(S, labels, mu, sigma, ratios, use, te_ms, table: list, cfg: dict, Q=
                 "participation_ratio": _r(pr),
                 "pr_null_median": _r(np.nanmedian(null["pr"])), "pr_null_q05_q95": [_r(np.nanquantile(null["pr"], 0.05)), _r(np.nanquantile(null["pr"], 0.95))],
                 "pr_percentile_in_null": _r(float(np.mean(null["pr"] <= pr))),
+                "n_edges_above_1": int(np.sum(np.abs(c_["corr"][np.triu_indices(c_["corr"].shape[0], 1)]) > 1.0)),
                 "pr_without_first": _r(pr1),
                 "pr_without_first_null_median": _r(np.nanmedian(null["pr_resid"])),
                 "pr_without_first_null_q05_q95": [_r(np.nanquantile(null["pr_resid"], 0.05)), _r(np.nanquantile(null["pr_resid"], 0.95))],
@@ -401,6 +423,8 @@ def analyze(S, labels, mu, sigma, ratios, use, te_ms, table: list, cfg: dict, Q=
             vp, vm = float(xb_all[p].var()) - nb_p, float(m.var()) - nb_m
             row[net] = _r(cv / np.sqrt(vp * vm)) if vp > 0 and vm > 0 else None
             raw[net] = _r(np.corrcoef(xb_all[p], m)[0, 1])
+        vals = [v for k, v in row.items() if k != "name" and v is not None]
+        row["noise_overcorrected"] = bool(vals) and max(abs(v) for v in vals) > 1.0
         sec.append(row)
         sec_raw.append(raw)
     return {"regions": rows, "integration": out_int, "secondary_coupling": sec, "secondary_coupling_raw": sec_raw, "cortex_ids": ids[cx].tolist(),
@@ -477,6 +501,14 @@ def run_dir(frontend_dir, anat_dir, cfg: dict, out_dir, atlas: str | None = None
         common = [int(x) for x in Path(common_ids_file).read_text().split() if x.strip().isdigit()]
     res = analyze(S, lab3[mask3d], mu, sigma, fs["echo_noise_ratios_used"], use, fs["te_ms"], table, cfg, Q,
                   np.random.default_rng(int(cfg.get("project_seed", 0)) + 11), common)
+    # mean tissue probabilities per region (FSL FAST in EPI space; csf_epi from anatomy_run.lsf since 2026-11-10)
+    for name, key in (("gm_epi", "gm_mean"), ("csf_epi", "csf_mean")):
+        f = A / f"{name}.nii.gz"
+        if f.exists():
+            t = np.asarray(nib.load(str(f)).dataobj, np.float64)
+            for r in res["regions"]:
+                m = lab3 == r["id"]
+                r[key] = _r(float(np.nanmean(t[m]))) if m.any() else None
     for k in ("corr_b", "corr_a", "corr_oc"):
         np.save(out / f"{k}.npy", res[k].astype(np.float32))
     # each region's time courses (row = region id - 1) for recovery against injected truth and later analyses
@@ -529,17 +561,28 @@ def render(s: dict) -> str:
     flag = [r for r in s["regions"] if r.get("energy_below_noise")]
     sub = [r for r in s["regions"] if r["kind"] == "secondary"]
     if sub:
-        L += ["", "## Thalamus and striatum, each region", "", "| region | voxels | used | BOLD-like [95 % CI] | S0-like | leftover | energy below noise |", "|---|---|---|---|---|---|---|"]
+        L += ["", "## Thalamus and striatum, each region", "",
+              "Noise ratio: region noise / the thermal noise of independent voxels (frame differences; cortex median below). "
+              "Spectral / difference: the robust median-spectrum estimate over the frame-difference one (~1 for white "
+              "noise; below 1 where fast structure inflates the difference estimate). Tissue: mean FAST probabilities.", "",
+              "| region | voxels | used | BOLD-like [95 % CI] | S0-like | leftover | energy below noise | noise ratio | spectral / difference | GM | CSF |",
+              "|---|---|---|---|---|---|---|---|---|---|---|"]
         for r in sub:
-            L.append(f"| {r['name']} | {r['n_voxels']} | {r['used']} | {r['bold_share']} {r['bold_share_ci']} | {r['s0_share']} | {r['leftover_share']} | {r.get('energy_below_noise') or '-'} |")
+            L.append(f"| {r['name']} | {r['n_voxels']} | {r['used']} | {r['bold_share']} {r['bold_share_ci']} | {r['s0_share']} | {r['leftover_share']} | "
+                     f"{r.get('energy_below_noise') or '-'} | {r['noise_var']} | {r.get('noise_var_spectral_ratio')} | {r.get('gm_mean')} | {r.get('csf_mean')} |")
+    cx = [r for r in s["regions"] if r["kind"] == "cortex" and r["used"]]
+    med = lambda k: _r(np.median([r[k] for r in cx if r.get(k) is not None])) if any(r.get(k) is not None for r in cx) else None
+    L += ["", f"Cortex (median over used regions): noise ratio {med('noise_var')}, spectral / difference {med('noise_var_spectral_ratio')}, "
+          f"GM {med('gm_mean')}, CSF {med('csf_mean')}; cortical correlations above 1 after noise correction: "
+          + ", ".join(str(i.get('n_edges_above_1')) for i in s['integration'])]
     L += ["", f"Regions with an energy below its noise estimate (share clipped): {len(flag)}"
           + (": " + ", ".join(f"{r['name']} ({r['energy_below_noise']})" for r in flag[:20]) + (" ..." if len(flag) > 20 else "") if flag else "")]
     if s["secondary_coupling"]:
-        nets = [k for k in s["secondary_coupling"][0] if k != "name"]
+        nets = [k for k in s["secondary_coupling"][0] if k not in ("name", "noise_overcorrected")]
         L += ["", "## Thalamus and striatum: BOLD-like coupling with each cortical network's mean", "",
               "| region | " + " | ".join(nets) + " |", "|---|" + "---|" * len(nets)]
         for r in s["secondary_coupling"]:
-            L.append(f"| {r['name']} | " + " | ".join(str(r[n]) for n in nets) + " |")
+            L.append(f"| {r['name']}{' (noise over-corrected: a value above 1)' if r.get('noise_overcorrected') else ''} | " + " | ".join(str(r[n]) for n in nets) + " |")
     return "\n".join(L) + "\n"
 
 

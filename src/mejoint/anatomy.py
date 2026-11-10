@@ -154,6 +154,7 @@ def run_dir(anat_dir, frontend_dir, cfg: dict, tissue_dir=None, atlas: str = "20
     io.write_json(A / f"regions_{atlas}.json", summ)
     try:
         qc_figure(A, mimg, res["labels"], A / f"qc_{atlas}.png")
+        qc_subcortical(A, mimg, res["labels"], rows, A / "qc_subcortical.png")
         if (A / "t1_mni.nii.gz").exists() and ((A / "mni_template.nii.gz").exists() or (A / "mni_template_brain.nii.gz").exists()):
             qc_mni(A, A / "qc_t1_to_mni.png")
         if all((A / f).exists() for f in ("epi2t1.nii.gz", "t1_wmseg.nii.gz", "t1.nii.gz")):
@@ -212,6 +213,46 @@ def qc_figure(A: Path, mimg, labels: np.ndarray, path) -> None:
     fig.suptitle(f"{A.name}: regions on the EPI (cortex parcels, thalamus, striatum)", x=0.01, ha="left", fontsize=10)
     fig.tight_layout()
     fig.savefig(path, dpi=110)
+    plt.close(fig)
+
+
+def qc_subcortical(A: Path, mimg, labels: np.ndarray, table: list, path) -> None:
+    """Thalamus and striatum labels (outlines; left red, right blue) on the EPI reference and on the CSF probability,
+    axial and coronal slices through the regions (native EPI grid): checks left-right placement and CSF overlap."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import nibabel as nib
+    sec = [r for r in table if r["kind"] == "secondary"]
+    if not sec:
+        return
+    epi = np.asarray(nib.load(str(A / "epi_mean.nii.gz")).dataobj, np.float64)
+    csf = np.asarray(nib.load(str(A / "csf_epi.nii.gz")).dataobj, np.float64) if (A / "csf_epi.nii.gz").exists() else None
+    m = np.isin(labels, [r["id"] for r in sec])
+    if not m.any():
+        return
+    zs = np.flatnonzero(m.any((0, 1))); ys = np.flatnonzero(m.any((0, 2)))
+    cuts = [("z", int(np.percentile(zs, q))) for q in (25, 50, 75)] + [("y", int(np.percentile(ys, q))) for q in (25, 50, 75)]
+    rows = [("EPI reference", epi, "gray")] + ([("CSF probability (white = CSF)", csf, "bone")] if csf is not None else [])
+    fig, axs = plt.subplots(len(rows), len(cuts), figsize=(2.7 * len(cuts), 2.9 * len(rows)), squeeze=False)
+    col = {"LH": "#e3342f", "RH": "#2a78d6"}
+    for i, (title, vol, cm) in enumerate(rows):
+        lim = np.percentile(vol[vol > 0], 99) if (vol > 0).any() else 1
+        for j, (ax_, k) in enumerate(cuts):
+            ax = axs[i, j]
+            ax.imshow(_slice(vol, ax_, k).T, origin="lower", cmap=cm, vmin=0, vmax=lim if cm == "gray" else 1)
+            for r in sec:
+                L = (_slice(labels, ax_, k) == r["id"]).T.astype(float)
+                if L.any():
+                    ax.contour(L, levels=[0.5], colors=col[r["hemisphere"]], linewidths=1.0 if "thal" in r["name"] else 1.6,
+                               linestyles="-" if "thal" in r["name"] else "--")
+            ax.set_xticks([]); ax.set_yticks([])
+            ax.set_title(f"{title}: {ax_} = {k}", fontsize=7)
+    side = {"R": "right", "L": "left"}.get(nib.aff2axcodes(mimg.affine)[0], "?")
+    fig.suptitle(f"{A.name}: thalamus (solid) and striatum (dashed) as labelled; red = labelled left, blue = labelled right; "
+                 f"screen right = subject {side} (from the image header)", x=0.01, ha="left", fontsize=8)
+    fig.tight_layout()
+    fig.savefig(path, dpi=120)
     plt.close(fig)
 
 

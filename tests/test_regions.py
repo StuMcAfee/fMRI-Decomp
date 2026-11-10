@@ -328,3 +328,17 @@ def test_segregation_permutation_null_and_subcortical_noise_correction():
     xb = regions.band_pass(b, TR, BAND)
     truth = np.corrcoef(xb[-1], xb[:4].mean(0))[0, 1]
     assert abs(corr - truth) < 0.15, (corr, truth, raw)
+
+
+def test_spectral_noise_estimate_resists_narrow_band_structure():
+    """The median-spectrum noise estimate agrees with the frame-difference one on white noise and stays near the
+    thermal level when a fast narrow-band signal (a cardiac alias) is added; the frame-difference one rises."""
+    rng = np.random.default_rng(SEED + 9)
+    P, T = 20, 800
+    r = rng.standard_normal((P, 2, T)) * np.sqrt(2.0)
+    d, s_ = regions.leftover_noise(r), regions.leftover_noise_spectral(r, TR, 0.1)
+    assert np.allclose(np.median(d), 2.0, rtol=0.05) and np.allclose(np.median(s_), 2.0, rtol=0.08), (np.median(d), np.median(s_))
+    t = np.arange(T) * TR
+    r2 = r + 3.0 * np.sin(2 * np.pi * 0.45 * t + rng.uniform(0, 6.3, (P, 2, 1)))
+    d2, s2 = regions.leftover_noise(r2), regions.leftover_noise_spectral(r2, TR, 0.1)
+    assert np.median(d2) > 3.0 and np.allclose(np.median(s2), 2.0, rtol=0.1), (np.median(d2), np.median(s2))
