@@ -1213,3 +1213,12 @@ Observations for the user's review: right striatum coupling is lowest in both pa
 - Mean grey-matter and CSF probability per region (`csf_epi.nii.gz`, new in `anatomy_run.lsf`).
 - `qc_subcortical.png`: thalamus and striatum outlines on the EPI reference and the CSF probability, with the screen side taken from the header.
 - Couplings above 1 flagged; count of cortical correlations above 1 after noise correction.
+
+### 2026-11-10: noise diagnostics on the R4 pilots; reliability added
+
+- **The frame-difference noise estimate is not inflated by narrow-band structure:** the robust median-spectrum estimate agrees within 6 % in every region (spectral / difference 0.99-1.07; cortex medians 1.016 and 1.009). The hypothesis of the previous entry (fast narrow-band signal inflating the noise) is rejected.
+- Region noise relative to independent-voxel thermal noise: cortex median 1.31 / 1.37 (expected above 1: motion-correction resampling correlates neighbouring voxels' noise); deep regions 1.3-1.7, except P12 R thalamus 2.66.
+- **Reading of the P12 thalamus:** its BOLD-like time course is noise-dominated. From the plain against the noise-corrected coupling (0.49-0.58 against 0.89-1.06), noise is roughly 70 % of its slow-band variance; dividing by the square root of a small, uncertain signal variance amplifies small errors and gives values above 1. P04 thalamus about 50 %. A possible contributor (unverified): P12 was scanned with the head elements only (no neck elements).
+- Cortical correlations above 1 after correction: 19 (P12) and 26 (P04) of about 18,000.
+- **Added (reporting only):** per-region reliability of the BOLD-like time course (signal share of its slow-band variance), reported for the deep regions and the cortex (median, 5th percentile, and the median of the regions involved in correlations above 1); block-bootstrap 95 % intervals (20 s blocks) for the noise-corrected thalamus and striatum couplings.
+- The anatomy rerun did not take effect before route B (no CSF column, no qc_subcortical.png); to be repeated.

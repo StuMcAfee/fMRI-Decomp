@@ -328,6 +328,11 @@ def test_segregation_permutation_null_and_subcortical_noise_correction():
     xb = regions.band_pass(b, TR, BAND)
     truth = np.corrcoef(xb[-1], xb[:4].mean(0))[0, 1]
     assert abs(corr - truth) < 0.15, (corr, truth, raw)
+    row = res["secondary_coupling"][0]
+    lo, hi = row["ci"]["N0"]
+    assert lo <= corr <= hi and lo <= truth + 0.05, (lo, corr, hi, truth)
+    rel = {r["name"]: r["b_reliability"] for r in res["regions"]}
+    assert rel["thal"] < np.median([rel[f"r{i}"] for i in range(1, 9)]), rel
 
 
 def test_spectral_noise_estimate_resists_narrow_band_structure():

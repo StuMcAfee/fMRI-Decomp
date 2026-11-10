@@ -355,6 +355,14 @@ def analyze(S, labels, mu, sigma, ratios, use, te_ms, table: list, cfg: dict, Q=
                      "bold_share_ci": [_r(np.clip(lo[p], 0, 1)), _r(np.clip(hi[p], 0, 1))] if ok else None,
                      "s0_share": _r(1.0 - bs) if ok else None, "leftover_share": _r(sh["leftover_share"][p]) if ok else None,
                      "E_S0": _r(sh["E_S0"][p]), "E_R2": _r(sh["E_R2"][p]), "E_left": _r(sh["E_left"][p])})
+    # reliability of each region's BOLD-like time course: the share of its slow-band variance that is signal
+    # (1 - noise / total). Noise correction divides by its square root, so it amplifies errors where it is low.
+    xb_all = band_pass(sp["b"], tr, band)
+    bf = band_fraction(T, tr, band)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        rel_all = 1.0 - b_noise_variance(sp["R"], nv) * bf / xb_all.var(1)
+    for x in rows:
+        x["b_reliability"] = _r(rel_all[x["id"] - 1]) if x["used"] else None
     used = np.array([x["used"] for x in rows])
     ids = np.array([x["id"] for x in rows])
     kinds = np.array([x["kind"] for x in rows])
@@ -386,7 +394,7 @@ def analyze(S, labels, mu, sigma, ratios, use, te_ms, table: list, cfg: dict, Q=
                 "participation_ratio": _r(pr),
                 "pr_null_median": _r(np.nanmedian(null["pr"])), "pr_null_q05_q95": [_r(np.nanquantile(null["pr"], 0.05)), _r(np.nanquantile(null["pr"], 0.95))],
                 "pr_percentile_in_null": _r(float(np.mean(null["pr"] <= pr))),
-                "n_edges_above_1": int(np.sum(np.abs(c_["corr"][np.triu_indices(c_["corr"].shape[0], 1)]) > 1.0)),
+                **_edges_above_1(c_["corr"], rel_all[sel][mask_sub]),
                 "pr_without_first": _r(pr1),
                 "pr_without_first_null_median": _r(np.nanmedian(null["pr_resid"])),
                 "pr_without_first_null_q05_q95": [_r(np.nanquantile(null["pr_resid"], 0.05)), _r(np.nanquantile(null["pr_resid"], 0.95))],
@@ -409,8 +417,15 @@ def analyze(S, labels, mu, sigma, ratios, use, te_ms, table: list, cfg: dict, Q=
     # larger noise attenuates): covariance over the square root of both noise-corrected variances; the network
     # mean's noise is the mean of its regions' noise over their number (independent noise across regions)
     sec, sec_raw = [], []
-    xb_all = band_pass(sp["b"], tr, band)
-    bf = band_fraction(T, tr, band)
+    n_boot = int(G.get("n_boot", 200))
+    block = max(2, int(round(float(G.get("boot_block_s", 20.0)) / tr)))
+    nblk = int(np.ceil(T / block))
+    boot_idx = [((rng.integers(0, T, nblk)[:, None] + np.arange(block)[None, :]).ravel()[:T] % T) for _ in range(n_boot)]
+
+    def _ccorr(x, y, nx, ny):
+        x, y = x - x.mean(), y - y.mean()
+        vx, vy = float(np.mean(x * x)) - nx, float(np.mean(y * y)) - ny
+        return float(np.mean(x * y)) / np.sqrt(vx * vy) if vx > 0 and vy > 0 else np.nan
     for r in [x for x in rows if x["kind"] == "secondary" and x["used"]]:
         p = r["id"] - 1
         row, raw = {"name": r["name"]}, {"name": r["name"]}
@@ -423,7 +438,11 @@ def analyze(S, labels, mu, sigma, ratios, use, te_ms, table: list, cfg: dict, Q=
             vp, vm = float(xb_all[p].var()) - nb_p, float(m.var()) - nb_m
             row[net] = _r(cv / np.sqrt(vp * vm)) if vp > 0 and vm > 0 else None
             raw[net] = _r(np.corrcoef(xb_all[p], m)[0, 1])
-        vals = [v for k, v in row.items() if k != "name" and v is not None]
+            bs = np.array([_ccorr(xb_all[p][ix], m[ix], nb_p, nb_m) for ix in boot_idx])
+            bs = bs[np.isfinite(bs)]
+            row.setdefault("ci", {})[net] = [_r(np.quantile(bs, 0.025)), _r(np.quantile(bs, 0.975))] if bs.size > 10 else None
+        row["b_reliability"] = r["b_reliability"]
+        vals = [v for k, v in row.items() if k not in ("name", "ci", "b_reliability") and v is not None]
         row["noise_overcorrected"] = bool(vals) and max(abs(v) for v in vals) > 1.0
         sec.append(row)
         sec_raw.append(raw)
@@ -452,6 +471,18 @@ def _segregation_perm(corr: np.ndarray, networks: np.ndarray, n: int, rng, q: fl
             "segregation_null_q95": _r(float(np.quantile(null / np.maximum(np.abs(w), 1e-12), q))),
             "within_minus_between_null_q95": _r(float(np.quantile(null, q))),
             "segregation_percentile_in_null": _r(float(np.mean(null < (w - bt))))}
+
+
+def _edges_above_1(corr: np.ndarray, rel: np.ndarray) -> dict:
+    """Correlations above 1 after noise correction, and the reliability of the regions they involve (low
+    reliability: the correction divides by a small, uncertain signal variance)."""
+    iu = np.triu_indices(corr.shape[0], 1)
+    hit = np.abs(corr[iu]) > 1.0
+    reg = np.unique(np.r_[iu[0][hit], iu[1][hit]])
+    return {"n_edges_above_1": int(hit.sum()), "n_edges": int(np.isfinite(corr[iu]).sum()),
+            "reliability_median": _r(np.nanmedian(rel)),
+            "reliability_q05": _r(np.nanquantile(rel, 0.05)) if np.isfinite(rel).any() else None,
+            "edges_above_1_reliability_median": _r(np.nanmedian(rel[reg])) if reg.size else None}
 
 
 def _edge_fraction(corr, null_edges, q=0.95):
@@ -565,24 +596,31 @@ def render(s: dict) -> str:
               "Noise ratio: region noise / the thermal noise of independent voxels (frame differences; cortex median below). "
               "Spectral / difference: the robust median-spectrum estimate over the frame-difference one (~1 for white "
               "noise; below 1 where fast structure inflates the difference estimate). Tissue: mean FAST probabilities.", "",
-              "| region | voxels | used | BOLD-like [95 % CI] | S0-like | leftover | energy below noise | noise ratio | spectral / difference | GM | CSF |",
-              "|---|---|---|---|---|---|---|---|---|---|---|"]
+              "| region | voxels | used | BOLD-like [95 % CI] | S0-like | leftover | energy below noise | noise ratio | spectral / difference | reliability | GM | CSF |",
+              "|---|---|---|---|---|---|---|---|---|---|---|---|"]
         for r in sub:
             L.append(f"| {r['name']} | {r['n_voxels']} | {r['used']} | {r['bold_share']} {r['bold_share_ci']} | {r['s0_share']} | {r['leftover_share']} | "
-                     f"{r.get('energy_below_noise') or '-'} | {r['noise_var']} | {r.get('noise_var_spectral_ratio')} | {r.get('gm_mean')} | {r.get('csf_mean')} |")
+                     f"{r.get('energy_below_noise') or '-'} | {r['noise_var']} | {r.get('noise_var_spectral_ratio')} | {r.get('b_reliability')} | {r.get('gm_mean')} | {r.get('csf_mean')} |")
     cx = [r for r in s["regions"] if r["kind"] == "cortex" and r["used"]]
     med = lambda k: _r(np.median([r[k] for r in cx if r.get(k) is not None])) if any(r.get(k) is not None for r in cx) else None
-    L += ["", f"Cortex (median over used regions): noise ratio {med('noise_var')}, spectral / difference {med('noise_var_spectral_ratio')}, "
-          f"GM {med('gm_mean')}, CSF {med('csf_mean')}; cortical correlations above 1 after noise correction: "
-          + ", ".join(str(i.get('n_edges_above_1')) for i in s['integration'])]
+    L += ["", "Reliability: share of a region's slow BOLD-like variance that is signal (1 - noise / total); noise "
+          "correction divides by its square root, so it is unstable where reliability is low.", "",
+          f"Cortex (median over used regions): noise ratio {med('noise_var')}, spectral / difference {med('noise_var_spectral_ratio')}, "
+          f"reliability {med('b_reliability')}, GM {med('gm_mean')}, CSF {med('csf_mean')}."]
+    for i in s["integration"]:
+        L.append(f"- {i['set']}: {i.get('n_edges_above_1')} of {i.get('n_edges')} correlations above 1 after noise correction; "
+                 f"reliability of the regions involved (median) {i.get('edges_above_1_reliability_median')} against "
+                 f"{i.get('reliability_median')} for all (5th percentile {i.get('reliability_q05')})")
     L += ["", f"Regions with an energy below its noise estimate (share clipped): {len(flag)}"
           + (": " + ", ".join(f"{r['name']} ({r['energy_below_noise']})" for r in flag[:20]) + (" ..." if len(flag) > 20 else "") if flag else "")]
     if s["secondary_coupling"]:
-        nets = [k for k in s["secondary_coupling"][0] if k not in ("name", "noise_overcorrected")]
+        nets = [k for k in s["secondary_coupling"][0] if k not in ("name", "noise_overcorrected", "ci", "b_reliability")]
         L += ["", "## Thalamus and striatum: BOLD-like coupling with each cortical network's mean", "",
               "| region | " + " | ".join(nets) + " |", "|---|" + "---|" * len(nets)]
         for r in s["secondary_coupling"]:
-            L.append(f"| {r['name']}{' (noise over-corrected: a value above 1)' if r.get('noise_overcorrected') else ''} | " + " | ".join(str(r[n]) for n in nets) + " |")
+            ci = r.get("ci") or {}
+            L.append(f"| {r['name']} (reliability {r.get('b_reliability')}){' (a value above 1)' if r.get('noise_overcorrected') else ''} | "
+                     + " | ".join(f"{r[n]} {ci.get(n)}" for n in nets) + " |")
     return "\n".join(L) + "\n"
 
 
