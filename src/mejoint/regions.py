@@ -165,6 +165,20 @@ def participation_ratio(C: np.ndarray) -> float:
     return float(lam.sum() ** 2 / (lam ** 2).sum()) if lam.sum() > 0 else float("nan")
 
 
+def participation_ratio_residual(C: np.ndarray) -> float:
+    """Participation ratio with the first (brain-wide) pattern removed: (sum lambda - lambda_1)^2 /
+    (sum lambda^2 - lambda_1^2), from the eigenvalues of the full matrix (user decision 2026-11-10, secondary
+    measure). R3 showed that the ordinary ratio rises when any signal is added beside one dominant pattern, even a
+    shared one; this version reads the dimensionality of the structure beyond that pattern and is reported next to
+    the global share, which reads the pattern's dominance."""
+    ok = _signal_rows(C)
+    if ok.sum() < 3:
+        return float("nan")
+    lam = np.sort(np.clip(np.linalg.eigvalsh(C[np.ix_(ok, ok)]), 0.0, None))[::-1]
+    rest = lam[1:]
+    return float(rest.sum() ** 2 / (rest ** 2).sum()) if rest.sum() > 0 else float("nan")
+
+
 def _signal_rows(C: np.ndarray) -> np.ndarray:
     """Regions whose noise-corrected variance is positive (finite diagonal); their mutual entries are finite."""
     ok = np.isfinite(np.diag(C))
@@ -214,12 +228,12 @@ def shift_null(x: np.ndarray, noise_var: np.ndarray, tr: float, band, n: int, mi
                networks=None) -> dict:
     """Circular-shift null (user, 2026-11-08): every region's band-passed time course shifted by its own random
     lag (min_shift..T - min_shift frames, wrapping around); the regions keep their own dynamics, their alignment
-    is destroyed. Returns null distributions of the participation ratio, the eigenvalues, every correlation,
-    and the segregation."""
+    is destroyed. Returns null distributions of the participation ratio (also with the first pattern removed),
+    the eigenvalues, every correlation, and the segregation."""
     T = x.shape[1]
     xb = band_pass(np.asarray(x, np.float64), tr, band)
     P = xb.shape[0]
-    pr, eig, seg = np.zeros(n), [], np.zeros(n)
+    pr, pr1, eig, seg = np.zeros(n), np.zeros(n), [], np.zeros(n)
     edges = np.zeros((n, P * (P - 1) // 2))
     iu = np.triu_indices(P, 1)
     nb = np.asarray(noise_var, float) * band_fraction(T, tr, band)
@@ -234,12 +248,13 @@ def shift_null(x: np.ndarray, noise_var: np.ndarray, tr: float, band, n: int, mi
             Rr = C / np.outer(d, d)
         np.fill_diagonal(Rr, np.where(sig > 0, 1.0, np.nan))
         pr[i] = participation_ratio(Rr)
+        pr1[i] = participation_ratio_residual(Rr)
         eig.append(eigenvalues(Rr))
         edges[i] = Rr[iu]
         if networks is not None:
             seg[i] = segregation(Rr, networks)
     m = min(len(e) for e in eig)
-    return {"pr": pr, "eig": np.array([e[:m] for e in eig]), "edges": edges, "segregation": seg if networks is not None else None}
+    return {"pr": pr, "pr_resid": pr1, "eig": np.array([e[:m] for e in eig]), "edges": edges, "segregation": seg if networks is not None else None}
 
 
 def count_above_null(eig_obs: np.ndarray, eig_null: np.ndarray, q: float = 0.95) -> int:
@@ -341,10 +356,15 @@ def analyze(S, labels, mu, sigma, ratios, use, te_ms, table: list, cfg: dict, Q=
         null = shift_null(b, nb_, tr, band, n_null, min_shift, rng, networks=nets[cx][mask_sub])
         eig = eigenvalues(c_["corr"])
         pr = participation_ratio(c_["corr"])
+        pr1 = participation_ratio_residual(c_["corr"])
         return {"set": label, "n_regions": int(mask_sub.sum()), "n_regions_with_signal": int(_signal_rows(c_["corr"]).sum()),
                 "participation_ratio": _r(pr),
                 "pr_null_median": _r(np.nanmedian(null["pr"])), "pr_null_q05_q95": [_r(np.nanquantile(null["pr"], 0.05)), _r(np.nanquantile(null["pr"], 0.95))],
                 "pr_percentile_in_null": _r(float(np.mean(null["pr"] <= pr))),
+                "pr_without_first": _r(pr1),
+                "pr_without_first_null_median": _r(np.nanmedian(null["pr_resid"])),
+                "pr_without_first_null_q05_q95": [_r(np.nanquantile(null["pr_resid"], 0.05)), _r(np.nanquantile(null["pr_resid"], 0.95))],
+                "pr_without_first_percentile_in_null": _r(float(np.mean(null["pr_resid"] <= pr1))),
                 "n_eigen_above_null": int(count_above_null(eig, null["eig"])),
                 "segregation": _r(segregation(c_["corr"], nets[cx][mask_sub])),
                 "segregation_null_q95": _r(np.nanquantile(null["segregation"], 0.95)) if np.isfinite(null["segregation"]).any() else None,
@@ -457,11 +477,12 @@ def render(s: dict) -> str:
          "Shares: BOLD-like = R2*-like energy / (R2*-like + S0-like), thermal noise removed; leftover = energy outside the "
          "S0 + R2* model. Integration on the noise-corrected correlations of the regions' R2*-like time courses, against "
          "circular shifts (each region its own lag).", "", "## Integration", "",
-         "| set | regions | participation ratio | null median [5-95 %] | percentile in null | eigenvalues above null | segregation (null 95 %) | global share | edges beyond null |",
-         "|---|---|---|---|---|---|---|---|---|"]
+         "| set | regions | participation ratio | null median [5-95 %] | percentile in null | PR without first pattern | null median [5-95 %] | percentile in null | eigenvalues above null | segregation (null 95 %) | global share | edges beyond null |",
+         "|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for i in s["integration"]:
         L.append(f"| {i['set']} | {i['n_regions']} | {i['participation_ratio']} | {i['pr_null_median']} {i['pr_null_q05_q95']} | "
-                 f"{i['pr_percentile_in_null']} | {i['n_eigen_above_null']} | {i['segregation']} ({i['segregation_null_q95']}) | "
+                 f"{i['pr_percentile_in_null']} | {i.get('pr_without_first')} | {i.get('pr_without_first_null_median')} {i.get('pr_without_first_null_q05_q95')} | "
+                 f"{i.get('pr_without_first_percentile_in_null')} | {i['n_eigen_above_null']} | {i['segregation']} ({i['segregation_null_q95']}) | "
                  f"{i['global_share']} | {i['edges_beyond_null']} |")
     L += ["", "## Shares by network (median over usable regions)", "", "| network | regions | BOLD-like | S0-like | leftover |", "|---|---|---|---|---|"]
     for net, m in s["network_medians"].items():

@@ -168,7 +168,8 @@ grey-matter threshold.
   the cluster.
 - **D4 Primary outcome:** effective dimensionality (participation ratio) of cortical BOLD-like activity as the
   primary integration measure; system segregation and the count above the circular-shift null as secondary;
-  region shares descriptive.
+  region shares descriptive. Added after R3 (user, 2026-11-10): the participation ratio without the first
+  (brain-wide) pattern as a secondary measure, reported next to the global share.
 - **D5 Motion handling for the primary analysis:** 24-term motion regression (the current front end default) or
   band-passed motion projected out (the waves default).
 - **D6 CLAUDE.md edits** (proposed text to follow on approval): section 1 (route B as the main analysis; ICA

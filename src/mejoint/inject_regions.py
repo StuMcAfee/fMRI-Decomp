@@ -150,6 +150,7 @@ def recover_dir(inject_dir, route_b_dir, baseline_dir, te_check: bool = False) -
                         "other_pairs_abs_change_median": med(np.abs(d_other)) if d_other else None,
                         "n_within": len(d_within), "n_between": len(d_between), "n_other": len(d_other)},
            "dimensionality": {"participation_ratio": [bb["participation_ratio"], ii["participation_ratio"]],
+                              "pr_without_first": [bb.get("pr_without_first"), ii.get("pr_without_first")],
                               "eigen_above_null": [bb["n_eigen_above_null"], ii["n_eigen_above_null"]],
                               "segregation": [bb["segregation"], ii["segregation"]],
                               "global_share": [bb["global_share"], ii["global_share"]]},
@@ -176,6 +177,7 @@ def render(o: dict) -> str:
           f"- pairs of regions that were not injected: {c['other_pairs']} (median absolute change {c['other_pairs_abs_change_median']}; should be ~0)", "",
           "## Integration (without injection -> injected)", "",
           f"- participation ratio: {d['participation_ratio'][0]} -> {d['participation_ratio'][1]}",
+          f"- participation ratio without the first (brain-wide) pattern: {d.get('pr_without_first', [None, None])[0]} -> {d.get('pr_without_first', [None, None])[1]}",
           f"- eigenvalues above the circular-shift null: {d['eigen_above_null'][0]} -> {d['eigen_above_null'][1]} (independent: up to +4; shared: +1)",
           f"- segregation: {d['segregation'][0]} -> {d['segregation'][1]}; global share: {d['global_share'][0]} -> {d['global_share'][1]}", "",
           "## Errors by region size", "",
@@ -193,14 +195,16 @@ def summary(root, out_dir=None) -> dict:
     out_dir = Path(out_dir) if out_dir else root
     recs = [json.loads(p.read_text()) for p in sorted(root.glob("**/recovery_regions.json"))]
     L = ["# R3: route B injection validation (pooled)", "",
-         "| run | condition | level | type | dR2* rec/inj | dS0 rec/inj | injected share (truth) | within-network change | between-network change | uninjected pairs: median abs change | PR: before -> after | eigenvalues above null: before -> after |",
-         "|---|---|---|---|---|---|---|---|---|---|---|---|"]
+         "| run | condition | level | type | dR2* rec/inj | dS0 rec/inj | injected share (truth) | within-network change | between-network change | uninjected pairs: median abs change | PR: before -> after | PR without first pattern: before -> after | global share: before -> after | eigenvalues above null: before -> after |",
+         "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for o in recs:
         c, d = o["coupling"], o["dimensionality"]
         for t, v in o["by_type"].items():
             L.append(f"| {o['run']} | {o['condition']} | {o['level']} | {t} | {v['b_ratio_median']} | {v['a_ratio_median']} | "
                      f"{v['share_injected_median']} ({v['share_true']}) | {c['within_injected_networks']} | {c['between_injected_networks']} | "
                      f"{c.get('other_pairs_abs_change_median')} | {d['participation_ratio'][0]} -> {d['participation_ratio'][1]} | "
+                     f"{d.get('pr_without_first', [None, None])[0]} -> {d.get('pr_without_first', [None, None])[1]} | "
+                     f"{d['global_share'][0]} -> {d['global_share'][1]} | "
                      f"{d['eigen_above_null'][0]} -> {d['eigen_above_null'][1]} |")
     allb, alls = {}, {}
     for o in recs:

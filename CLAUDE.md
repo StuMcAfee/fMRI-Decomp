@@ -440,6 +440,7 @@ Cerebral regions only (section 1): Schaefer 200 parcels / 7 networks (400 / 17 a
 **Primary:** effective dimensionality (participation ratio) of cortical BOLD-like activity (noise-corrected correlations of the regions' R2*-like time courses), against its circular-shift null, at a common number of volumes, reported with each participant's injection-measured sensitivity. Less integration means higher dimensionality.
 
 **Secondary:**
+- the participation ratio without the first (brain-wide) pattern, against its circular-shift null, always next to the global BOLD-like share (user, 2026-11-10: R3 showed the primary also rises when anything is added beside one dominant pattern);
 - system segregation of the BOLD-like correlations; the number of eigenvalues above the circular-shift null;
 - region BOLD-like, S0-like and leftover shares, by network;
 - BOLD-like versus S0-like versus ordinary connectivity; global BOLD-like share;

@@ -264,3 +264,30 @@ def test_participation_ratio_with_a_region_without_signal():
     Cn[1:, 1:] = C
     assert np.isclose(regions.participation_ratio(Cn), full)
     assert regions.eigenvalues(Cn).size == 5
+
+
+def test_participation_ratio_without_first_pattern():
+    """Secondary measure (user decision 2026-11-10): the participation ratio with the first pattern removed. A
+    stronger brain-wide signal lowers the ordinary ratio but leaves this one about unchanged; adding networks on
+    top of a dominant brain-wide signal raises the ordinary ratio (the R3 caveat) but lowers this one, because the
+    structure beyond the brain-wide pattern becomes more organized (more integrated)."""
+    rng = np.random.default_rng(SEED + 7)
+    P, T = 16, 800
+    nets = np.repeat(np.arange(4), 4)
+    nv = np.full(P, 0.01)
+    dr, g, own = slow(rng, 4, T), slow(rng, 1, T)[0], slow(rng, P, T)
+    noise = rng.standard_normal((P, T)) * 0.1
+    pr, pr1 = [], []
+    for w in (0.0, 1.0, 2.0):
+        c = regions.coupling(dr[nets] + w * g + 0.6 * own + noise, nv, TR, BAND)
+        pr.append(regions.participation_ratio(c["corr"]))
+        pr1.append(regions.participation_ratio_residual(c["corr"]))
+    assert pr[0] > 2 * pr[2], pr
+    assert max(pr1) / min(pr1) < 1.15, pr1
+    base = g[None].repeat(P, 0) * 2.0 + 0.6 * own + noise
+    c0 = regions.coupling(base, nv, TR, BAND)
+    c4 = regions.coupling(base + dr[nets], nv, TR, BAND)
+    assert regions.participation_ratio(c4["corr"]) > regions.participation_ratio(c0["corr"])
+    assert regions.participation_ratio_residual(c4["corr"]) < regions.participation_ratio_residual(c0["corr"])
+    null = regions.shift_null(dr[nets] + 0.6 * own + noise, nv, TR, BAND, 50, 40, rng)
+    assert null["pr_resid"].shape == (50,) and np.isfinite(null["pr_resid"]).all()
