@@ -291,3 +291,40 @@ def test_participation_ratio_without_first_pattern():
     assert regions.participation_ratio_residual(c4["corr"]) < regions.participation_ratio_residual(c0["corr"])
     null = regions.shift_null(dr[nets] + 0.6 * own + noise, nv, TR, BAND, 50, 40, rng)
     assert null["pr_resid"].shape == (50,) and np.isfinite(null["pr_resid"]).all()
+
+
+def test_segregation_permutation_null_and_subcortical_noise_correction():
+    """R4 fixes: the segregation null permutes network labels (finite, below the observed for real networks,
+    around it for random labels); the thalamus-like region's coupling is noise-corrected (close to the true
+    correlation with its network although its own noise is large)."""
+    rng = np.random.default_rng(SEED + 8)
+    P = 16
+    nets = np.repeat(np.arange(4), 4)
+    T = 800
+    x = slow(rng, 4, T)[nets] + 0.5 * slow(rng, P, T)
+    c = regions.coupling(x, np.full(P, 1e-4), TR, BAND)
+    out = regions._segregation_perm(c["corr"], nets, 200, rng)
+    assert out["within_minus_between"] > out["within_minus_between_null_q95"] and out["segregation_percentile_in_null"] > 0.95
+    out_r = regions._segregation_perm(c["corr"], rng.permutation(nets), 200, rng)
+    assert out_r["segregation_percentile_in_null"] < 0.99
+    # end to end: one secondary region driven by network N0 with a lot of noise
+    P2, n_per = 9, 40
+    nets2 = np.r_[np.repeat(np.arange(2), 4), 0]
+    drivers = slow(rng, 2, T)
+    own = np.stack([slow(rng, 1, T)[0] for _ in range(P2)])
+    b = 0.25 * drivers[nets2] + 0.08 * own
+    S, labels, mu, sigma, use = voxels(rng, P2, n_per, T, np.zeros((P2, T)), b)
+    sigma = sigma.copy()
+    sigma[labels == P2] *= 8.0                                          # the deep region is much noisier
+    S = S.copy()
+    noisy = labels == P2
+    S[noisy] = S[noisy] + rng.standard_normal(S[noisy].shape) * (sigma[noisy] * 0.99)[:, None, None] * np.array(RATIOS)[None, :, None]
+    table = [{"id": i + 1, "name": f"r{i + 1}", "kind": "cortex", "hemisphere": "LH", "network": f"N{nets2[i]}",
+              "n_voxels": n_per, "usable": True} for i in range(P2 - 1)]
+    table.append({"id": P2, "name": "thal", "kind": "secondary", "hemisphere": "LH", "network": "Thalamus", "n_voxels": n_per, "usable": True})
+    res = regions.analyze(S, labels, S.mean(2), sigma, RATIOS, use, TE, table, _cfg_small())
+    corr, raw = res["secondary_coupling"][0]["N0"], res["secondary_coupling_raw"][0]["N0"]
+    assert corr is not None and raw < corr, (raw, corr)
+    xb = regions.band_pass(b, TR, BAND)
+    truth = np.corrcoef(xb[-1], xb[:4].mean(0))[0, 1]
+    assert abs(corr - truth) < 0.15, (corr, truth, raw)

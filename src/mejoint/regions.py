@@ -325,10 +325,14 @@ def analyze(S, labels, mu, sigma, ratios, use, te_ms, table: list, cfg: dict, Q=
     for r in table:
         p = r["id"] - 1
         ok = bool(r.get("usable")) and bool(np.isfinite(nv[p])) and bool(np.isfinite(sp["c"][p]).all())
+        below = [n for n, k in (("S0", "E_S0"), ("R2", "E_R2")) if ok and np.isfinite(sh[k][p]) and sh[k][p] < 0]
+        bs = float(np.clip(sh["bold_share"][p], 0.0, 1.0)) if ok and np.isfinite(sh["bold_share"][p]) else np.nan
         rows.append({**{k: r[k] for k in ("id", "name", "kind", "hemisphere", "network", "n_voxels")}, "used": ok,
-                     "noise_var": _r(nv[p]), "bold_share": _r(sh["bold_share"][p]) if ok else None,
-                     "bold_share_ci": [_r(lo[p]), _r(hi[p])] if ok else None,
-                     "s0_share": _r(sh["s0_share"][p]) if ok else None, "leftover_share": _r(sh["leftover_share"][p]) if ok else None,
+                     "noise_var": _r(nv[p]), "bold_share": _r(bs) if ok else None,
+                     "bold_share_raw": _r(sh["bold_share"][p]) if ok else None,
+                     "energy_below_noise": ";".join(below),
+                     "bold_share_ci": [_r(np.clip(lo[p], 0, 1)), _r(np.clip(hi[p], 0, 1))] if ok else None,
+                     "s0_share": _r(1.0 - bs) if ok else None, "leftover_share": _r(sh["leftover_share"][p]) if ok else None,
                      "E_S0": _r(sh["E_S0"][p]), "E_R2": _r(sh["E_R2"][p]), "E_left": _r(sh["E_left"][p])})
     used = np.array([x["used"] for x in rows])
     ids = np.array([x["id"] for x in rows])
@@ -367,7 +371,7 @@ def analyze(S, labels, mu, sigma, ratios, use, te_ms, table: list, cfg: dict, Q=
                 "pr_without_first_percentile_in_null": _r(float(np.mean(null["pr_resid"] <= pr1))),
                 "n_eigen_above_null": int(count_above_null(eig, null["eig"])),
                 "segregation": _r(segregation(c_["corr"], nets[cx][mask_sub])),
-                "segregation_null_q95": _r(np.nanquantile(null["segregation"], 0.95)) if np.isfinite(null["segregation"]).any() else None,
+                **_segregation_perm(c_["corr"], nets[cx][mask_sub], n_null, rng),
                 "global_share": _r(global_share(c_["x_band"], c_["signal_var"], c_["noise_band_var"])),
                 "eigenvalues": [round(float(x), 4) for x in eig[:30]],
                 "null_eig_q95": [round(float(x), 4) for x in np.nanquantile(null["eig"], 0.95, axis=0)[:30]] if null["eig"].size else [],
@@ -379,19 +383,51 @@ def analyze(S, labels, mu, sigma, ratios, use, te_ms, table: list, cfg: dict, Q=
         if m.sum() >= 3:
             out_int.append(integration(m, "common set"))
     # secondary regions: coupling of their b with each cortical network's mean b
-    sec = []
+    # noise-corrected like the cortical matrix (the first version used plain correlations, which deep regions'
+    # larger noise attenuates): covariance over the square root of both noise-corrected variances; the network
+    # mean's noise is the mean of its regions' noise over their number (independent noise across regions)
+    sec, sec_raw = [], []
     xb_all = band_pass(sp["b"], tr, band)
+    bf = band_fraction(T, tr, band)
     for r in [x for x in rows if x["kind"] == "secondary" and x["used"]]:
         p = r["id"] - 1
-        row = {"name": r["name"]}
+        row, raw = {"name": r["name"]}, {"name": r["name"]}
+        nb_p = float(b_noise_variance(sp["R"][[p]], nv[[p]])[0]) * bf
         for net in sorted(set(nets[cx])):
-            m = xb_all[sel[nets[cx] == net]].mean(0)
-            row[net] = _r(np.corrcoef(xb_all[p], m)[0, 1])
+            k = nets[cx] == net
+            m = xb_all[sel[k]].mean(0)
+            nb_m = float(bnv[k].mean()) * bf / k.sum()
+            cv = float(np.mean((xb_all[p] - xb_all[p].mean()) * (m - m.mean())))
+            vp, vm = float(xb_all[p].var()) - nb_p, float(m.var()) - nb_m
+            row[net] = _r(cv / np.sqrt(vp * vm)) if vp > 0 and vm > 0 else None
+            raw[net] = _r(np.corrcoef(xb_all[p], m)[0, 1])
         sec.append(row)
-    return {"regions": rows, "integration": out_int, "secondary_coupling": sec, "cortex_ids": ids[cx].tolist(),
+        sec_raw.append(raw)
+    return {"regions": rows, "integration": out_int, "secondary_coupling": sec, "secondary_coupling_raw": sec_raw, "cortex_ids": ids[cx].tolist(),
             "cortex_networks": nets[cx].tolist(), "corr_b": cb["corr"], "corr_a": ca["corr"], "corr_oc": co["corr"],
             "n_frames": int(T), "nuisance_rank": int(removed), "band_hz": list(band),
             "a": sp["a"], "b": sp["b"], "c0": sp["c"][:, 0], "R": sp["R"], "noise_var": nv}
+
+
+def _segregation_perm(corr: np.ndarray, networks: np.ndarray, n: int, rng, q: float = 0.95) -> dict:
+    """Segregation null by permuting the network labels over the regions (the matrix kept): is the network structure
+    stronger than a random grouping of the same regions? Replaces the circular-shift null for segregation, which was
+    undefined (its within-network mean is ~0, so the ratio explodes: null 95 % of 3.5-4.6 in R4). Label permutation
+    ignores spatial autocorrelation (neighbouring parcels share networks), so it is liberal."""
+    networks = np.asarray(networks)
+    iu = np.triu_indices(corr.shape[0], 1)
+    v = corr[iu]
+    ok = np.isfinite(v)
+
+    def parts(lab):
+        same = lab[iu[0]] == lab[iu[1]]
+        return v[ok & same].mean(), v[ok & ~same].mean()
+    w, bt = parts(networks)
+    null = np.array([np.subtract(*parts(rng.permutation(networks))) for _ in range(n)])
+    return {"within_mean": _r(w), "between_mean": _r(bt), "within_minus_between": _r(w - bt),
+            "segregation_null_q95": _r(float(np.quantile(null / np.maximum(np.abs(w), 1e-12), q))),
+            "within_minus_between_null_q95": _r(float(np.quantile(null, q))),
+            "segregation_percentile_in_null": _r(float(np.mean(null < (w - bt))))}
 
 
 def _edge_fraction(corr, null_edges, q=0.95):
@@ -451,7 +487,7 @@ def run_dir(frontend_dir, anat_dir, cfg: dict, out_dir, atlas: str | None = None
     io.write_tsv(out / "regions_route_b.tsv", {k: [(";".join(map(str, r[k])) if isinstance(r[k], list) else r[k]) for r in rows] for k in rows[0]})
     summ = {"run": fs.get("run_id"), "atlas": atlas, "frontend_dir": str(fe), "anat_dir": str(A), "n_frames": res["n_frames"],
             "nuisance_rank": res["nuisance_rank"], "band_hz": res["band_hz"], "integration": res["integration"],
-            "secondary_coupling": res["secondary_coupling"], "cortex_ids": res["cortex_ids"], "regions": rows,
+            "secondary_coupling": res["secondary_coupling"], "secondary_coupling_raw": res["secondary_coupling_raw"], "cortex_ids": res["cortex_ids"], "regions": rows,
             "network_medians": _network_medians(rows), **io.provenance(cfg, {})}
     io.write_json(out / "route_b.json", summ)
     io.write_text(out / "route_b.md", render(summ))
@@ -477,16 +513,27 @@ def render(s: dict) -> str:
          "Shares: BOLD-like = R2*-like energy / (R2*-like + S0-like), thermal noise removed; leftover = energy outside the "
          "S0 + R2* model. Integration on the noise-corrected correlations of the regions' R2*-like time courses, against "
          "circular shifts (each region its own lag).", "", "## Integration", "",
-         "| set | regions | participation ratio | null median [5-95 %] | percentile in null | PR without first pattern | null median [5-95 %] | percentile in null | eigenvalues above null | segregation (null 95 %) | global share | edges beyond null |",
+         "Segregation null: network labels permuted over the regions (liberal: ignores that neighbouring parcels share "
+         "networks). Thalamus and striatum coupling noise-corrected like the cortical matrix (plain correlations in the "
+         "JSON). Shares are clipped to 0-1; regions whose S0-like or R2*-like energy fell below its noise estimate are listed.", "",
+         "| set | regions (with signal) | participation ratio | null median [5-95 %] | percentile in null | PR without first pattern | null median [5-95 %] | percentile in null | eigenvalues above null | segregation (null 95 %) | global share | edges beyond null |",
          "|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for i in s["integration"]:
-        L.append(f"| {i['set']} | {i['n_regions']} | {i['participation_ratio']} | {i['pr_null_median']} {i['pr_null_q05_q95']} | "
+        L.append(f"| {i['set']} | {i['n_regions']} ({i.get('n_regions_with_signal')}) | {i['participation_ratio']} | {i['pr_null_median']} {i['pr_null_q05_q95']} | "
                  f"{i['pr_percentile_in_null']} | {i.get('pr_without_first')} | {i.get('pr_without_first_null_median')} {i.get('pr_without_first_null_q05_q95')} | "
-                 f"{i.get('pr_without_first_percentile_in_null')} | {i['n_eigen_above_null']} | {i['segregation']} ({i['segregation_null_q95']}) | "
+                 f"{i.get('pr_without_first_percentile_in_null')} | {i['n_eigen_above_null']} | {i['segregation']} ({i['segregation_null_q95']}; within {i.get('within_mean')}, between {i.get('between_mean')}) | "
                  f"{i['global_share']} | {i['edges_beyond_null']} |")
     L += ["", "## Shares by network (median over usable regions)", "", "| network | regions | BOLD-like | S0-like | leftover |", "|---|---|---|---|---|"]
     for net, m in s["network_medians"].items():
         L.append(f"| {net} | {m['n']} | {m['bold_share']} | {m['s0_share']} | {m['leftover_share']} |")
+    flag = [r for r in s["regions"] if r.get("energy_below_noise")]
+    sub = [r for r in s["regions"] if r["kind"] == "secondary"]
+    if sub:
+        L += ["", "## Thalamus and striatum, each region", "", "| region | voxels | used | BOLD-like [95 % CI] | S0-like | leftover | energy below noise |", "|---|---|---|---|---|---|---|"]
+        for r in sub:
+            L.append(f"| {r['name']} | {r['n_voxels']} | {r['used']} | {r['bold_share']} {r['bold_share_ci']} | {r['s0_share']} | {r['leftover_share']} | {r.get('energy_below_noise') or '-'} |")
+    L += ["", f"Regions with an energy below its noise estimate (share clipped): {len(flag)}"
+          + (": " + ", ".join(f"{r['name']} ({r['energy_below_noise']})" for r in flag[:20]) + (" ..." if len(flag) > 20 else "") if flag else "")]
     if s["secondary_coupling"]:
         nets = [k for k in s["secondary_coupling"][0] if k != "name"]
         L += ["", "## Thalamus and striatum: BOLD-like coupling with each cortical network's mean", "",

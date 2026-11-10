@@ -1169,3 +1169,22 @@ User: "the t2s alignment looks good". **`regions.epi_ref: t2s`**; `scripts/anato
 - **Outcome definition (user choice (a)):** the participation ratio stays the primary outcome. Added as a secondary measure, always reported next to the global share: the **participation ratio without the first (brain-wide) pattern**, (sum lambda - lambda_1)^2 / (sum lambda^2 - lambda_1^2), from the eigenvalues of the full noise-corrected BOLD-like correlation matrix (negative eigenvalues set to 0, as for the primary), with its own circular-shift null (same shifts). `regions.participation_ratio_residual`; `route_b.json` fields `pr_without_first`, its null median, 5-95 % interval and percentile; also in the R3 recovery and pooled summary (with the global share before and after).
 - Simulation check (test added): with four networks, raising a brain-wide signal lowered the ordinary ratio from 6.1 to 1.5 while the new one stayed at 5.1-5.2; adding four networks on top of a dominant brain-wide signal raised the ordinary ratio (1.7 -> 3.0, the R3 caveat) and lowered the new one (14.9 -> 5.1), because the structure beyond the brain-wide pattern becomes more organized. Reading: the ordinary ratio mixes how many patterns there are with how strongly one dominates; the new ratio and the global share separate the two.
 - Next: rerun `scripts/inject_regions_rerun.lsf` to add the measure to the R3 tables (no change expected to anything already reported), then R4.
+
+### 2026-11-10: R4 first outputs (P04, P12; 200 / 7); three reporting fixes
+
+| | P12 | P04 |
+|---|---|---|
+| cortical regions | 196 | 190 |
+| participation ratio (circular-shift null median) | 4.32 (37.9) | 4.59 (43.1) |
+| PR without first pattern (null median) | 17.26 (38.6) | 18.56 (43.8) |
+| eigenvalues above null / global share / edges beyond null | 4 / 0.43 / 0.84 | 4 / 0.42 / 0.87 |
+| cortical BOLD-like share, network medians (Limbic excluded) | 0.93-0.99 | 0.92-0.96 |
+| Limbic (usable parcels) BOLD-like share | 0.62 (9) | 0.78 (4) |
+| leftover share, cortex / striatum / thalamus | <0.01 / 0.08 / 0.15 | <0.01 / 0.12 / 0.04 |
+
+Fixed (reporting only; no measure redefined):
+- **Segregation null was undefined.** The circular-shift null gives within-network means near 0, so the ratio explodes (null 95 % 3.5 and 4.6 against observed 0.20). Now: network labels permuted over the regions (the matrix kept), with the within and between means and their difference reported; liberal, because neighbouring parcels share networks.
+- **Shares outside 0-1.** P12 thalamus showed a BOLD-like share of 1.19 (S0-like -0.20): the S0-like energy fell below its noise estimate. Shares are now clipped to 0-1 (raw value kept), and regions with an energy below its noise estimate are listed. Likely cause to check: deep regions carry fast signal in the leftover channels (leftover share 0.15), which inflates the frame-difference noise estimate.
+- **Thalamus and striatum coupling was not noise-corrected** (plain correlations, attenuated by the larger noise of deep regions), unlike the cortical matrix. Now noise-corrected the same way (simulation: plain 0.76, corrected 0.91, truth 0.94); plain values kept in the JSON. Each secondary region is now listed separately.
+
+Observations for the user's review: right striatum coupling is lowest in both participants (0.08-0.21 and about 0); the circular-shift null of the participation ratio differs between participants (37.9 vs 43.1: different temporal autocorrelation and region counts); every eigenvalue past the fourth lies below the null in both, which partly reflects the trace taken by the first eigenvalue (~100 of ~190).
