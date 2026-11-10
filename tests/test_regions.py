@@ -347,3 +347,27 @@ def test_spectral_noise_estimate_resists_narrow_band_structure():
     r2 = r + 3.0 * np.sin(2 * np.pi * 0.45 * t + rng.uniform(0, 6.3, (P, 2, 1)))
     d2, s2 = regions.leftover_noise(r2), regions.leftover_noise_spectral(r2, TR, 0.1)
     assert np.median(d2) > 3.0 and np.allclose(np.median(s2), 2.0, rtol=0.1), (np.median(d2), np.median(s2))
+
+
+def test_deep_csf_check():
+    """The CSF diagnostic for deep regions: weight shares per echo in [0, 1], the all-voxel version reproduces
+    the main analysis, and removing the CSF-dominated voxels leaves a usable region."""
+    rng = np.random.default_rng(SEED + 10)
+    P, n_per, T = 9, 40, 600
+    nets = np.r_[np.repeat(np.arange(2), 4), 0]
+    drivers = slow(rng, 2, T)
+    b = 0.25 * drivers[nets] + 0.08 * slow(rng, P, T)
+    S, labels, mu, sigma, use = voxels(rng, P, n_per, T, np.zeros((P, T)), b)
+    table = [{"id": i + 1, "name": f"r{i + 1}", "kind": "cortex", "hemisphere": "LH", "network": f"N{nets[i]}",
+              "n_voxels": n_per, "usable": True} for i in range(P - 1)]
+    table.append({"id": P, "name": "thal", "kind": "secondary", "hemisphere": "LH", "network": "Thalamus", "n_voxels": n_per, "usable": True})
+    cfg = _cfg_small()
+    res = regions.analyze(S, labels, S.mean(2), sigma, RATIOS, use, TE, table, cfg)
+    csf = np.zeros(labels.size)
+    csf[np.flatnonzero(labels == P)[:8]] = 0.9
+    out = regions.deep_csf_check(S, labels, S.mean(2), sigma, RATIOS, use, TE, table, cfg, None, res, csf)
+    d = out[0]
+    assert d["n_csf_dominated"] == 8 and all(0 <= x <= 1 for x in d["csf_weight_share_by_echo"])
+    main = [r for r in res["regions"] if r["name"] == "thal"][0]
+    assert abs(d["all_voxels"]["bold_share"] - main["bold_share"]) < 1e-3
+    assert d["csf_below_0.5"]["n_voxels"] == n_per - 8 and d["csf_below_0.5"]["N0"] is not None

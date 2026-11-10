@@ -501,6 +501,65 @@ def _r(x, nd=4):
     return round(x, nd) if np.isfinite(x) else None
 
 
+def deep_csf_check(S, labels, mu, sigma, ratios, use, te_ms, table: list, cfg: dict, Q, res: dict, csf: np.ndarray,
+                   thresholds=(0.5, 0.3)) -> list:
+    """Diagnostic for the thalamus and striatum (2026-11-10): how much of each region's averaging weight sits in
+    CSF-dominated voxels (CSF probability > 0.5), per echo (bright, long-T2* CSF voxels weigh more than tissue,
+    most at the late echoes), and the region's shares, reliability and BOLD-like coupling with the cortical network
+    means recomputed without voxels above each CSF threshold. Labels used by the outcomes are not changed."""
+    G = cfg.get("regions", {})
+    tr = float(cfg["acquisition"]["tr_s"])
+    band = tuple(G.get("band_hz", [0.01, 0.10]))
+    nT = G.get("n_volumes_common")
+    if nT:
+        S = S[..., :int(nT)]
+        Q = None if Q is None else np.linalg.qr(Q[:int(nT)])[0]
+    T = S.shape[2]
+    bf = band_fraction(T, tr, band)
+    sec = [r for r in table if r["kind"] == "secondary"]
+    if not sec:
+        return []
+    with np.errstate(divide="ignore", invalid="ignore"):
+        w = np.where(use, (mu / (sigma[:, None] * np.asarray(ratios, float)[None, :])) ** 2, 0.0)
+    w = np.where(np.isfinite(w), w, 0.0)
+    # cortical network means (the outcome's own time courses)
+    cid = np.asarray(res["cortex_ids"]) - 1
+    cnet = np.asarray(res["cortex_networks"])
+    xb_c = band_pass(res["b"][cid], tr, band)
+    nb_c = b_noise_variance(res["R"][cid], res["noise_var"][cid]) * bf
+    means = {n: (xb_c[cnet == n].mean(0), float(nb_c[cnet == n].mean()) / (cnet == n).sum()) for n in sorted(set(cnet))}
+
+    def one(idx):
+        if idx.size < int(G.get("min_voxels", 20)):
+            return None
+        lab = np.ones(idx.size, int)
+        rs = region_signals(S[idx], lab, mu[idx], sigma[idx], ratios, use[idx], n_regions=1)
+        sp = split(rs["ybar"], rs["wsum"], te_ms, Q)
+        nv = leftover_noise(sp["r"], 0 if Q is None else Q.shape[1])
+        sh = shares(sp, nv, tr, band)
+        xb = band_pass(sp["b"], tr, band)[0]
+        nb = float(b_noise_variance(sp["R"], nv)[0]) * bf
+        out = {"n_voxels": int(idx.size), "bold_share": _r(np.clip(sh["bold_share"][0], 0, 1)),
+               "leftover_share": _r(sh["leftover_share"][0]), "reliability": _r(1.0 - nb / xb.var())}
+        for n, (m, nm) in means.items():
+            x, y = xb - xb.mean(), m - m.mean()
+            vx, vy = float(np.mean(x * x)) - nb, float(np.mean(y * y)) - nm
+            out[n] = _r(float(np.mean(x * y)) / np.sqrt(vx * vy)) if vx > 0 and vy > 0 else None
+        return out
+    rows = []
+    for r in sec:
+        idx = np.flatnonzero(labels == r["id"])
+        dom = csf[idx] > 0.5
+        tot = w[idx].sum(0)
+        row = {"name": r["name"], "n_voxels": int(idx.size), "n_csf_dominated": int(dom.sum()),
+               "csf_weight_share_by_echo": [_r(float(w[idx][dom, e].sum() / tot[e])) if tot[e] > 0 else None for e in range(w.shape[1])],
+               "all_voxels": one(idx)}
+        for t in thresholds:
+            row[f"csf_below_{t}"] = one(idx[csf[idx] <= t])
+        rows.append(row)
+    return rows
+
+
 def run_dir(frontend_dir, anat_dir, cfg: dict, out_dir, atlas: str | None = None, common_ids_file=None) -> dict:
     """Route B on one run from its front-end folder (maps, nuisance basis, echo paths in done.json) and its anatomy
     folder (labels_<atlas>.nii.gz, regions_<atlas>.json). Writes route_b.json, regions_route_b.tsv, the coupling
@@ -533,6 +592,14 @@ def run_dir(frontend_dir, anat_dir, cfg: dict, out_dir, atlas: str | None = None
     res = analyze(S, lab3[mask3d], mu, sigma, fs["echo_noise_ratios_used"], use, fs["te_ms"], table, cfg, Q,
                   np.random.default_rng(int(cfg.get("project_seed", 0)) + 11), common)
     # mean tissue probabilities per region (FSL FAST in EPI space; csf_epi from anatomy_run.lsf since 2026-11-10)
+    deep = []
+    if (A / "csf_epi.nii.gz").exists():
+        csf3 = np.asarray(nib.load(str(A / "csf_epi.nii.gz")).dataobj, np.float64)
+        try:
+            deep = deep_csf_check(S, lab3[mask3d], mu, sigma, fs["echo_noise_ratios_used"], use, fs["te_ms"], table, cfg, Q,
+                                  res, np.nan_to_num(csf3[mask3d]))
+        except Exception as exc:                                       # a diagnostic; never block the main result
+            print(f"deep CSF check failed: {exc}")
     for name, key in (("gm_epi", "gm_mean"), ("csf_epi", "csf_mean")):
         f = A / f"{name}.nii.gz"
         if f.exists():
@@ -550,7 +617,8 @@ def run_dir(frontend_dir, anat_dir, cfg: dict, out_dir, atlas: str | None = None
     io.write_tsv(out / "regions_route_b.tsv", {k: [(";".join(map(str, r[k])) if isinstance(r[k], list) else r[k]) for r in rows] for k in rows[0]})
     summ = {"run": fs.get("run_id"), "atlas": atlas, "frontend_dir": str(fe), "anat_dir": str(A), "n_frames": res["n_frames"],
             "nuisance_rank": res["nuisance_rank"], "band_hz": res["band_hz"], "integration": res["integration"],
-            "secondary_coupling": res["secondary_coupling"], "secondary_coupling_raw": res["secondary_coupling_raw"], "cortex_ids": res["cortex_ids"], "regions": rows,
+            "secondary_coupling": res["secondary_coupling"], "secondary_coupling_raw": res["secondary_coupling_raw"],
+            "deep_csf_check": deep, "cortex_ids": res["cortex_ids"], "regions": rows,
             "network_medians": _network_medians(rows), **io.provenance(cfg, {})}
     io.write_json(out / "route_b.json", summ)
     io.write_text(out / "route_b.md", render(summ))
@@ -613,6 +681,23 @@ def render(s: dict) -> str:
                  f"{i.get('reliability_median')} for all (5th percentile {i.get('reliability_q05')})")
     L += ["", f"Regions with an energy below its noise estimate (share clipped): {len(flag)}"
           + (": " + ", ".join(f"{r['name']} ({r['energy_below_noise']})" for r in flag[:20]) + (" ..." if len(flag) > 20 else "") if flag else "")]
+    if s.get("deep_csf_check"):
+        nets_ = [k for k in s["secondary_coupling"][0] if k not in ("name", "noise_overcorrected", "ci", "b_reliability")] if s["secondary_coupling"] else []
+        L += ["", "## Thalamus and striatum: CSF check (diagnostic; the outcome labels are unchanged)", "",
+              "Weight share: the part of the region's averaging weight in voxels with CSF probability > 0.5, per echo "
+              "(CSF is bright at late echoes, so it weighs more than its voxel count). Then the region recomputed "
+              "without voxels above each CSF threshold.", "",
+              "| region | voxels (CSF > 0.5) | weight share in CSF voxels, echoes 1-4 | version | voxels | BOLD-like | leftover | reliability | " + " | ".join(nets_) + " |",
+              "|---|---|---|---|---|---|---|---|" + "---|" * len(nets_)]
+        for d in s["deep_csf_check"]:
+            for j, key in enumerate([k for k in d if k == "all_voxels" or k.startswith("csf_below_")]):
+                v = d[key]
+                head = f"| {d['name']} | {d['n_voxels']} ({d['n_csf_dominated']}) | {d['csf_weight_share_by_echo']} " if j == 0 else "| | | "
+                if v is None:
+                    L.append(head + f"| {key} | too few voxels | | | |" + " |" * len(nets_))
+                else:
+                    L.append(head + f"| {key} | {v['n_voxels']} | {v['bold_share']} | {v['leftover_share']} | {v['reliability']} | "
+                             + " | ".join(str(v.get(n)) for n in nets_) + " |")
     if s["secondary_coupling"]:
         nets = [k for k in s["secondary_coupling"][0] if k not in ("name", "noise_overcorrected", "ci", "b_reliability")]
         L += ["", "## Thalamus and striatum: BOLD-like coupling with each cortical network's mean", "",

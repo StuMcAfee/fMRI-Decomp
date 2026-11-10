@@ -1222,3 +1222,16 @@ Observations for the user's review: right striatum coupling is lowest in both pa
 - Cortical correlations above 1 after correction: 19 (P12) and 26 (P04) of about 18,000.
 - **Added (reporting only):** per-region reliability of the BOLD-like time course (signal share of its slow-band variance), reported for the deep regions and the cortex (median, 5th percentile, and the median of the regions involved in correlations above 1); block-bootstrap 95 % intervals (20 s blocks) for the noise-corrected thalamus and striatum couplings.
 - The anatomy rerun did not take effect before route B (no CSF column, no qc_subcortical.png); to be repeated.
+
+### 2026-11-10: R4 with CSF fractions and reliability; deep-region CSF check added
+
+| | P12 L / R thalamus | P12 L / R striatum | P04 L / R thalamus | P04 L / R striatum | cortex median (P12 / P04) |
+|---|---|---|---|---|---|
+| reliability of the BOLD-like time course | 0.31 / 0.29 | 0.56 / 0.32 | 0.46 / 0.69 | 0.51 / 0.41 | 0.90 / 0.90 (5th percentile 0.56 / 0.57) |
+| mean CSF probability | 0.05 / 0.06 | 0.04 / 0.04 | 0.08 / 0.08 | 0.03 / 0.06 | 0.12 / 0.16 |
+
+- **Reliability is the main limit in the deep regions:** 0.29-0.69 against 0.90 in cortex. Where it is low, the noise-corrected coupling is unstable: P12 thalamus intervals reach 1.2-1.7; the right striatum intervals span 0 in both participants (P04: -0.3 to +0.27), so its weak coupling is "not measurable", not "uncoupled".
+- Cortical correlations above 1 involve less reliable regions (median 0.69 against 0.90 in P12; 0.85 against 0.90 in P04).
+- **Mean CSF probability is low in the deep labels** (0.03-0.08, below cortex at 0.12-0.16), so CSF partial volume by voxel count is small. Not yet excluded: CSF voxels are bright at the late echoes and weigh more in the inverse-noise average. QC (qc_subcortical.png): placement and sides correct; caudate and thalamus outlines touch the lateral and third ventricles, most visibly P12 right caudate.
+- **Added `deep_csf_check`** (diagnostic, labels unchanged): per deep region, the share of the averaging weight in voxels with CSF probability > 0.5, per echo, and shares, reliability and coupling recomputed without voxels above CSF 0.5 and 0.3.
+- Pending user decisions: deep-region definition (A FIRST + CSF exclusion, B atlas + CSF exclusion, C unchanged + CSF reported), to be taken with the CSF check; a reliability floor for reporting.
