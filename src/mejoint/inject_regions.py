@@ -128,8 +128,10 @@ def recover_dir(inject_dir, route_b_dir, baseline_dir, te_check: bool = False) -
     for lo, hi in ((20, 40), (40, 80), (80, 160), (160, 10 ** 6)):
         sel = [r for r in used_rows if lo <= r["n_voxels"] < hi and r["b_ratio"] is not None]
         if sel:
+            sel_s = [r for r in used_rows if lo <= r["n_voxels"] < hi and np.isfinite(r["share_injected"]) and np.isfinite(r["share_true"])]
             size_bins.append({"voxels": f"{lo}-{hi if hi < 10 ** 6 else ''}", "n": len(sel),
-                              "median_abs_b_error": med([abs(r["b_ratio"] - 1) for r in sel])})
+                              "median_abs_b_error": med([abs(r["b_ratio"] - 1) for r in sel]),
+                              "median_abs_share_error": med([abs(r["share_injected"] - r["share_true"]) for r in sel_s])})
     by_type = {}
     for t in sorted({r["type"] for r in used_rows}):
         rr = [r for r in used_rows if r["type"] == t]
@@ -169,15 +171,18 @@ def render(o: dict) -> str:
     c, d = o["coupling"], o["dimensionality"]
     L += ["", "## Coupling: change in BOLD-like correlation (injected minus without injection, median)", "",
           f"- within injected networks: {c['within_injected_networks']} ({c['n_within']} pairs)",
-          f"- between injected networks: {c['between_injected_networks']} ({c['n_between']} pairs; independent: ~0; shared: > 0)",
-          f"- injected region with a region that was not injected: {c['injected_to_other']}",
+          f"- between injected networks: {c['between_injected_networks']} ({c['n_between']} pairs; independent: negative, added independent signal dilutes correlations; shared: positive)",
+          f"- injected region with a region that was not injected: {c['injected_to_other']} (negative: dilution)",
           f"- pairs of regions that were not injected: {c['other_pairs']} (median absolute change {c['other_pairs_abs_change_median']}; should be ~0)", "",
           "## Integration (without injection -> injected)", "",
           f"- participation ratio: {d['participation_ratio'][0]} -> {d['participation_ratio'][1]}",
           f"- eigenvalues above the circular-shift null: {d['eigen_above_null'][0]} -> {d['eigen_above_null'][1]} (independent: up to +4; shared: +1)",
           f"- segregation: {d['segregation'][0]} -> {d['segregation'][1]}; global share: {d['global_share'][0]} -> {d['global_share'][1]}", "",
-          "## Amplitude error by region size", "", "| voxels | regions | median abs dR2* error |", "|---|---|---|"]
-    L += [f"| {s['voxels']} | {s['n']} | {s['median_abs_b_error']} |" for s in o["size_bins"]]
+          "## Errors by region size", "",
+          "Amplitude error: the injected signal sits only in the labelled voxels; motion and resampling spread part of it into "
+          "unlabelled neighbours, more in small regions. The share is unaffected when both parts shrink alike.", "",
+          "| voxels | regions | median abs dR2* amplitude error | median abs share error |", "|---|---|---|---|"]
+    L += [f"| {s['voxels']} | {s['n']} | {s['median_abs_b_error']} | {s.get('median_abs_share_error')} |" for s in o["size_bins"]]
     return "\n".join(L) + "\n"
 
 
@@ -197,12 +202,14 @@ def summary(root, out_dir=None) -> dict:
                      f"{v['share_injected_median']} ({v['share_true']}) | {c['within_injected_networks']} | {c['between_injected_networks']} | "
                      f"{c.get('other_pairs_abs_change_median')} | {d['participation_ratio'][0]} -> {d['participation_ratio'][1]} | "
                      f"{d['eigen_above_null'][0]} -> {d['eigen_above_null'][1]} |")
-    allbins = {}
+    allb, alls = {}, {}
     for o in recs:
         for s in o["size_bins"]:
-            allbins.setdefault(s["voxels"], []).append(s["median_abs_b_error"])
-    L += ["", "Amplitude error by region size (median over runs): " +
-          "; ".join(f"{k} voxels {np.median([x for x in v if x is not None]):.3f}" for k, v in allbins.items() if any(x is not None for x in v))]
+            allb.setdefault(s["voxels"], []).append(s["median_abs_b_error"])
+            alls.setdefault(s["voxels"], []).append(s.get("median_abs_share_error"))
+    fmt = lambda d: "; ".join(f"{k} voxels {np.median([x for x in v if x is not None]):.3f}" for k, v in d.items() if any(x is not None for x in v))
+    L += ["", "Amplitude error by region size (median over runs): " + fmt(allb),
+          "", "Share error by region size (median over runs): " + fmt(alls)]
     res = {"n_recoveries": len(recs), "recoveries": recs}
     out_dir.mkdir(parents=True, exist_ok=True)
     io.write_json(out_dir / "inject_regions_summary.json", res)

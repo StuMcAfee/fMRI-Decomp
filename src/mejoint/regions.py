@@ -155,14 +155,29 @@ def coupling(x: np.ndarray, noise_var: np.ndarray, tr: float, band) -> dict:
 
 def participation_ratio(C: np.ndarray) -> float:
     """Effective dimensionality (sum lambda)^2 / sum lambda^2 of a symmetric matrix (negative eigenvalues, which
-    noise removal can produce, set to 0); NaN rows / columns dropped."""
-    ok = np.isfinite(C).all(0) & np.isfinite(C).all(1)
+    noise removal can produce, set to 0). Regions without signal above their noise (NaN diagonal) are dropped
+    row and column; the first version dropped every row that held any NaN, which emptied the whole matrix as soon
+    as one region had no signal (fixed 2026-11-10)."""
+    ok = _signal_rows(C)
+    if ok.sum() < 2:
+        return float("nan")
     lam = np.clip(np.linalg.eigvalsh(C[np.ix_(ok, ok)]), 0.0, None)
     return float(lam.sum() ** 2 / (lam ** 2).sum()) if lam.sum() > 0 else float("nan")
 
 
+def _signal_rows(C: np.ndarray) -> np.ndarray:
+    """Regions whose noise-corrected variance is positive (finite diagonal); their mutual entries are finite."""
+    ok = np.isfinite(np.diag(C))
+    sub = C[np.ix_(ok, ok)]
+    if not np.isfinite(sub).all():                                    # defensive: drop rows that still hold NaN
+        ok[np.flatnonzero(ok)[~np.isfinite(sub).all(1)]] = False
+    return ok
+
+
 def eigenvalues(C: np.ndarray) -> np.ndarray:
-    ok = np.isfinite(C).all(0) & np.isfinite(C).all(1)
+    ok = _signal_rows(C)
+    if ok.sum() < 1:
+        return np.zeros(0)
     return np.sort(np.clip(np.linalg.eigvalsh(C[np.ix_(ok, ok)]), 0.0, None))[::-1]
 
 
@@ -326,7 +341,8 @@ def analyze(S, labels, mu, sigma, ratios, use, te_ms, table: list, cfg: dict, Q=
         null = shift_null(b, nb_, tr, band, n_null, min_shift, rng, networks=nets[cx][mask_sub])
         eig = eigenvalues(c_["corr"])
         pr = participation_ratio(c_["corr"])
-        return {"set": label, "n_regions": int(mask_sub.sum()), "participation_ratio": _r(pr),
+        return {"set": label, "n_regions": int(mask_sub.sum()), "n_regions_with_signal": int(_signal_rows(c_["corr"]).sum()),
+                "participation_ratio": _r(pr),
                 "pr_null_median": _r(np.nanmedian(null["pr"])), "pr_null_q05_q95": [_r(np.nanquantile(null["pr"], 0.05)), _r(np.nanquantile(null["pr"], 0.95))],
                 "pr_percentile_in_null": _r(float(np.mean(null["pr"] <= pr))),
                 "n_eigen_above_null": int(count_above_null(eig, null["eig"])),

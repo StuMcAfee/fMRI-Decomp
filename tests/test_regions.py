@@ -252,3 +252,15 @@ def test_inject_regions_place_and_weights():
     lab = np.zeros((10, 10, 3), int); lab.flat[:121] = np.arange(1, 122)
     W = inject_regions.weights(lab, nets)
     assert W.shape == (10, 10, 3, 4) and np.all(W.sum(-1) <= 1) and W[..., 0].sum() == 8
+
+
+def test_participation_ratio_with_a_region_without_signal():
+    """One region without signal above its noise (NaN row and column) must not empty the matrix (bug fixed
+    2026-11-10): the participation ratio and eigenvalues come from the remaining regions."""
+    C = np.eye(5)
+    C[0, 1] = C[1, 0] = 0.5
+    full = regions.participation_ratio(C)
+    Cn = np.full((6, 6), np.nan)
+    Cn[1:, 1:] = C
+    assert np.isclose(regions.participation_ratio(Cn), full)
+    assert regions.eigenvalues(Cn).size == 5

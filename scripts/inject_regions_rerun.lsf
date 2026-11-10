@@ -1,0 +1,32 @@
+#!/bin/bash
+# R3: rerun route B (original and injected runs) and the recovery for every region-level injection folder
+# (outputs/inject/<run>/regions_*_s*/), reusing the saved front ends; then the pooled summary. No preprocessing.
+# Submit from inside the repository:
+#   bsub -q standard -n 4 -R "rusage[mem=8000] span[hosts=1]" -env "all" -J r3_rerun -o logs/r3_rerun_%J.log "bash scripts/inject_regions_rerun.lsf"
+set -uo pipefail
+PY="${MEJOINT_PY:-$HOME/miniconda3_new/envs/mejoint/bin/python}"
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}" PYTHONUNBUFFERED=1
+NT="${LSB_DJOB_NUMPROC:-4}"; export OMP_NUM_THREADS="$NT" MKL_NUM_THREADS="$NT" OPENBLAS_NUM_THREADS="$NT"
+ATLAS="$("$PY" -c "from mejoint import io; print(io.load_config().get('regions', {}).get('atlas', '200_7'))")"
+echo "== R3 rerun | $(date) | git $(git rev-parse --short HEAD 2>/dev/null || echo '?') | atlas $ATLAS"
+declare -A DONE
+for IDIR in outputs/inject/*/regions_*_s*/; do
+    IDIR="${IDIR%/}"; NAME="$(basename "$(dirname "$IDIR")")"
+    FE0="outputs/phase2/$NAME/mc"; FE1="$IDIR/frontend_mc"; A0="outputs/anatomy/$NAME"
+    BASE="outputs/inject/$NAME/route_b_baseline/$ATLAS"
+    [ -f "$FE1/c0.npy" ] && [ -f "$A0/labels_$ATLAS.nii.gz" ] || { echo "$IDIR: front end or labels missing; skipped"; continue; }
+    if [ -z "${DONE[$NAME]:-}" ]; then
+        echo "== route B, original run: $NAME"
+        mkdir -p "$(dirname "$BASE")"
+        "$PY" -m mejoint.cli route-b --frontend-dir "$FE0" --anat-dir "$A0" --out "$BASE" --atlas "$ATLAS" > "$BASE.log" 2>&1 \
+            || { echo "   FAILED (see $BASE.log)"; continue; }
+        DONE[$NAME]=1
+    fi
+    echo "== route B, injected run, and recovery: $IDIR"
+    "$PY" -m mejoint.cli route-b --frontend-dir "$FE1" --anat-dir "$A0" --out "$IDIR/route_b/$ATLAS" --atlas "$ATLAS" > "$IDIR/route_b_$ATLAS.log" 2>&1 \
+        && "$PY" -m mejoint.cli inject-regions-recover --inject-dir "$IDIR" --route-b-dir "$IDIR/route_b/$ATLAS" --baseline-dir "$BASE" > /dev/null \
+        && echo "   ok: $IDIR/recovery_regions.md" || echo "   FAILED (see $IDIR/route_b_$ATLAS.log)"
+done
+"$PY" -m mejoint.cli inject-regions-summary --root outputs/inject > /dev/null && echo "pooled: outputs/inject/inject_regions_summary.md"
+echo "== done $(date)"
