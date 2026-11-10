@@ -1235,3 +1235,13 @@ Observations for the user's review: right striatum coupling is lowest in both pa
 - **Mean CSF probability is low in the deep labels** (0.03-0.08, below cortex at 0.12-0.16), so CSF partial volume by voxel count is small. Not yet excluded: CSF voxels are bright at the late echoes and weigh more in the inverse-noise average. QC (qc_subcortical.png): placement and sides correct; caudate and thalamus outlines touch the lateral and third ventricles, most visibly P12 right caudate.
 - **Added `deep_csf_check`** (diagnostic, labels unchanged): per deep region, the share of the averaging weight in voxels with CSF probability > 0.5, per echo, and shares, reliability and coupling recomputed without voxels above CSF 0.5 and 0.3.
 - Pending user decisions: deep-region definition (A FIRST + CSF exclusion, B atlas + CSF exclusion, C unchanged + CSF reported), to be taken with the CSF check; a reliability floor for reporting.
+
+### 2026-11-10: CSF check results; user decisions on deep regions, reliability, cortex CSF and the eigenvalue count
+
+**CSF check (pilots):** CSF-dominated voxels (probability > 0.5) are 1-4 % of the deep labels but carry up to 12 % of the echo-4 averaging weight (bright, long T2*). Removing them changed the right striatum the most: coupling with the networks 0.14-0.37 -> 0.39-0.64 (CSF > 0.5 removed) -> 0.50-0.75 (CSF > 0.3) in P12; -0.09-0.06 -> 0.15-0.31 -> 0.21-0.43 in P04; BOLD-like share 0.33 -> 0.52 and 0.57 -> 0.68. Left striatum and right thalamus changed little; the P12 thalamus stays above 1 (its limit is reliability, 0.27-0.31).
+
+**User decisions (2026-11-10):**
+1. **Deep regions:** atlas labels without voxels of CSF probability > 0.3 (`regions.secondary_csf_max: 0.3`, applied in `anatomy.build_labels`; voxel counts before the exclusion kept in the region table).
+2. **Reliability floor 0.5** (`regions.reliability_min`): deep-region coupling below it is reported as not measurable with its interval; cortex: all regions in the primary, a sensitivity set without regions below the floor; each participant's reliability reported.
+3. **Cortex CSF as a sensitivity analysis** (`regions.cortex_csf_sensitivity: [0.3]`): integration measures recomputed with cortical voxels of CSF probability > 0.3 removed; the primary is unchanged.
+4. **Deflated eigenvalue count as a candidate** (`regions.count_above_null_deflated`): lambda_i / sum_{j>=i} lambda_j against the same quantity of the null's i-th eigenvalue. Simulation: 4 networks on a strong common signal, plain count 1, deflated 4 (truth 4); independent regions 0-1. Reported next to the plain count in route B and in the R3 recovery; adopted only if it passes the R3 injections (expected: +1 shared, up to +4 independent).

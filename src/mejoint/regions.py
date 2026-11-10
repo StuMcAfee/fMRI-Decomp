@@ -288,6 +288,28 @@ def count_above_null(eig_obs: np.ndarray, eig_null: np.ndarray, q: float = 0.95)
     return k
 
 
+def count_above_null_deflated(eig_obs: np.ndarray, eig_null: np.ndarray, q: float = 0.95, max_k: int = 30) -> int:
+    """Deflated count (candidate, 2026-11-10; adopted only if it passes the R3 injections): the i-th eigenvalue's
+    share of what is left after the larger ones are removed, lambda_i / sum_{j>=i} lambda_j, against the same
+    quantity of the null's i-th eigenvalue; counted until the first that is not above the q-quantile. The plain
+    count compares raw eigenvalues, so a dominant first eigenvalue (half the trace here) pushes every later one
+    below the null."""
+    m = min(len(eig_obs), eig_null.shape[1] - 1, max_k)
+    k = 0
+    for i in range(m):
+        tail_o = eig_obs[i:].sum()
+        tail_n = eig_null[:, i:].sum(1)
+        if tail_o <= 0:
+            break
+        with np.errstate(divide="ignore", invalid="ignore"):
+            thr = np.nanquantile(eig_null[:, i] / tail_n, q)
+        if eig_obs[i] / tail_o > thr:
+            k += 1
+        else:
+            break
+    return k
+
+
 # ============================================================================ intervals and the real-data runner
 def share_ci(sp: dict, nv: np.ndarray, tr: float, band, n_boot: int = 200, block: int = 27, rng=None, q=(0.025, 0.975)):
     """Block-bootstrap interval of each region's BOLD-like share: frames of the band-passed channels resampled in
@@ -400,6 +422,7 @@ def analyze(S, labels, mu, sigma, ratios, use, te_ms, table: list, cfg: dict, Q=
                 "pr_without_first_null_q05_q95": [_r(np.nanquantile(null["pr_resid"], 0.05)), _r(np.nanquantile(null["pr_resid"], 0.95))],
                 "pr_without_first_percentile_in_null": _r(float(np.mean(null["pr_resid"] <= pr1))),
                 "n_eigen_above_null": int(count_above_null(eig, null["eig"])),
+                "n_eigen_above_null_deflated": int(count_above_null_deflated(eig, null["eig"])),
                 "segregation": _r(segregation(c_["corr"], nets[cx][mask_sub])),
                 **_segregation_perm(c_["corr"], nets[cx][mask_sub], n_null, rng),
                 "global_share": _r(global_share(c_["x_band"], c_["signal_var"], c_["noise_band_var"])),
@@ -412,6 +435,11 @@ def analyze(S, labels, mu, sigma, ratios, use, te_ms, table: list, cfg: dict, Q=
         m = np.isin(ids[cx], np.asarray(list(common_ids), int))
         if m.sum() >= 3:
             out_int.append(integration(m, "common set"))
+    rmin = G.get("reliability_min")
+    if rmin is not None:
+        m = np.nan_to_num(rel_all[sel], nan=-1.0) >= float(rmin)
+        if 3 <= m.sum() < m.size:                                      # sensitivity set (user, 2026-11-10)
+            out_int.append(integration(m, f"cortex, reliability >= {rmin}"))
     # secondary regions: coupling of their b with each cortical network's mean b
     # noise-corrected like the cortical matrix (the first version used plain correlations, which deep regions'
     # larger noise attenuates): covariance over the square root of both noise-corrected variances; the network
@@ -442,7 +470,9 @@ def analyze(S, labels, mu, sigma, ratios, use, te_ms, table: list, cfg: dict, Q=
             bs = bs[np.isfinite(bs)]
             row.setdefault("ci", {})[net] = [_r(np.quantile(bs, 0.025)), _r(np.quantile(bs, 0.975))] if bs.size > 10 else None
         row["b_reliability"] = r["b_reliability"]
-        vals = [v for k, v in row.items() if k not in ("name", "ci", "b_reliability") and v is not None]
+        rmin = G.get("reliability_min")
+        row["not_measurable"] = rmin is not None and (r["b_reliability"] is None or r["b_reliability"] < float(rmin))
+        vals = [v for k, v in row.items() if k not in ("name", "ci", "b_reliability", "not_measurable") and v is not None]
         row["noise_overcorrected"] = bool(vals) and max(abs(v) for v in vals) > 1.0
         sec.append(row)
         sec_raw.append(raw)
@@ -600,6 +630,28 @@ def run_dir(frontend_dir, anat_dir, cfg: dict, out_dir, atlas: str | None = None
                                   res, np.nan_to_num(csf3[mask3d]))
         except Exception as exc:                                       # a diagnostic; never block the main result
             print(f"deep CSF check failed: {exc}")
+    # sensitivity (user, 2026-11-10): integration with cortical voxels above each CSF probability removed
+    sens = []
+    cuts = cfg.get("regions", {}).get("cortex_csf_sensitivity") or []
+    if cuts and (A / "csf_epi.nii.gz").exists():
+        csf3 = np.nan_to_num(np.asarray(nib.load(str(A / "csf_epi.nii.gz")).dataobj, np.float64))
+        cortex_ids = [r["id"] for r in table if r["kind"] == "cortex"]
+        incx = np.isin(lab3, cortex_ids)
+        mv = int(cfg.get("regions", {}).get("min_voxels", 20))
+        for cut in cuts:
+            lab_c = lab3.copy()
+            drop = incx & (csf3 > float(cut))
+            lab_c[drop] = 0
+            tab_c = []
+            for r in table:
+                n = int((lab_c == r["id"]).sum())
+                tab_c.append({**r, "n_voxels": n, "usable": bool(r.get("usable")) and n >= mv})
+            cfg_c = io.merge(cfg, {"regions": {"reliability_min": None}})
+            r2 = analyze(S, lab_c[mask3d], mu, sigma, fs["echo_noise_ratios_used"], use, fs["te_ms"], tab_c, cfg_c, Q,
+                         np.random.default_rng(int(cfg.get("project_seed", 0)) + 11), common)
+            row = dict(r2["integration"][0])
+            row["set"] = f"cortex without voxels CSF > {cut} ({int(drop.sum())} of {int(incx.sum())} voxels removed)"
+            sens.append(row)
     for name, key in (("gm_epi", "gm_mean"), ("csf_epi", "csf_mean")):
         f = A / f"{name}.nii.gz"
         if f.exists():
@@ -616,7 +668,7 @@ def run_dir(frontend_dir, anat_dir, cfg: dict, out_dir, atlas: str | None = None
     rows = res["regions"]
     io.write_tsv(out / "regions_route_b.tsv", {k: [(";".join(map(str, r[k])) if isinstance(r[k], list) else r[k]) for r in rows] for k in rows[0]})
     summ = {"run": fs.get("run_id"), "atlas": atlas, "frontend_dir": str(fe), "anat_dir": str(A), "n_frames": res["n_frames"],
-            "nuisance_rank": res["nuisance_rank"], "band_hz": res["band_hz"], "integration": res["integration"],
+            "nuisance_rank": res["nuisance_rank"], "band_hz": res["band_hz"], "integration": res["integration"] + sens,
             "secondary_coupling": res["secondary_coupling"], "secondary_coupling_raw": res["secondary_coupling_raw"],
             "deep_csf_check": deep, "cortex_ids": res["cortex_ids"], "regions": rows,
             "network_medians": _network_medians(rows), **io.provenance(cfg, {})}
@@ -647,12 +699,13 @@ def render(s: dict) -> str:
          "Segregation null: network labels permuted over the regions (liberal: ignores that neighbouring parcels share "
          "networks). Thalamus and striatum coupling noise-corrected like the cortical matrix (plain correlations in the "
          "JSON). Shares are clipped to 0-1; regions whose S0-like or R2*-like energy fell below its noise estimate are listed.", "",
+         "Eigenvalues above null: plain count / deflated count (candidate under test on R3).", "",
          "| set | regions (with signal) | participation ratio | null median [5-95 %] | percentile in null | PR without first pattern | null median [5-95 %] | percentile in null | eigenvalues above null | segregation (null 95 %) | global share | edges beyond null |",
          "|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for i in s["integration"]:
         L.append(f"| {i['set']} | {i['n_regions']} ({i.get('n_regions_with_signal')}) | {i['participation_ratio']} | {i['pr_null_median']} {i['pr_null_q05_q95']} | "
                  f"{i['pr_percentile_in_null']} | {i.get('pr_without_first')} | {i.get('pr_without_first_null_median')} {i.get('pr_without_first_null_q05_q95')} | "
-                 f"{i.get('pr_without_first_percentile_in_null')} | {i['n_eigen_above_null']} | {i['segregation']} ({i['segregation_null_q95']}; within {i.get('within_mean')}, between {i.get('between_mean')}) | "
+                 f"{i.get('pr_without_first_percentile_in_null')} | {i['n_eigen_above_null']} / {i.get('n_eigen_above_null_deflated')} | {i['segregation']} ({i['segregation_null_q95']}; within {i.get('within_mean')}, between {i.get('between_mean')}) | "
                  f"{i['global_share']} | {i['edges_beyond_null']} |")
     L += ["", "## Shares by network (median over usable regions)", "", "| network | regions | BOLD-like | S0-like | leftover |", "|---|---|---|---|---|"]
     for net, m in s["network_medians"].items():
@@ -682,7 +735,7 @@ def render(s: dict) -> str:
     L += ["", f"Regions with an energy below its noise estimate (share clipped): {len(flag)}"
           + (": " + ", ".join(f"{r['name']} ({r['energy_below_noise']})" for r in flag[:20]) + (" ..." if len(flag) > 20 else "") if flag else "")]
     if s.get("deep_csf_check"):
-        nets_ = [k for k in s["secondary_coupling"][0] if k not in ("name", "noise_overcorrected", "ci", "b_reliability")] if s["secondary_coupling"] else []
+        nets_ = [k for k in s["secondary_coupling"][0] if k not in ("name", "noise_overcorrected", "ci", "b_reliability", "not_measurable")] if s["secondary_coupling"] else []
         L += ["", "## Thalamus and striatum: CSF check (diagnostic; the outcome labels are unchanged)", "",
               "Weight share: the part of the region's averaging weight in voxels with CSF probability > 0.5, per echo "
               "(CSF is bright at late echoes, so it weighs more than its voxel count). Then the region recomputed "
@@ -699,13 +752,18 @@ def render(s: dict) -> str:
                     L.append(head + f"| {key} | {v['n_voxels']} | {v['bold_share']} | {v['leftover_share']} | {v['reliability']} | "
                              + " | ".join(str(v.get(n)) for n in nets_) + " |")
     if s["secondary_coupling"]:
-        nets = [k for k in s["secondary_coupling"][0] if k not in ("name", "noise_overcorrected", "ci", "b_reliability")]
+        nets = [k for k in s["secondary_coupling"][0] if k not in ("name", "noise_overcorrected", "ci", "b_reliability", "not_measurable")]
         L += ["", "## Thalamus and striatum: BOLD-like coupling with each cortical network's mean", "",
+              "Noise-corrected, with block-bootstrap 95 % intervals; n.m. = not measurable (reliability below the floor).", "",
               "| region | " + " | ".join(nets) + " |", "|---|" + "---|" * len(nets)]
         for r in s["secondary_coupling"]:
             ci = r.get("ci") or {}
-            L.append(f"| {r['name']} (reliability {r.get('b_reliability')}){' (a value above 1)' if r.get('noise_overcorrected') else ''} | "
-                     + " | ".join(f"{r[n]} {ci.get(n)}" for n in nets) + " |")
+            if r.get("not_measurable"):
+                L.append(f"| {r['name']} (reliability {r.get('b_reliability')}: not measurable) | "
+                         + " | ".join(f"n.m. {ci.get(n)}" for n in nets) + " |")
+            else:
+                L.append(f"| {r['name']} (reliability {r.get('b_reliability')}){' (a value above 1)' if r.get('noise_overcorrected') else ''} | "
+                         + " | ".join(f"{r[n]} {ci.get(n)}" for n in nets) + " |")
     return "\n".join(L) + "\n"
 
 

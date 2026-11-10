@@ -170,6 +170,10 @@ grey-matter threshold.
   primary integration measure; system segregation and the count above the circular-shift null as secondary;
   region shares descriptive. Added after R3 (user, 2026-11-10): the participation ratio without the first
   (brain-wide) pattern as a secondary measure, reported next to the global share.
+  Added after R4 (user, 2026-11-10): thalamus and striatum without voxels of CSF probability > 0.3; a reliability
+  floor of 0.5 (deep-region coupling below it reported as not measurable; cortex sensitivity set without regions
+  below it); cortical CSF exclusion (> 0.3) as a sensitivity analysis of the integration measures; a deflated
+  eigenvalue count under test on the R3 injections.
 - **D5 Motion handling for the primary analysis:** 24-term motion regression (the current front end default) or
   band-passed motion projected out (the waves default).
 - **D6 CLAUDE.md edits** (proposed text to follow on approval): section 1 (route B as the main analysis; ICA

@@ -81,9 +81,11 @@ def subcortical_groups(values: dict) -> dict:
 
 def build_labels(cortex_epi: np.ndarray, sub_epi: np.ndarray | None, gm_epi: np.ndarray, mask3d: np.ndarray,
                  classes3d: np.ndarray | None, table: dict, groups: dict | None, gm_min: float = 0.3,
-                 min_voxels: int = 20, secondary: bool = True) -> dict:
+                 min_voxels: int = 20, secondary: bool = True, csf_epi: np.ndarray | None = None,
+                 secondary_csf_max: float | None = None) -> dict:
     """Region labels (3D, 0 = none) and the region table. Cortex ids 1..N follow the Schaefer index; secondary
-    regions follow, in the order L/R thalamus, L/R striatum."""
+    regions follow, in the order L/R thalamus, L/R striatum. With csf_epi and secondary_csf_max, thalamus and
+    striatum voxels with CSF probability above it are dropped (user, 2026-11-10)."""
     ok = mask3d.copy()
     if classes3d is not None:
         ok &= ~np.isin(classes3d, (3, 5))                              # data-only classes: CSF-dominated, few echoes
@@ -103,10 +105,14 @@ def build_labels(cortex_epi: np.ndarray, sub_epi: np.ndarray | None, gm_epi: np.
             for hemi in ("L", "R"):
                 vals = groups.get((hemi, group), [])
                 sel = ok & np.isin(sx, vals) & (lab == 0)
+                n_before = int(sel.sum())
+                if csf_epi is not None and secondary_csf_max is not None:
+                    sel &= ~(np.nan_to_num(csf_epi) > float(secondary_csf_max))
                 lab[sel] = nxt
                 n = int(sel.sum())
                 rows.append({"id": nxt, "name": f"{hemi}_{group}", "kind": "secondary", "hemisphere": "LH" if hemi == "L" else "RH",
-                             "network": group.capitalize(), "n_voxels": n, "usable": n >= min_voxels})
+                             "network": group.capitalize(), "n_voxels": n, "usable": n >= min_voxels,
+                             "n_voxels_before_csf_exclusion": n_before})
                 nxt += 1
     return {"labels": lab, "regions": rows}
 
@@ -125,6 +131,10 @@ def run_dir(anat_dir, frontend_dir, cfg: dict, tissue_dir=None, atlas: str = "20
     cortex = vol(f"schaefer_{atlas}_epi.nii.gz")
     sub = vol("ho_sub_epi.nii.gz") if (A / "ho_sub_epi.nii.gz").exists() else None
     gm = vol("gm_epi.nii.gz")
+    csf_max = G.get("secondary_csf_max")
+    csf = vol("csf_epi.nii.gz") if (A / "csf_epi.nii.gz").exists() else None
+    if csf_max is not None and csf is None:
+        raise FileNotFoundError(f"regions.secondary_csf_max is set but {A / 'csf_epi.nii.gz'} is missing (rerun scripts/anatomy_run.lsf)")
     for name, arr in (("cortex atlas", cortex), ("grey matter", gm)):
         if arr.shape != mask3d.shape:
             raise ValueError(f"{name} in {A} has grid {arr.shape}, the front end {mask3d.shape}")
@@ -142,7 +152,8 @@ def run_dir(anat_dir, frontend_dir, cfg: dict, tissue_dir=None, atlas: str = "20
     if xml.exists():
         groups = subcortical_groups(ho_subcortical_values(xml))
     res = build_labels(cortex, sub, gm, mask3d, classes3d, table, groups, gm_min=float(G.get("gm_min", 0.3)),
-                       min_voxels=int(G.get("min_voxels", 20)), secondary=bool(G.get("secondary", True)))
+                       min_voxels=int(G.get("min_voxels", 20)), secondary=bool(G.get("secondary", True)),
+                       csf_epi=csf, secondary_csf_max=None if csf_max is None else float(csf_max))
     io.save_volume(res["labels"].astype(np.float32), mimg, A / f"labels_{atlas}.nii.gz")
     rows = res["regions"]
     io.write_tsv(A / f"regions_{atlas}.tsv", {k: [r[k] for r in rows] for k in rows[0]})
@@ -150,6 +161,7 @@ def run_dir(anat_dir, frontend_dir, cfg: dict, tissue_dir=None, atlas: str = "20
             "cortex_voxels": int(sum(r["n_voxels"] for r in rows if r["kind"] == "cortex")),
             "median_cortex_region_voxels": float(np.median([r["n_voxels"] for r in rows if r["kind"] == "cortex"])),
             "secondary": [r for r in rows if r["kind"] == "secondary"], "gm_min": float(G.get("gm_min", 0.3)),
+            "secondary_csf_max": csf_max,
             "classes_used": classes3d is not None, "regions": rows, **io.provenance(cfg, {})}
     io.write_json(A / f"regions_{atlas}.json", summ)
     try:

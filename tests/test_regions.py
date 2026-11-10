@@ -229,7 +229,12 @@ def test_run_dir_files(tmp_path):
     rows = [{"id": i, "name": f"r{i}", "kind": "cortex", "hemisphere": "LH", "network": f"N{(i - 1) // 4}",
              "n_voxels": int((lab == i).sum()), "usable": bool((lab == i).sum() >= 20)} for i in range(1, 17)]
     io.write_json(A / "regions_200_7.json", {"regions": rows})
+    csf = np.zeros(mask.shape, np.float32)
+    csf[xs[0] < 3] = 0.9                                               # one edge strip "CSF": removed in the sensitivity
+    io.save_volume(csf, mimg, A / "csf_epi.nii.gz")
     out = regions.run_dir(fe, A, cfg, tmp_path / "rb")
+    sets = [i["set"] for i in out["integration"]]
+    assert any(x.startswith("cortex without voxels CSF > 0.3") for x in sets), sets
     for f in ("route_b.json", "route_b.md", "regions_route_b.tsv", "corr_b.npy", "route_b.png"):
         assert (tmp_path / "rb" / f).exists(), f
     used = [r for r in out["regions"] if r["used"]]
@@ -371,3 +376,23 @@ def test_deep_csf_check():
     main = [r for r in res["regions"] if r["name"] == "thal"][0]
     assert abs(d["all_voxels"]["bold_share"] - main["bold_share"]) < 1e-3
     assert d["csf_below_0.5"]["n_voxels"] == n_per - 8 and d["csf_below_0.5"]["N0"] is not None
+
+
+def test_deflated_eigen_count():
+    """A dominant brain-wide pattern pushes later eigenvalues below the plain null; the deflated count still finds
+    the structure (4 networks on top of a strong common signal: plain 1, deflated 4) and finds none in
+    independent regions."""
+    rng = np.random.default_rng(SEED + 11)
+    P, T = 60, 800
+    nets = np.repeat(np.arange(4), 15)
+    nv = np.full(P, 0.01)
+    x = 2.0 * slow(rng, 1, T) + 0.5 * slow(rng, 4, T)[nets] + slow(rng, P, T) + 0.1 * rng.standard_normal((P, T))
+    c = regions.coupling(x, nv, TR, BAND)
+    null = regions.shift_null(x, nv, TR, BAND, 200, 40, rng)
+    e = regions.eigenvalues(c["corr"])
+    assert regions.count_above_null(e, null["eig"]) <= 2
+    assert regions.count_above_null_deflated(e, null["eig"]) == 4
+    xi = slow(rng, P, T) + 0.1 * rng.standard_normal((P, T))
+    ci = regions.coupling(xi, nv, TR, BAND)
+    ni = regions.shift_null(xi, nv, TR, BAND, 200, 40, rng)
+    assert regions.count_above_null_deflated(regions.eigenvalues(ci["corr"]), ni["eig"]) <= 1

@@ -88,6 +88,15 @@ def test_build_labels_rules():
     assert rows["7Networks_LH_Vis_1"]["usable"] and rows["7Networks_LH_Vis_1"]["kind"] == "cortex"
     r2 = anatomy.build_labels(cortex, sub, gm, mask, classes, table, groups, secondary=False)
     assert len(r2["regions"]) == 2
+    # CSF exclusion for the deep regions only (user, 2026-11-10)
+    csf = np.zeros(mask.shape)
+    csf[...] = 0.9
+    r3 = anatomy.build_labels(cortex, sub, gm, mask, classes, table, groups, gm_min=0.3, min_voxels=20,
+                              csf_epi=csf, secondary_csf_max=0.3)
+    rows3 = {row["name"]: row for row in r3["regions"]}
+    assert all(rows3[n]["n_voxels"] == 0 for n in ("L_thalamus", "R_thalamus", "L_striatum", "R_striatum"))
+    assert rows3["L_striatum"]["n_voxels_before_csf_exclusion"] == rows["L_striatum"]["n_voxels"]
+    assert rows3["7Networks_LH_Vis_1"]["n_voxels"] == rows["7Networks_LH_Vis_1"]["n_voxels"]   # cortex untouched
 
 
 def test_run_dir_writes_outputs(tmp_path):
@@ -99,7 +108,7 @@ def test_run_dir_writes_outputs(tmp_path):
     nib.save(ref, str(fe / "analysis_mask.nii.gz"))
     atl = np.zeros(mask.shape); atl[mask] = np.where(np.indices(mask.shape)[0][mask] < 10, 1, 101)   # LH Vis_1, RH region 101
     for name, arr in (("schaefer_200_7_epi", atl), ("ho_sub_epi", sub), ("gm_epi", gm), ("epi_mean", mask * 100.0),
-                      ("wm_epi", (np.indices(mask.shape)[2] == 8) & mask)):
+                      ("wm_epi", (np.indices(mask.shape)[2] == 8) & mask), ("csf_epi", np.zeros(mask.shape))):
         nib.save(nib.Nifti1Image(np.asarray(arr, np.float32), aff), str(A / f"{name}.nii.gz"))
     names = ["Left Cerebral White Matter", "Left Cerebral Cortex", "Left Lateral Ventrical", "Left Thalamus", "Left Caudate",
              "Left Putamen", "Left Pallidum", "Brain-Stem", "Left Hippocampus", "Left Amygdala", "Left Accumbens",

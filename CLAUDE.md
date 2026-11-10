@@ -435,20 +435,20 @@ A small residual does not certify a clean ΔR2*. The residual only sees structur
 
 ## 11. Outcomes
 
-Cerebral regions only (section 1): Schaefer 200 parcels / 7 networks (400 / 17 as sensitivity) and, as secondary regions, left and right thalamus and striatum.
+Cerebral regions only (section 1): Schaefer 200 parcels / 7 networks (400 / 17 as sensitivity) and, as secondary regions, left and right thalamus and striatum. Thalamus and striatum voxels with CSF probability above 0.3 are dropped (user, 2026-11-10: a few ventricle-edge voxels carry a large share of the late-echo weight). Reliability floor 0.5 (user, 2026-11-10): a region's reliability is the signal share of its slow BOLD-like variance; deep-region coupling below the floor is reported as not measurable, with its interval; cortical regions below it stay in the primary and are dropped in a sensitivity analysis.
 
 **Primary:** effective dimensionality (participation ratio) of cortical BOLD-like activity (noise-corrected correlations of the regions' R2*-like time courses), against its circular-shift null, at a common number of volumes, reported with each participant's injection-measured sensitivity. Less integration means higher dimensionality.
 
 **Secondary:**
 - the participation ratio without the first (brain-wide) pattern, against its circular-shift null, always next to the global BOLD-like share (user, 2026-11-10: R3 showed the primary also rises when anything is added beside one dominant pattern);
-- system segregation of the BOLD-like correlations; the number of eigenvalues above the circular-shift null;
+- system segregation of the BOLD-like correlations; the number of eigenvalues above the circular-shift null (a deflated count, each eigenvalue against the null after the larger ones are removed, is under test on the R3 injections; adopted only if it passes);
 - region BOLD-like, S0-like and leftover shares, by network;
 - BOLD-like versus S0-like versus ordinary connectivity; global BOLD-like share;
 - thalamic and striatal BOLD-like coupling with the cortical networks.
 
 **Descriptive:** joint-decomposition components across k with background-corrected eta; the comparison with tedana's components and "Likely BOLD" counts. Counts depend on the estimator, k, scan length and signal strength (interpolation and filtering alone change ME-ICA counts, Olafsson et al. 2015); they are not outcomes.
 
-Sensitivity analyses: motion handling (24-term regression primary, band-passed motion projection), censoring at filtered FD > 0.2 mm, global regression, equal versus per-echo weighting, parcel resolution, band limits, grey-matter threshold. "BOLD-like" is not "neural": breathing-related CO2 and field changes are partly BOLD-like and global.
+Sensitivity analyses: cortical voxels with CSF probability above 0.3 removed (integration measures); cortical regions below the reliability floor removed; motion handling (24-term regression primary, band-passed motion projection), censoring at filtered FD > 0.2 mm, global regression, equal versus per-echo weighting, parcel resolution, band limits, grey-matter threshold. "BOLD-like" is not "neural": breathing-related CO2 and field changes are partly BOLD-like and global.
 
 ## 12. Efficiency and reproducibility
 
