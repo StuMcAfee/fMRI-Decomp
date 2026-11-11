@@ -177,7 +177,8 @@ grey-matter threshold.
   cortex also drops voxels of CSF probability > 0.3; all-voxel cortex is a sensitivity analysis; each participant's
   cortical CSF fraction is a covariate.
   Gate R4 passed (user, 2026-11-11); S0-like connectivity dropped from the outcomes (region S0-like time courses
-  are mostly noise). R5 plan: `docs/R5_PLAN.md` (draft for approval).
+  are mostly noise). R5 plan: `docs/R5_PLAN.md`. Gate R5 passed (user, 2026-11-12); primary redefined as the
+  participation ratio without the first pattern, with the global share (see CLAUDE.md section 11).
 - **D5 Motion handling for the primary analysis:** 24-term motion regression (the current front end default) or
   band-passed motion projected out (the waves default).
 - **D6 CLAUDE.md edits** (proposed text to follow on approval): section 1 (route B as the main analysis; ICA

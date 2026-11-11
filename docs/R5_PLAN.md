@@ -107,3 +107,9 @@ Commands: `mejoint r5-preflight`, `mejoint common-regions`, `scripts/submit_rout
 - **No T1 for P01, P16, P06, P17** (user: not currently available; recovery possible through data
   management). Route B needs parcels, so these four wait; the batch proceeds with the 11 participants that have a T1
   (10 in the primary).
+
+## 9. Review and gate (2026-11-12)
+
+Gate R5 passed (user). The ordinary participation ratio tracked the global share across participants (Spearman -0.98)
+and motion dependence of connectivity (42 % of edges) vanished once the brain-wide pattern was removed (3.4 %); the
+primary is now the participation ratio without the first pattern, always with the global share (CLAUDE.md section 11).

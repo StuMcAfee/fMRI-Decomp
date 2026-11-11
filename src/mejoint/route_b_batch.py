@@ -322,15 +322,18 @@ def render(s: dict) -> str:
          f"Primary: cortex without CSF-rich voxels, first {s.get('n_volumes_common')} frames of the longest gap-free stretch. 'in primary' = "
          "False: the stretch was too short (reported, not in the cohort checks). Injection: change at resting strength "
          "(independent networks / one shared network).", "",
-         "| run | in primary | regions (common) | PR | PR without first | global share | segregation | PR all voxels | "
-         "CSF fraction | reliability median | mean FD | coil | inj. indep. dPR / dPR-1 | inj. shared dPR / dPR-1 |",
+         "Primary (user, 2026-11-12): PR without the first (brain-wide) pattern, read with the global share; the ordinary "
+         "PR is secondary (across participants it mostly tracks the global share). dPR-1 / dPR: change with injection.", "",
+         "| run | in primary | regions (common) | PR without first (primary) | global share | PR | segregation | PR all voxels | "
+         "CSF fraction | reliability median | mean FD | coil | inj. indep. dPR-1 / dPR | inj. shared dPR-1 / dPR |",
          "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for p in s["participants"]:
-        L.append(f"| {p['run']} | {p['in_primary']} | {p['regions']} ({p.get('regions_common')}) | {p['pr']} | {p.get('pr_without_first')} | "
-                 f"{p['global_share']} | {p['segregation']} | {p.get('pr_allvox')} | {p.get('cortex_csf_fraction')} | "
+        r4 = lambda v: round(v, 4) if isinstance(v, float) else v
+        L.append(f"| {p['run']} | {p['in_primary']} | {p['regions']} ({p.get('regions_common')}) | {p.get('pr_without_first')} | "
+                 f"{p['global_share']} | {p['pr']} | {p['segregation']} | {p.get('pr_allvox')} | {r4(p.get('cortex_csf_fraction'))} | "
                  f"{p.get('reliability_median')} | {p.get('fd_mean')} | {p['coil']} | "
-                 f"{p.get('inj_independent_d_pr')} / {p.get('inj_independent_d_pr_without_first')} | "
-                 f"{p.get('inj_shared_d_pr')} / {p.get('inj_shared_d_pr_without_first')} |")
+                 f"{p.get('inj_independent_d_pr_without_first')} / {p.get('inj_independent_d_pr')} | "
+                 f"{p.get('inj_shared_d_pr_without_first')} / {p.get('inj_shared_d_pr')} |")
     L += ["", "## Thalamus and striatum: pooled coupling over measurable participants (Fisher z, inverse-variance weights)", "",
           "| region | network | measurable / total | pooled [95 % CI] |", "|---|---|---|---|"]
     L += [f"| {d['region']} | {d['network']} | {d['n']} / {d['n_total']} | {d['pooled']} {d['ci']} |" for d in s["deep_pooled"]]

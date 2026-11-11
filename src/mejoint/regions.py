@@ -907,6 +907,8 @@ def render(s: dict) -> str:
              f"over all cortical voxels; {s['cortex_csf_covariate'].get('cortex_voxels_removed')} of "
              f"{s['cortex_csf_covariate'].get('cortex_voxels_allvox')} voxels removed." if s.get("cortex_csf_covariate") else "")
           if s.get("cortex_csf_max") is not None else "Cortex: all voxels (no CSF exclusion)."), "",
+         "Primary (user, 2026-11-12): PR without the first pattern, read with the global share; the ordinary participation "
+         "ratio is secondary.", "",
          "| set | regions (with signal) | participation ratio | null median [5-95 %] | percentile in null | PR without first pattern | null median [5-95 %] | percentile in null | eigenvalues above null | segregation (null 95 %) | global share | edges beyond null |",
          "|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for i in s["integration"]:

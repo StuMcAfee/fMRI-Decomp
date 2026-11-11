@@ -386,7 +386,7 @@ Tests:
 - **R2, anatomy** for the pilots. **Gate:** the user checks every registration (QC figures).
 - **R3, injection validation:** shares, coupling and dimensionality recovered from injected region-wide signals at resting strength (share tolerance 0.1, set in advance); smallest usable region fixed; per-participant sensitivity. **Gate:** results shown to the user.
 - **R4, pilot** (P04 and a second participant): maps, matrices, spectra, integration measures. **Gate:** user review before any batch run.
-- **R5, batch** over all participants: participant- and region-level tables; QC-FC and distance dependence (they need many subjects).
+- **R5, batch** over all participants: participant- and region-level tables; QC-FC and distance dependence (they need many subjects). **Passed 2026-11-12** (user) on 11 participants with a T1 (10 in the primary), with the primary redefined as above.
 
 Traveling waves: paused (user, 2026-11-06).
 
@@ -437,10 +437,10 @@ A small residual does not certify a clean ΔR2*. The residual only sees structur
 
 Cerebral regions only (section 1): Schaefer 200 parcels / 7 networks (400 / 17 as sensitivity) and, as secondary regions, left and right thalamus and striatum. Cortical, thalamus and striatum voxels with CSF probability above 0.3 are dropped (deep regions: user, 2026-11-10, a few ventricle-edge voxels carry a large share of the late-echo weight; cortex: user, 2026-11-11, sulcal-CSF voxels carried part of the brain-wide pattern and CSF may differ between groups). Each participant's cortical CSF fraction (mean CSF probability over all cortical voxels) is reported and used as a covariate. Reliability floor 0.5 (user, 2026-11-10): a region's reliability is the signal share of its slow BOLD-like variance; deep-region coupling below the floor is reported as not measurable, with its interval; cortical regions below it stay in the primary and are dropped in a sensitivity analysis.
 
-**Primary:** effective dimensionality (participation ratio) of cortical BOLD-like activity (noise-corrected correlations of the regions' R2*-like time courses), against its circular-shift null, at a common number of volumes, reported with each participant's injection-measured sensitivity. Less integration means higher dimensionality.
+**Primary (user, 2026-11-12, after the R5 review):** effective dimensionality of cortical BOLD-like activity beyond the brain-wide pattern: the participation ratio without the first pattern, (Σλ − λ1)² / (Σλ² − λ1²), of the noise-corrected correlations of the regions' R2*-like time courses, against its circular-shift null, at a common number of volumes (797), always reported with the global BOLD-like share and each participant's injection-measured sensitivity. Reason: across the R5 participants the ordinary participation ratio was almost the inverse of the global share (Spearman −0.98), and the strong, uniformly positive motion dependence of connectivity (42 % of edges at p < 0.05) disappeared once each participant's brain-wide pattern was removed (3.4 %). Limitation: higher values mean more independent patterns beyond the brain-wide one relative to what is present; added internally coherent networks raised it in most participants but lowered it where baseline dimensionality was already high (R5 injections).
 
 **Secondary:**
-- the participation ratio without the first (brain-wide) pattern, against its circular-shift null, always next to the global BOLD-like share (user, 2026-11-10: R3 showed the primary also rises when anything is added beside one dominant pattern);
+- the ordinary participation ratio (all patterns), against its circular-shift null; across participants it mostly measures the size of the brain-wide pattern (R5), so it is reported with the global share and mean FD and not interpreted alone;
 - system segregation of the BOLD-like correlations; the number of eigenvalues above the circular-shift null (conservative; a deflated count failed the R3 injections, 2026-11-11);
 - region BOLD-like, S0-like and leftover shares, by network;
 - BOLD-like versus ordinary connectivity; global BOLD-like share (S0-like connectivity dropped, user 2026-11-11: region S0-like time courses are mostly noise);
