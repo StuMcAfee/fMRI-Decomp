@@ -12,6 +12,7 @@ acquisition:
   mb_factor: 6                           # derived from SliceTiming (not in the JSON)
   slice_stack_separation: 8              # slices acquired together are 8 apart (48 / 6)
   phase_encoding: i                      # left-right; CAIPI shift unknown
+  coil_head_only: ["P12", "P06", "P09", "P08"]   # HE1-4 only, without neck elements (CLAUDE.md section 4); reported per participant in R5
   slice_axis: 2                          # axial slices along array axis 2 (48 slices; Phase 0)
 
 subjects:
@@ -234,7 +235,7 @@ regions:                      # route B (docs/ROUTE_B_PLAN.md; approved 2026-11-
   min_shift_s: 30.0             # smallest circular shift (s)
   n_boot: 200                   # block bootstrap of frames for the share intervals
   boot_block_s: 20.0            # bootstrap block length (s)
-  n_volumes_common: null        # truncate every run to this many frames for the integration measures (null: all)
+  n_volumes_common: 751         # R5-1 (user, 2026-11-11): coupling and integration on the first 751 frames of the longest gap-free stretch (shares use all frames); runs whose stretch is shorter are left out of the primary
 
 inject:                       # Phase 5 injection calibration (user decision 2026-11-06): known sources added to the RAW echoes
   radius_mm: 10.0               # each source: cos^2 taper from its centre to zero at this radius (~100 voxels)

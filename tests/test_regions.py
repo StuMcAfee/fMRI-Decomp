@@ -421,3 +421,15 @@ def test_adjacency_and_shared_noise_check():
     iu = np.triu_indices(P, 1)
     before = np.nanmedian(np.abs(c["corr"][iu][A[iu]]))
     assert out["participation_ratio_shared_noise_removed"] > regions.participation_ratio(c["corr"]), (out, before)
+
+
+def test_select_frames():
+    """R5-1: first n frames of an unbroken run; the longest gap-free stretch when there is a gap; not eligible for
+    the primary when that stretch is too short."""
+    out = regions.select_frames(None, 800, 751)
+    assert out["primary_eligible"] and out["frames"][0] == 0 and out["n_used"] == 751
+    vols = np.r_[np.arange(0, 300), np.arange(319, 800)]               # a 19-volume gap after frame 300
+    out = regions.select_frames(vols, vols.size, 751)
+    assert not out["primary_eligible"] and out["n_used"] == 481 and out["longest_stretch"] == [300, 781]
+    out = regions.select_frames(vols, vols.size, 400)
+    assert out["primary_eligible"] and out["frames"][0] == 300 and out["n_used"] == 400

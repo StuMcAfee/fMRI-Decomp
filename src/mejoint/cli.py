@@ -183,6 +183,22 @@ def main(argv=None) -> int:
     arc.add_argument("--anat-dir", required=True)
     arc.add_argument("--config", help="config YAML (default: configs/default.yaml)")
 
+    pf = sub.add_parser("r5-preflight", help="R5: one table of every run's inputs (front end, echoes, volumes and gaps, T1, anatomy, coil)")
+    pf.add_argument("--phase2-root", default="outputs/phase2")
+    pf.add_argument("--anat-root", default="outputs/anatomy")
+    pf.add_argument("--t1-list", default=None)
+    pf.add_argument("--out", default="outputs/route_b/summary")
+    cr = sub.add_parser("common-regions", help="R5: cortical parcels usable in every participant (writes the ids file route B reads)")
+    cr.add_argument("--anat-root", default="outputs/anatomy")
+    cr.add_argument("--phase2-root", default="outputs/phase2")
+    cr.add_argument("--atlas", default="200_7")
+    cr.add_argument("--out", default=None, help="default outputs/route_b/common_ids_<atlas>.txt")
+    rs = sub.add_parser("route-b-summary", help="R5: participant, region and deep-region tables, pooled deep coupling, cohort checks")
+    rs.add_argument("--route-b-root", default="outputs/route_b")
+    rs.add_argument("--phase2-root", default="outputs/phase2")
+    rs.add_argument("--inject-root", default="outputs/inject")
+    rs.add_argument("--atlas", default="200_7")
+    rs.add_argument("--out", default="outputs/route_b/summary")
     rb = sub.add_parser("route-b", help="route B on one run: region shares, BOLD-like connectivity, integration with circular-shift nulls")
     rb.add_argument("--frontend-dir", required=True, help="front end of the run (maps, nuisance basis, echo paths in done.json)")
     rb.add_argument("--anat-dir", required=True, help="anatomy folder (labels_<atlas>.nii.gz, regions_<atlas>.json)")
@@ -343,6 +359,19 @@ def main(argv=None) -> int:
         from . import anatomy
         anatomy.regcheck(args.anat_dir)
         print(open(f"{args.anat_dir}/regcheck.md").read())
+    elif args.cmd == "r5-preflight":
+        from . import route_b_batch
+        route_b_batch.preflight(args.phase2_root, args.anat_root, cfg, t1_list=args.t1_list, out_dir=args.out)
+        print(open(f"{args.out}/preflight.md").read())
+    elif args.cmd == "common-regions":
+        from . import route_b_batch
+        out = args.out or f"outputs/route_b/common_ids_{args.atlas}.txt"
+        r = route_b_batch.common_regions(args.anat_root, route_b_batch.list_runs(args.phase2_root, cfg), args.atlas, out)
+        print(open(str(__import__("pathlib").Path(out).with_suffix(".md"))).read())
+    elif args.cmd == "route-b-summary":
+        from . import route_b_batch
+        route_b_batch.summary(args.route_b_root, args.phase2_root, args.inject_root, cfg, args.out, atlas=args.atlas)
+        print(open(f"{args.out}/summary.md").read())
     elif args.cmd == "route-b":
         from . import regions
         regions.run_dir(args.frontend_dir, args.anat_dir, cfg, args.out, atlas=args.atlas, common_ids_file=args.common_ids)

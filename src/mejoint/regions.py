@@ -340,18 +340,18 @@ def share_ci(sp: dict, nv: np.ndarray, tr: float, band, n_boot: int = 200, block
         return np.nanquantile(out, q[0], axis=0), np.nanquantile(out, q[1], axis=0)
 
 
-def analyze(S, labels, mu, sigma, ratios, use, te_ms, table: list, cfg: dict, Q=None, rng=None, common_ids=None) -> dict:
+def analyze(S, labels, mu, sigma, ratios, use, te_ms, table: list, cfg: dict, Q=None, rng=None, common_ids=None,
+            frames=None) -> dict:
     """Route B on one run, arrays version. S (V, E, T) masked magnitudes; labels (V,) region ids; table: region
     rows from anatomy (id, name, kind, network, n_voxels, usable). Returns per-region rows, the coupling
-    matrices, integration measures (full usable set and, if given, the common set) and their circular-shift nulls."""
+    matrices, integration measures (full usable set and, if given, the common set) and their circular-shift nulls.
+    Shares use every frame; coupling and integration use `frames` (the common number of volumes, R5-1, user
+    2026-11-11), or the first regions.n_volumes_common frames, or all."""
     G = cfg.get("regions", {})
     tr = float(cfg["acquisition"]["tr_s"])
     band = tuple(G.get("band_hz", [0.01, 0.10]))
     rng = np.random.default_rng(0) if rng is None else rng
     nT = G.get("n_volumes_common")
-    if nT:
-        S = S[..., :int(nT)]
-        Q = None if Q is None else np.linalg.qr(Q[:int(nT)])[0]
     P = int(max(r["id"] for r in table))
     rs = region_signals(S, labels, mu, sigma, ratios, use, n_regions=P)
     sp = split(rs["ybar"], rs["wsum"], te_ms, Q)
@@ -362,7 +362,14 @@ def analyze(S, labels, mu, sigma, ratios, use, te_ms, table: list, cfg: dict, Q=
     sh = shares(sp, np.nan_to_num(nv, nan=1.0), tr, band)
     lo, hi = share_ci(sp, np.nan_to_num(nv, nan=1.0), tr, band, int(G.get("n_boot", 200)),
                       max(2, int(round(float(G.get("boot_block_s", 20.0)) / tr))), rng)
-    T = S.shape[2]
+    T_all = S.shape[2]
+    if frames is None and nT:
+        frames = np.arange(min(int(nT), T_all))
+    sp_full = sp
+    if frames is not None:                                             # coupling and integration on these frames
+        frames = np.asarray(frames, int)
+        sp = {**sp, "c": sp["c"][..., frames], "r": sp["r"][..., frames], "a": sp["a"][:, frames], "b": sp["b"][:, frames]}
+    T = sp["b"].shape[1]
     rows = []
     for r in table:
         p = r["id"] - 1
@@ -482,8 +489,9 @@ def analyze(S, labels, mu, sigma, ratios, use, te_ms, table: list, cfg: dict, Q=
         sec_raw.append(raw)
     return {"regions": rows, "integration": out_int, "secondary_coupling": sec, "secondary_coupling_raw": sec_raw, "cortex_ids": ids[cx].tolist(),
             "cortex_networks": nets[cx].tolist(), "corr_b": cb["corr"], "corr_a": ca["corr"], "corr_oc": co["corr"],
-            "n_frames": int(T), "nuisance_rank": int(removed), "band_hz": list(band),
-            "a": sp["a"], "b": sp["b"], "c0": sp["c"][:, 0], "R": sp["R"], "noise_var": nv,
+            "n_frames": int(T), "n_frames_total": int(T_all), "nuisance_rank": int(removed), "band_hz": list(band),
+            "a": sp_full["a"], "b": sp_full["b"], "c0": sp_full["c"][:, 0], "R": sp["R"], "noise_var": nv,
+            "b_int": sp["b"], "frames": frames,
             "r_cortex": sp["r"][sel], "cov_b": cb["cov"], "noise_band_b": cb["noise_band_var"], "edge_thr_b": edge_thr_full}
 
 
@@ -534,6 +542,30 @@ def _r(x, nd=4):
     except (TypeError, ValueError):
         return None
     return round(x, nd) if np.isfinite(x) else None
+
+
+def select_frames(volumes, n_total: int, n_common) -> dict:
+    """Frames for coupling and integration (R5-1, user 2026-11-11): the first n_common frames of the longest
+    gap-free stretch (the whole run when it has no gap). If that stretch is shorter than n_common, its frames are
+    used, and the run is not eligible for the primary (reported separately): band-pass filtering and circular
+    shifts assume an unbroken series. volumes: original frame numbers of the kept frames (None = consecutive)."""
+    from .nuisance import segments
+    segs = segments(None if volumes is None else np.asarray(volumes, int), n_total)
+    longest = max(segs, key=lambda x: x.stop - x.start)
+    L = longest.stop - longest.start
+    out = {"n_total": int(n_total), "n_segments": len(segs), "longest_stretch": [int(longest.start), int(longest.stop)]}
+    if n_common is None:
+        fr = np.arange(longest.start, longest.stop)
+        out.update(status="all frames of the longest stretch", primary_eligible=True)
+    elif L >= int(n_common):
+        fr = np.arange(longest.start, longest.start + int(n_common))
+        out.update(status="ok", primary_eligible=True)
+    else:
+        fr = np.arange(longest.start, longest.stop)
+        out.update(status=f"longest gap-free stretch {L} < {int(n_common)} frames: not in the primary", primary_eligible=False)
+    out["n_used"] = int(fr.size)
+    out["frames"] = fr
+    return out
 
 
 def adjacency(labels3d: np.ndarray, ids) -> np.ndarray:
@@ -603,11 +635,8 @@ def deep_csf_check(S, labels, mu, sigma, ratios, use, te_ms, table: list, cfg: d
     G = cfg.get("regions", {})
     tr = float(cfg["acquisition"]["tr_s"])
     band = tuple(G.get("band_hz", [0.01, 0.10]))
-    nT = G.get("n_volumes_common")
-    if nT:
-        S = S[..., :int(nT)]
-        Q = None if Q is None else np.linalg.qr(Q[:int(nT)])[0]
-    T = S.shape[2]
+    fr = res.get("frames")
+    T = S.shape[2] if fr is None else len(fr)
     bf = band_fraction(T, tr, band)
     sec = [r for r in table if r["kind"] == "secondary"]
     if not sec:
@@ -618,7 +647,7 @@ def deep_csf_check(S, labels, mu, sigma, ratios, use, te_ms, table: list, cfg: d
     # cortical network means (the outcome's own time courses)
     cid = np.asarray(res["cortex_ids"]) - 1
     cnet = np.asarray(res["cortex_networks"])
-    xb_c = band_pass(res["b"][cid], tr, band)
+    xb_c = band_pass(res.get("b_int", res["b"])[cid], tr, band)
     nb_c = b_noise_variance(res["R"][cid], res["noise_var"][cid]) * bf
     means = {n: (xb_c[cnet == n].mean(0), float(nb_c[cnet == n].mean()) / (cnet == n).sum()) for n in sorted(set(cnet))}
 
@@ -630,7 +659,7 @@ def deep_csf_check(S, labels, mu, sigma, ratios, use, te_ms, table: list, cfg: d
         sp = split(rs["ybar"], rs["wsum"], te_ms, Q)
         nv = leftover_noise(sp["r"], 0 if Q is None else Q.shape[1])
         sh = shares(sp, nv, tr, band)
-        xb = band_pass(sp["b"], tr, band)[0]
+        xb = band_pass(sp["b"] if fr is None else sp["b"][:, fr], tr, band)[0]
         nb = float(b_noise_variance(sp["R"], nv)[0]) * bf
         out = {"n_voxels": int(idx.size), "bold_share": _r(np.clip(sh["bold_share"][0], 0, 1)),
                "leftover_share": _r(sh["leftover_share"][0]), "reliability": _r(1.0 - nb / xb.var())}
@@ -682,8 +711,16 @@ def run_dir(frontend_dir, anat_dir, cfg: dict, out_dir, atlas: str | None = None
     common = None
     if common_ids_file is not None and Path(common_ids_file).exists():
         common = [int(x) for x in Path(common_ids_file).read_text().split() if x.strip().isdigit()]
+    vols = None
+    vpath = done.get("inputs", {}).get("volumes_used")
+    vpath = vpath["path"] if isinstance(vpath, dict) else vpath
+    if vpath and Path(vpath).exists():
+        vu = np.loadtxt(vpath, skiprows=1, ndmin=2).astype(int)
+        if vu.shape[0] == S.shape[2]:
+            vols = vu[:, 0]
+    tl = select_frames(vols, S.shape[2], cfg.get("regions", {}).get("n_volumes_common"))
     res = analyze(S, lab3[mask3d], mu, sigma, fs["echo_noise_ratios_used"], use, fs["te_ms"], table, cfg, Q,
-                  np.random.default_rng(int(cfg.get("project_seed", 0)) + 11), common)
+                  np.random.default_rng(int(cfg.get("project_seed", 0)) + 11), common, frames=tl["frames"])
     # mean tissue probabilities per region (FSL FAST in EPI space; csf_epi from anatomy_run.lsf since 2026-11-10)
     try:
         cids = res["cortex_ids"]
@@ -711,7 +748,7 @@ def run_dir(frontend_dir, anat_dir, cfg: dict, out_dir, atlas: str | None = None
         tab_a = json.loads(fj.read_text())["regions"]
         cfg_c = io.merge(cfg, {"regions": {"reliability_min": None}})
         r2 = analyze(S, lab_a[mask3d], mu, sigma, fs["echo_noise_ratios_used"], use, fs["te_ms"], tab_a, cfg_c, Q,
-                     np.random.default_rng(int(cfg.get("project_seed", 0)) + 11), common)
+                     np.random.default_rng(int(cfg.get("project_seed", 0)) + 11), common, frames=tl["frames"])
         row = dict(r2["integration"][0])
         row["set"] = "cortex, all voxels (CSF-rich voxels kept; sensitivity)"
         sens.append(row)
@@ -734,6 +771,7 @@ def run_dir(frontend_dir, anat_dir, cfg: dict, out_dir, atlas: str | None = None
             "nuisance_rank": res["nuisance_rank"], "band_hz": res["band_hz"], "integration": res["integration"] + sens,
             "secondary_coupling": res["secondary_coupling"], "secondary_coupling_raw": res["secondary_coupling_raw"],
             "deep_csf_check": deep, "shared_noise_check": shared,
+            "timeline": {k: v for k, v in tl.items() if k != "frames"},
             "cortex_csf_max": anat_json.get("cortex_csf_max"), "cortex_csf_covariate": csf_cov, "cortex_ids": res["cortex_ids"], "regions": rows,
             "network_medians": _network_medians(rows), **io.provenance(cfg, {})}
     io.write_json(out / "route_b.json", summ)
@@ -855,7 +893,9 @@ def _network_medians(rows):
 
 def render(s: dict) -> str:
     L = [f"# Route B: {s['run']} ({s['atlas']})", "",
-         f"{s['n_frames']} frames, nuisance rank {s['nuisance_rank']}, band {s['band_hz'][0]}-{s['band_hz'][1]} Hz. "
+         f"{s['n_frames']} frames for coupling and integration"
+         + (f" ({s['timeline']['status']}; {s['timeline']['n_total']} frames in the run, {s['timeline']['n_segments']} gap-free stretch(es); shares use all)"
+            if s.get("timeline") else "") + f", nuisance rank {s['nuisance_rank']}, band {s['band_hz'][0]}-{s['band_hz'][1]} Hz. "
          "Shares: BOLD-like = R2*-like energy / (R2*-like + S0-like), thermal noise removed; leftover = energy outside the "
          "S0 + R2* model. Integration on the noise-corrected correlations of the regions' R2*-like time courses, against "
          "circular shifts (each region its own lag).", "", "## Integration", "",

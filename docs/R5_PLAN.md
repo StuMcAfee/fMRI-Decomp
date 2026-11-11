@@ -1,4 +1,4 @@
-# R5: route B over all participants (draft for approval, 2026-11-11)
+# R5: route B over all participants (approved 2026-11-11)
 
 Route B passed R3 (injection validation, revalidated on the CSF-excluded labels) and R4 (pilot review, P04 and
 P12). R5 applies the same analysis, unchanged, to all 15 participants and produces the tables for the group
@@ -71,7 +71,13 @@ About 13 anatomy jobs, 15 route B jobs, 26 injection jobs (each with a front end
 No group statistics, no patient-control comparison (controls not yet acquired), no use of clinical variables in any
 step that defines regions or measures (CLAUDE.md section 1).
 
-## 7. Decisions for the user
+## 7. Decisions (user, 2026-11-11: each recommendation below accepted)
+
+Implemented: `regions.n_volumes_common: 751` and `regions.select_frames` (R5-1; shares use every frame, coupling and
+integration the selected frames); `mejoint common-regions` (R5-2); injections with `scripts/submit_inject.sh
+--layout regions` over all participants (R5-3); pooled deep coupling in `mejoint route-b-summary` (R5-4).
+Commands: `mejoint r5-preflight`, `mejoint common-regions`, `scripts/submit_route_b.sh`, `mejoint route-b-summary`
+(`src/mejoint/route_b_batch.py`).
 
 - **R5-1 Common number of volumes.** The primary must be computed at a common number of volumes. Kept volumes are
   800 in most runs and 797, 797, 777 and 751 in four (P12, P14, P10, P05; exact assignment from
