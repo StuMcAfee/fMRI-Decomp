@@ -170,6 +170,39 @@ def _centroids(atlas: str) -> dict:
     return out
 
 
+def _without_first(C: np.ndarray) -> np.ndarray:
+    """Correlation matrix with its first (brain-wide) pattern removed: C - lambda_1 v1 v1', renormalized to unit
+    diagonal (the matrix the participation ratio without the first pattern describes). Rows with NaN stay NaN."""
+    C = np.asarray(C, float)
+    ok = np.all(np.isfinite(C), axis=1)
+    out = np.full_like(C, np.nan)
+    if ok.sum() < 3:
+        return out
+    S = C[np.ix_(ok, ok)]
+    w, V = np.linalg.eigh(S)
+    R = S - w[-1] * np.outer(V[:, -1], V[:, -1])
+    d = np.sqrt(np.clip(np.diag(R), 1e-12, None))
+    out[np.ix_(ok, ok)] = R / np.outer(d, d)
+    return out
+
+
+def _qcfc(edges: list, fd: np.ndarray, dist: np.ndarray) -> dict:
+    """QC-FC: each edge (Fisher z) correlated across participants with mean FD; median |r|, fraction p < 0.05
+    (about 0.05 expected without a motion effect) and the distance dependence of r."""
+    from scipy.stats import pearsonr, spearmanr
+    Z = np.array([_fz(e) for e in edges])
+    ok = np.all(np.isfinite(Z), axis=0)
+    r = np.full(Z.shape[1], np.nan)
+    pv = np.full(Z.shape[1], np.nan)
+    for j in np.flatnonzero(ok):
+        r[j], pv[j] = pearsonr(Z[:, j], fd)
+    m = np.isfinite(r)
+    rho_d = spearmanr(r[m], dist[m])[0] if m.sum() > 10 else np.nan
+    return {"n_participants": len(edges), "n_edges": int(m.sum()), "median_abs_r": round(float(np.nanmedian(np.abs(r))), 3),
+            "median_r": round(float(np.nanmedian(r)), 3), "frac_p_below_0p05": round(float(np.nanmean(pv[m] < 0.05)), 3),
+            "distance_dependence_spearman": round(float(rho_d), 3) if np.isfinite(rho_d) else None}
+
+
 def summary(route_b_root, phase2_root, inject_root, cfg: dict, out_dir, atlas: str = "200_7") -> dict:
     from scipy.stats import pearsonr, spearmanr
 
@@ -240,11 +273,16 @@ def summary(route_b_root, phase2_root, inject_root, cfg: dict, out_dir, atlas: s
     import warnings
     warnings.filterwarnings("ignore", message="An input array is constant")
     if len(P) >= 5:
-        for k in ("fd_mean", "cortex_csf_fraction", "regions", "reliability_median"):
-            xy = [(p["pr"], p.get(k)) for p in P if p.get(k) is not None and p["pr"] is not None]
-            if len(xy) >= 5:
-                rho, pv = spearmanr([a for a, _ in xy], [b for _, b in xy])
-                checks[f"pr_vs_{k}"] = {"spearman": round(float(rho), 3), "p": round(float(pv), 4), "n": len(xy)}
+        # each integration measure against data-quality and anatomy variables (and the primary against the global
+        # share: R5 review, 2026-11-12, found the primary tracking the brain-wide pattern across participants)
+        for meas in ("pr", "pr_without_first", "global_share"):
+            for k in ("fd_mean", "cortex_csf_fraction", "regions", "reliability_median", "global_share"):
+                if k == meas:
+                    continue
+                xy = [(p.get(meas), p.get(k)) for p in P if p.get(k) is not None and p.get(meas) is not None]
+                if len(xy) >= 5:
+                    rho, pv = spearmanr([a for a, _ in xy], [b for _, b in xy])
+                    checks[f"{meas}_vs_{k}"] = {"spearman": round(float(rho), 3), "p": round(float(pv), 4), "n": len(xy)}
         for c in ("head only", "head-neck"):
             v = [p["pr"] for p in P if p["coil"] == c and p["pr"] is not None]
             checks[f"pr_mean_{c}"] = {"mean": round(float(np.mean(v)), 3) if v else None, "n": len(v)}
@@ -253,35 +291,26 @@ def summary(route_b_root, phase2_root, inject_root, cfg: dict, out_dir, atlas: s
         cids = sorted(set.intersection(*ids_sets)) if ids_sets else []
         runs_fd = [p["run"] for p in P if p.get("fd_mean") is not None and p["run"] in mats]
         if len(cids) >= 3 and len(runs_fd) >= 5:
-            Z = []
+            fd = np.array([next(p["fd_mean"] for p in P if p["run"] == run) for run in runs_fd])
+            cen = _centroids(atlas)
+            iu = np.triu_indices(len(cids), 1)
+            dist = np.array([np.linalg.norm(cen[cids[a]] - cen[cids[b]]) for a, b in zip(*iu)])
+            subs = []
             for run in runs_fd:
                 C, ids = mats[run]
                 pos = {v: i for i, v in enumerate(ids)}
                 ix = [pos[i] for i in cids]
-                Z.append(_fz(C[np.ix_(ix, ix)][np.triu_indices(len(ix), 1)]))
-            Z = np.array(Z)
-            fd = np.array([next(p["fd_mean"] for p in P if p["run"] == run) for run in runs_fd])
-            ok = np.all(np.isfinite(Z), axis=0)
-            r = np.full(Z.shape[1], np.nan)
-            pv = np.full(Z.shape[1], np.nan)
-            for j in np.flatnonzero(ok):
-                r[j], pv[j] = pearsonr(Z[:, j], fd)
-            cen = _centroids(atlas)
-            iu = np.triu_indices(len(cids), 1)
-            dist = np.array([np.linalg.norm(cen[cids[a]] - cen[cids[b]]) for a, b in zip(*iu)])
-            m = np.isfinite(r)
-            rho_d = spearmanr(r[m], dist[m])[0] if m.sum() > 10 else np.nan
-            checks["qc_fc"] = {"n_participants": len(runs_fd), "n_edges": int(m.sum()),
-                               "median_abs_r": round(float(np.nanmedian(np.abs(r))), 3),
-                               "frac_p_below_0p05": round(float(np.nanmean(pv < 0.05)), 3),
-                               "distance_dependence_spearman": round(float(rho_d), 3) if np.isfinite(rho_d) else None}
+                subs.append(np.asarray(C, float)[np.ix_(ix, ix)])
+            checks["qc_fc"] = _qcfc([M[iu] for M in subs], fd, dist)
+            # the same after removing each participant's first (brain-wide) pattern from its matrix
+            checks["qc_fc_without_first"] = _qcfc([_without_first(M)[iu] for M in subs], fd, dist)
     # write
     tsv = lambda name, rows: io.write_tsv(out / name, {k: [r.get(k) for r in rows] for k in rows[0]}) if rows else None
     tsv("participants.tsv", part)
     tsv("regions.tsv", reg)
     tsv("deep_regions.tsv", deep)
     tsv("deep_pooled.tsv", pooled)
-    res = {"atlas": atlas, "participants": part, "deep_pooled": pooled, "cohort_checks": checks, **io.provenance(cfg, {})}
+    res = {"atlas": atlas, "n_volumes_common": cfg.get("regions", {}).get("n_volumes_common"), "participants": part, "deep_pooled": pooled, "cohort_checks": checks, **io.provenance(cfg, {})}
     io.write_json(out / "summary.json", res)
     io.write_text(out / "summary.md", render(res))
     return res
@@ -289,7 +318,7 @@ def summary(route_b_root, phase2_root, inject_root, cfg: dict, out_dir, atlas: s
 
 def render(s: dict) -> str:
     L = [f"# R5: route B over all participants ({s['atlas']})", "",
-         "Primary: cortex without CSF-rich voxels, first 751 frames of the longest gap-free stretch. 'in primary' = "
+         f"Primary: cortex without CSF-rich voxels, first {s.get('n_volumes_common')} frames of the longest gap-free stretch. 'in primary' = "
          "False: the stretch was too short (reported, not in the cohort checks). Injection: change at resting strength "
          "(independent networks / one shared network).", "",
          "| run | in primary | regions (common) | PR | PR without first | global share | segregation | PR all voxels | "

@@ -51,6 +51,7 @@ def test_common_regions_and_summary(tmp_path):
     res = route_b_batch.summary(tmp_path / "route_b", tmp_path / "phase2", tmp_path / "inject", cfg, tmp_path / "summary")
     assert len(res["participants"]) == 6 and res["cohort_checks"]["pr_vs_fd_mean"]["spearman"] > 0.9
     assert res["deep_pooled"][0]["n"] == 6 and "qc_fc" in res["cohort_checks"]
+    assert "qc_fc_without_first" in res["cohort_checks"] and "pr_vs_global_share" in res["cohort_checks"]
     for f in ("participants.tsv", "regions.tsv", "deep_regions.tsv", "deep_pooled.tsv", "summary.md"):
         assert (tmp_path / "summary" / f).exists(), f
     json.loads((tmp_path / "summary" / "summary.json").read_text())
@@ -97,3 +98,13 @@ def test_cli_r5_commands(tmp_path, capsys):
     assert cli.main(["r5-preflight", "--phase2-root", str(tmp_path / "phase2"), "--anat-root", str(tmp_path / "anatomy"),
                      "--out", str(tmp_path / "pf")]) in (0, None)
     assert "R5 preflight" in capsys.readouterr().out
+
+
+def test_without_first_removes_the_brain_wide_pattern():
+    rng = np.random.default_rng(5)
+    g = rng.standard_normal(500)
+    X = 0.9 * g[None, :] + rng.standard_normal((20, 500)) * 0.5
+    C = np.corrcoef(X)
+    R = route_b_batch._without_first(C)
+    iu = np.triu_indices(20, 1)
+    assert np.median(C[iu]) > 0.6 and abs(np.median(R[iu])) < 0.15 and np.allclose(np.diag(R), 1.0)
