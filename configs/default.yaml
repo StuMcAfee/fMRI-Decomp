@@ -235,7 +235,7 @@ regions:                      # route B (docs/ROUTE_B_PLAN.md; approved 2026-11-
   min_shift_s: 30.0             # smallest circular shift (s)
   n_boot: 200                   # block bootstrap of frames for the share intervals
   boot_block_s: 20.0            # bootstrap block length (s)
-  n_volumes_common: 751         # R5-1 (user, 2026-11-11): coupling and integration on the first 751 frames of the longest gap-free stretch (shares use all frames); runs whose stretch is shorter are left out of the primary
+  n_volumes_common: 797         # R5-1 (user, 2026-11-11; 797, not 751, after the preflight showed no run keeps 751): coupling and integration on the first 797 frames of the longest gap-free stretch (shares use all frames); runs whose stretch is shorter are left out of the primary
 
 inject:                       # Phase 5 injection calibration (user decision 2026-11-06): known sources added to the RAW echoes
   radius_mm: 10.0               # each source: cos^2 taper from its centre to zero at this radius (~100 voxels)

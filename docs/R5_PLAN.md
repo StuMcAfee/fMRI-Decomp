@@ -79,7 +79,7 @@ integration the selected frames); `mejoint common-regions` (R5-2); injections wi
 Commands: `mejoint r5-preflight`, `mejoint common-regions`, `scripts/submit_route_b.sh`, `mejoint route-b-summary`
 (`src/mejoint/route_b_batch.py`).
 
-- **R5-1 Common number of volumes.** The primary must be computed at a common number of volumes. Kept volumes are
+- **R5-1 Common number of volumes** (revised 2026-11-11: 797, see below). The primary must be computed at a common number of volumes. Kept volumes are
   800 in most runs and 797, 797, 777 and 751 in four (P12, P14, P10, P05; exact assignment from
   `volumes_used.tsv` in the preflight). Run P10 has a 19-volume gap inside the run. Recommendation: truncate every
   run to its first 751 volumes for the integration measures (shares use all volumes); for P10, use the longest
@@ -97,3 +97,13 @@ Commands: `mejoint r5-preflight`, `mejoint common-regions`, `scripts/submit_rout
   bootstrap intervals) with the count of participants contributing.
 - **R5-5 Sensitivity schedule.** Recommendation: first pass as in section 3 within R5; second pass after the review
   gate.
+
+## 8. Preflight results and revisions (2026-11-11)
+
+- Echo files reachable for all 15 runs; coil assignment as recorded.
+- **Common number of volumes: 797** (user). No run keeps 751 volumes (the Phase 0 note was wrong): P12 797, P14 798
+  (`volumes_used.tsv` 799 lines with header), P10 777, P05 797, all others 800. P10's longest gap-free stretch is
+  531 frames: analysed on that stretch, not in the primary.
+- **No T1 for P01, P16, P06, P17** (user: not currently available; recovery possible through data
+  management). Route B needs parcels, so these four wait; the batch proceeds with the 11 participants that have a T1
+  (10 in the primary).

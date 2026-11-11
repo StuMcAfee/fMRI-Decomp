@@ -74,7 +74,7 @@ def test_preflight(tmp_path):
     rows = route_b_batch.preflight(tmp_path / "phase2", tmp_path / "anatomy", cfg, out_dir=tmp_path / "out")
     by = {r["run"]: r for r in rows}
     assert "sub-P08_acq-1_ser-5" not in by                            # excluded subject
-    assert by["sub-201_acq-1_ser-5"]["primary_eligible"] and by["sub-201_acq-1_ser-5"]["frames_used"] == 751
+    assert by["sub-201_acq-1_ser-5"]["primary_eligible"] and by["sub-201_acq-1_ser-5"]["frames_used"] == cfg["regions"]["n_volumes_common"]
     assert not by["sub-202_acq-1_ser-5"]["primary_eligible"] and by["sub-202_acq-1_ser-5"]["gap_free_stretches"] == 2
     assert (tmp_path / "out" / "preflight.md").exists()
 
