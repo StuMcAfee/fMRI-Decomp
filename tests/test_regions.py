@@ -396,3 +396,26 @@ def test_deflated_eigen_count():
     ci = regions.coupling(xi, nv, TR, BAND)
     ni = regions.shift_null(xi, nv, TR, BAND, 200, 40, rng)
     assert regions.count_above_null_deflated(regions.eigenvalues(ci["corr"]), ni["eig"]) <= 1
+
+
+def test_adjacency_and_shared_noise_check():
+    """Neighbouring regions sharing noise: the leftover-channel correlation finds it for adjacent pairs only, and
+    removing it brings the noise-corrected correlations of independent regions back towards 0."""
+    lab = np.zeros((6, 2, 2), int)
+    for i in range(6):
+        lab[i] = i + 1
+    A = regions.adjacency(lab, range(1, 7))
+    assert A[0, 1] and A[1, 2] and not A[0, 2] and A.sum() == 10
+    rng = np.random.default_rng(SEED + 12)
+    P, T = 6, 4000
+    sh = rng.standard_normal((P + 1, 2, T))
+    noise = rng.standard_normal((P, 2, T)) + 0.7 * (sh[:-1] + sh[1:])  # neighbours share one source each side
+    xb_sig = slow(rng, P, T) * 0.3                                     # independent signals
+    b = xb_sig + noise[:, 0]
+    nv = noise[:, 0].var(1)
+    c = regions.coupling(b, nv, TR, BAND)
+    out = regions.shared_noise_check(noise, c["cov"], c["noise_band_var"], A)
+    assert out["noise_corr_adjacent_median"] > 0.2 and abs(out["noise_corr_nonadjacent_median"]) < 0.05, out
+    iu = np.triu_indices(P, 1)
+    before = np.nanmedian(np.abs(c["corr"][iu][A[iu]]))
+    assert out["participation_ratio_shared_noise_removed"] > regions.participation_ratio(c["corr"]), (out, before)

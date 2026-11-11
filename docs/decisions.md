@@ -1245,3 +1245,24 @@ Observations for the user's review: right striatum coupling is lowest in both pa
 2. **Reliability floor 0.5** (`regions.reliability_min`): deep-region coupling below it is reported as not measurable with its interval; cortex: all regions in the primary, a sensitivity set without regions below the floor; each participant's reliability reported.
 3. **Cortex CSF as a sensitivity analysis** (`regions.cortex_csf_sensitivity: [0.3]`): integration measures recomputed with cortical voxels of CSF probability > 0.3 removed; the primary is unchanged.
 4. **Deflated eigenvalue count as a candidate** (`regions.count_above_null_deflated`): lambda_i / sum_{j>=i} lambda_j against the same quantity of the null's i-th eigenvalue. Simulation: 4 networks on a strong common signal, plain count 1, deflated 4 (truth 4); independent regions 0-1. Reported next to the plain count in route B and in the R3 recovery; adopted only if it passes the R3 injections (expected: +1 shared, up to +4 independent).
+
+### 2026-11-11: R4 with the new deep labels and cortical sensitivities; deflated count fails R3; shared-noise check added
+
+**Deflated eigenvalue count: fails, dropped** (pre-agreed rule: adopted only if it passes R3). It returned 30 (its cap) in every run, before and after injection: real BOLD-like spectra decay smoothly, so every eigenvalue's share of what is left exceeds that of a structureless null. Kept in the JSON for the record, removed from the reports. The plain count stays a conservative secondary measure. The rest of the R3 rerun reproduced the earlier numbers exactly (cortex labels unchanged).
+
+**Deep regions without CSF > 0.3** (no CSF-dominated voxels left): reliability 0.27 / 0.27 (P12 thalamus), 0.63 / 0.39 (P12 striatum), 0.39 / 0.73 (P04 thalamus), 0.52 / 0.46 (P04 striatum). 5 of 8 regions below the floor (coupling not measurable); measurable: P12 L striatum (0.52-0.77), P04 R thalamus (0.05-0.30), P04 L striatum (0.22-0.32). The P12 thalamus leftover share stays high (0.33 L) without CSF voxels: its non-model signal is not FAST CSF.
+
+**Cortical sensitivities:**
+
+| | PR | PR without first | global share | correlations > 1 |
+|---|---|---|---|---|
+| P12 all regions | 4.32 | 17.26 | 0.433 | 19 |
+| P12 reliability >= 0.5 (188 of 196) | 4.08 | 16.60 | 0.436 | 10 |
+| P12 without voxels CSF > 0.3 (14 % removed) | 4.82 | 18.68 | 0.406 | 103 |
+| P04 all regions | 4.59 | 18.56 | 0.425 | 26 |
+| P04 reliability >= 0.5 (184 of 190) | 4.36 | 17.83 | 0.426 | 0 |
+| P04 without voxels CSF > 0.3 (19 % removed) | 5.00 | 19.76 | 0.398 | 28 |
+
+- Dropping low-reliability regions changes the measures by about 5 %.
+- **Removing CSF-rich cortical voxels raises the participation ratio by 9-12 % and lowers the global share by 0.03 in both:** sulcal-CSF voxels carry part of the brain-wide pattern. The size is comparable to the R3 injection effects (independent networks: +0.3 to +0.9), and cortical CSF fraction is likely to differ between patients and controls (atrophy, ventricular size), so this handling choice could bias the group comparison. Correlations above 1 rose to 103 in P12 without the low-reliability regions being responsible (median reliability of those regions 0.84): candidate explanation, noise shared between neighbouring (now thinner) parcels, which the noise correction ignores.
+- **Added `shared_noise_check`** (diagnostic): the leftover channels' frame-difference correlation between regions (noise only), by adjacency (shared voxel face), and the integration measures with that shared noise also removed from the off-diagonal. Test: finds simulated neighbour-shared noise for adjacent pairs only; removing it restores the dimensionality of independent regions.

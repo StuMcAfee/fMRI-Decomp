@@ -180,7 +180,6 @@ def render(o: dict) -> str:
           f"- participation ratio: {d['participation_ratio'][0]} -> {d['participation_ratio'][1]}",
           f"- participation ratio without the first (brain-wide) pattern: {d.get('pr_without_first', [None, None])[0]} -> {d.get('pr_without_first', [None, None])[1]}",
           f"- eigenvalues above the circular-shift null: {d['eigen_above_null'][0]} -> {d['eigen_above_null'][1]} (independent: up to +4; shared: +1)",
-          f"- deflated count (candidate): {d.get('eigen_above_null_deflated', [None, None])[0]} -> {d.get('eigen_above_null_deflated', [None, None])[1]}",
           f"- segregation: {d['segregation'][0]} -> {d['segregation'][1]}; global share: {d['global_share'][0]} -> {d['global_share'][1]}", "",
           "## Errors by region size", "",
           "Amplitude error: the injected signal sits only in the labelled voxels; motion and resampling spread part of it into "
@@ -197,8 +196,8 @@ def summary(root, out_dir=None) -> dict:
     out_dir = Path(out_dir) if out_dir else root
     recs = [json.loads(p.read_text()) for p in sorted(root.glob("**/recovery_regions.json"))]
     L = ["# R3: route B injection validation (pooled)", "",
-         "| run | condition | level | type | dR2* rec/inj | dS0 rec/inj | injected share (truth) | within-network change | between-network change | uninjected pairs: median abs change | PR: before -> after | PR without first pattern: before -> after | global share: before -> after | eigenvalues above null: before -> after | deflated count: before -> after |",
-         "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+         "| run | condition | level | type | dR2* rec/inj | dS0 rec/inj | injected share (truth) | within-network change | between-network change | uninjected pairs: median abs change | PR: before -> after | PR without first pattern: before -> after | global share: before -> after | eigenvalues above null: before -> after |",
+         "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for o in recs:
         c, d = o["coupling"], o["dimensionality"]
         for t, v in o["by_type"].items():
@@ -207,8 +206,7 @@ def summary(root, out_dir=None) -> dict:
                      f"{c.get('other_pairs_abs_change_median')} | {d['participation_ratio'][0]} -> {d['participation_ratio'][1]} | "
                      f"{d.get('pr_without_first', [None, None])[0]} -> {d.get('pr_without_first', [None, None])[1]} | "
                      f"{d['global_share'][0]} -> {d['global_share'][1]} | "
-                     f"{d['eigen_above_null'][0]} -> {d['eigen_above_null'][1]} | "
-                     f"{d.get('eigen_above_null_deflated', [None, None])[0]} -> {d.get('eigen_above_null_deflated', [None, None])[1]} |")
+                     f"{d['eigen_above_null'][0]} -> {d['eigen_above_null'][1]} |")
     allb, alls = {}, {}
     for o in recs:
         for s in o["size_bins"]:

@@ -479,7 +479,8 @@ def analyze(S, labels, mu, sigma, ratios, use, te_ms, table: list, cfg: dict, Q=
     return {"regions": rows, "integration": out_int, "secondary_coupling": sec, "secondary_coupling_raw": sec_raw, "cortex_ids": ids[cx].tolist(),
             "cortex_networks": nets[cx].tolist(), "corr_b": cb["corr"], "corr_a": ca["corr"], "corr_oc": co["corr"],
             "n_frames": int(T), "nuisance_rank": int(removed), "band_hz": list(band),
-            "a": sp["a"], "b": sp["b"], "c0": sp["c"][:, 0], "R": sp["R"], "noise_var": nv}
+            "a": sp["a"], "b": sp["b"], "c0": sp["c"][:, 0], "R": sp["R"], "noise_var": nv,
+            "r_cortex": sp["r"][sel], "cov_b": cb["cov"], "noise_band_b": cb["noise_band_var"]}
 
 
 def _segregation_perm(corr: np.ndarray, networks: np.ndarray, n: int, rng, q: float = 0.95) -> dict:
@@ -529,6 +530,64 @@ def _r(x, nd=4):
     except (TypeError, ValueError):
         return None
     return round(x, nd) if np.isfinite(x) else None
+
+
+def adjacency(labels3d: np.ndarray, ids) -> np.ndarray:
+    """Regions that share a voxel face (6-neighbourhood), in the order of ids."""
+    ids = list(ids)
+    pos = {v: i for i, v in enumerate(ids)}
+    A = np.zeros((len(ids), len(ids)), bool)
+    for ax in range(3):
+        a = np.moveaxis(labels3d, ax, 0)
+        u, v = a[:-1].ravel(), a[1:].ravel()
+        m = (u != v) & (u > 0) & (v > 0)
+        for x, y in set(zip(u[m].tolist(), v[m].tolist())):
+            if x in pos and y in pos:
+                A[pos[x], pos[y]] = A[pos[y], pos[x]] = True
+    return A
+
+
+def shared_noise_check(r: np.ndarray, cov_b: np.ndarray, noise_band: np.ndarray, adj: np.ndarray) -> dict:
+    """Diagnostic (2026-11-11): noise shared between regions. The noise correction removes each region's own noise
+    from the diagonal only, which assumes independent noise across regions; motion-correction resampling and the
+    EPI point-spread make neighbouring voxels' noise correlated across parcel borders, which would add noise
+    covariance to adjacent pairs. The leftover channels hold noise without the BOLD- or S0-like signal: their
+    frame-difference correlations between regions estimate the noise correlation (approximation: assumed equal for
+    the b time courses). Returns its summary by adjacency and the integration measures with the estimated noise
+    covariance also removed from the off-diagonal."""
+    d = np.diff(np.nan_to_num(np.asarray(r, np.float64)), axis=2)
+    d = d - d.mean(2, keepdims=True)
+    sd = d.std(2)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        z = d / sd[:, :, None]
+    z = np.nan_to_num(z)
+    P = z.shape[0]
+    rho = np.zeros((P, P))
+    n = 0
+    for k in range(z.shape[1]):
+        if np.any(sd[:, k] > 0):
+            rho += z[:, k] @ z[:, k].T / z.shape[2]
+            n += 1
+    rho /= max(n, 1)
+    iu = np.triu_indices(P, 1)
+    a = adj[iu]
+    nb = np.asarray(noise_band, float)
+    C = np.array(cov_b, float)
+    C2 = C - rho * np.sqrt(np.outer(nb, nb))
+    np.fill_diagonal(C2, np.diag(C))
+    dg = np.sqrt(np.where(np.diag(C2) > 0, np.diag(C2), np.nan))
+    with np.errstate(divide="ignore", invalid="ignore"):
+        R2 = C2 / np.outer(dg, dg)
+    np.fill_diagonal(R2, np.where(np.isfinite(dg), 1.0, np.nan))
+    se = 1.0 / np.sqrt(n * z.shape[2])
+    return {"noise_corr_adjacent_median": _r(np.median(rho[iu][a])) if a.any() else None,
+            "noise_corr_adjacent_q90": _r(np.quantile(rho[iu][a], 0.9)) if a.any() else None,
+            "noise_corr_nonadjacent_median": _r(np.median(rho[iu][~a])) if (~a).any() else None,
+            "noise_corr_nonadjacent_q90": _r(np.quantile(rho[iu][~a], 0.9)) if (~a).any() else None,
+            "n_adjacent_pairs": int(a.sum()), "n_pairs": int(a.size), "sampling_se": _r(se),
+            "participation_ratio_shared_noise_removed": _r(participation_ratio(R2)),
+            "pr_without_first_shared_noise_removed": _r(participation_ratio_residual(R2)),
+            "n_edges_above_1_shared_noise_removed": int(np.sum(np.abs(R2[iu]) > 1.0))}
 
 
 def deep_csf_check(S, labels, mu, sigma, ratios, use, te_ms, table: list, cfg: dict, Q, res: dict, csf: np.ndarray,
@@ -622,6 +681,12 @@ def run_dir(frontend_dir, anat_dir, cfg: dict, out_dir, atlas: str | None = None
     res = analyze(S, lab3[mask3d], mu, sigma, fs["echo_noise_ratios_used"], use, fs["te_ms"], table, cfg, Q,
                   np.random.default_rng(int(cfg.get("project_seed", 0)) + 11), common)
     # mean tissue probabilities per region (FSL FAST in EPI space; csf_epi from anatomy_run.lsf since 2026-11-10)
+    try:
+        cids = res["cortex_ids"]
+        shared = shared_noise_check(res["r_cortex"], res["cov_b"], res["noise_band_b"], adjacency(lab3, cids))
+    except Exception as exc:                                           # a diagnostic; never block the main result
+        print(f"shared noise check failed: {exc}")
+        shared = None
     deep = []
     if (A / "csf_epi.nii.gz").exists():
         csf3 = np.asarray(nib.load(str(A / "csf_epi.nii.gz")).dataobj, np.float64)
@@ -670,7 +735,7 @@ def run_dir(frontend_dir, anat_dir, cfg: dict, out_dir, atlas: str | None = None
     summ = {"run": fs.get("run_id"), "atlas": atlas, "frontend_dir": str(fe), "anat_dir": str(A), "n_frames": res["n_frames"],
             "nuisance_rank": res["nuisance_rank"], "band_hz": res["band_hz"], "integration": res["integration"] + sens,
             "secondary_coupling": res["secondary_coupling"], "secondary_coupling_raw": res["secondary_coupling_raw"],
-            "deep_csf_check": deep, "cortex_ids": res["cortex_ids"], "regions": rows,
+            "deep_csf_check": deep, "shared_noise_check": shared, "cortex_ids": res["cortex_ids"], "regions": rows,
             "network_medians": _network_medians(rows), **io.provenance(cfg, {})}
     io.write_json(out / "route_b.json", summ)
     io.write_text(out / "route_b.md", render(summ))
@@ -699,17 +764,29 @@ def render(s: dict) -> str:
          "Segregation null: network labels permuted over the regions (liberal: ignores that neighbouring parcels share "
          "networks). Thalamus and striatum coupling noise-corrected like the cortical matrix (plain correlations in the "
          "JSON). Shares are clipped to 0-1; regions whose S0-like or R2*-like energy fell below its noise estimate are listed.", "",
-         "Eigenvalues above null: plain count / deflated count (candidate under test on R3).", "",
          "| set | regions (with signal) | participation ratio | null median [5-95 %] | percentile in null | PR without first pattern | null median [5-95 %] | percentile in null | eigenvalues above null | segregation (null 95 %) | global share | edges beyond null |",
          "|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for i in s["integration"]:
         L.append(f"| {i['set']} | {i['n_regions']} ({i.get('n_regions_with_signal')}) | {i['participation_ratio']} | {i['pr_null_median']} {i['pr_null_q05_q95']} | "
                  f"{i['pr_percentile_in_null']} | {i.get('pr_without_first')} | {i.get('pr_without_first_null_median')} {i.get('pr_without_first_null_q05_q95')} | "
-                 f"{i.get('pr_without_first_percentile_in_null')} | {i['n_eigen_above_null']} / {i.get('n_eigen_above_null_deflated')} | {i['segregation']} ({i['segregation_null_q95']}; within {i.get('within_mean')}, between {i.get('between_mean')}) | "
+                 f"{i.get('pr_without_first_percentile_in_null')} | {i['n_eigen_above_null']} | {i['segregation']} ({i['segregation_null_q95']}; within {i.get('within_mean')}, between {i.get('between_mean')}) | "
                  f"{i['global_share']} | {i['edges_beyond_null']} |")
     L += ["", "## Shares by network (median over usable regions)", "", "| network | regions | BOLD-like | S0-like | leftover |", "|---|---|---|---|---|"]
     for net, m in s["network_medians"].items():
         L.append(f"| {net} | {m['n']} | {m['bold_share']} | {m['s0_share']} | {m['leftover_share']} |")
+    sn = s.get("shared_noise_check")
+    if sn:
+        full = s["integration"][0]
+        L += ["", "## Noise shared between neighbouring regions (diagnostic, all usable cortical regions)", "",
+              "Frame-difference correlation of the leftover channels (noise only) between regions; the noise correction "
+              "assumes it is 0. Then the integration measures with that shared noise also removed.", "",
+              f"- adjacent pairs ({sn['n_adjacent_pairs']} of {sn['n_pairs']}): median {sn['noise_corr_adjacent_median']}, "
+              f"90th percentile {sn['noise_corr_adjacent_q90']}",
+              f"- non-adjacent pairs: median {sn['noise_corr_nonadjacent_median']}, 90th percentile {sn['noise_corr_nonadjacent_q90']} "
+              f"(sampling SE {sn['sampling_se']})",
+              f"- participation ratio {full['participation_ratio']} -> {sn['participation_ratio_shared_noise_removed']}; "
+              f"without first pattern {full.get('pr_without_first')} -> {sn['pr_without_first_shared_noise_removed']}; "
+              f"correlations above 1: {full.get('n_edges_above_1')} -> {sn['n_edges_above_1_shared_noise_removed']}"]
     flag = [r for r in s["regions"] if r.get("energy_below_noise")]
     sub = [r for r in s["regions"] if r["kind"] == "secondary"]
     if sub:

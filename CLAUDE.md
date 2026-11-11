@@ -441,7 +441,7 @@ Cerebral regions only (section 1): Schaefer 200 parcels / 7 networks (400 / 17 a
 
 **Secondary:**
 - the participation ratio without the first (brain-wide) pattern, against its circular-shift null, always next to the global BOLD-like share (user, 2026-11-10: R3 showed the primary also rises when anything is added beside one dominant pattern);
-- system segregation of the BOLD-like correlations; the number of eigenvalues above the circular-shift null (a deflated count, each eigenvalue against the null after the larger ones are removed, is under test on the R3 injections; adopted only if it passes);
+- system segregation of the BOLD-like correlations; the number of eigenvalues above the circular-shift null (conservative; a deflated count failed the R3 injections, 2026-11-11);
 - region BOLD-like, S0-like and leftover shares, by network;
 - BOLD-like versus S0-like versus ordinary connectivity; global BOLD-like share;
 - thalamic and striatal BOLD-like coupling with the cortical networks.
