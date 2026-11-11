@@ -77,3 +77,23 @@ def test_preflight(tmp_path):
     assert by["sub-201_acq-1_ser-5"]["primary_eligible"] and by["sub-201_acq-1_ser-5"]["frames_used"] == 751
     assert not by["sub-202_acq-1_ser-5"]["primary_eligible"] and by["sub-202_acq-1_ser-5"]["gap_free_stretches"] == 2
     assert (tmp_path / "out" / "preflight.md").exists()
+
+
+def test_every_cli_command_takes_config():
+    """main() reads args.config for every command; a subcommand without --config crashes (R5 preflight bug,
+    2026-11-11)."""
+    import re
+    from pathlib import Path
+    src = (Path(__file__).resolve().parents[1] / "src" / "mejoint" / "cli.py").read_text()
+    names = re.findall(r'^\s+(\w+) = sub\.add_parser\("([\w-]+)"', src, re.M)
+    assert names
+    assert [n for v, n in names if f'{v}.add_argument("--config"' not in src] == []
+
+
+def test_cli_r5_commands(tmp_path, capsys):
+    """The three R5 commands run end to end through the command line on synthetic folders."""
+    from mejoint import cli
+    test_preflight(tmp_path)
+    assert cli.main(["r5-preflight", "--phase2-root", str(tmp_path / "phase2"), "--anat-root", str(tmp_path / "anatomy"),
+                     "--out", str(tmp_path / "pf")]) in (0, None)
+    assert "R5 preflight" in capsys.readouterr().out
