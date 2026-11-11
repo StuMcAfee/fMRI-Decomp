@@ -428,8 +428,10 @@ def analyze(S, labels, mu, sigma, ratios, use, te_ms, table: list, cfg: dict, Q=
                 "global_share": _r(global_share(c_["x_band"], c_["signal_var"], c_["noise_band_var"])),
                 "eigenvalues": [round(float(x), 4) for x in eig[:30]],
                 "null_eig_q95": [round(float(x), 4) for x in np.nanquantile(null["eig"], 0.95, axis=0)[:30]] if null["eig"].size else [],
-                "edges_beyond_null": _r(_edge_fraction(c_["corr"], null["edges"]))}
+                "edges_beyond_null": _r(_edge_fraction(c_["corr"], null["edges"])),
+                "_edge_thr": np.nanquantile(np.abs(null["edges"]), 0.95, axis=0) if null["edges"].size else None}
     full = integration(np.ones(sel.size, bool), "all usable cortical regions")
+    edge_thr_full = full.pop("_edge_thr")
     out_int = [full]
     if common_ids is not None:
         m = np.isin(ids[cx], np.asarray(list(common_ids), int))
@@ -440,6 +442,8 @@ def analyze(S, labels, mu, sigma, ratios, use, te_ms, table: list, cfg: dict, Q=
         m = np.nan_to_num(rel_all[sel], nan=-1.0) >= float(rmin)
         if 3 <= m.sum() < m.size:                                      # sensitivity set (user, 2026-11-10)
             out_int.append(integration(m, f"cortex, reliability >= {rmin}"))
+    for i in out_int:
+        i.pop("_edge_thr", None)
     # secondary regions: coupling of their b with each cortical network's mean b
     # noise-corrected like the cortical matrix (the first version used plain correlations, which deep regions'
     # larger noise attenuates): covariance over the square root of both noise-corrected variances; the network
@@ -480,7 +484,7 @@ def analyze(S, labels, mu, sigma, ratios, use, te_ms, table: list, cfg: dict, Q=
             "cortex_networks": nets[cx].tolist(), "corr_b": cb["corr"], "corr_a": ca["corr"], "corr_oc": co["corr"],
             "n_frames": int(T), "nuisance_rank": int(removed), "band_hz": list(band),
             "a": sp["a"], "b": sp["b"], "c0": sp["c"][:, 0], "R": sp["R"], "noise_var": nv,
-            "r_cortex": sp["r"][sel], "cov_b": cb["cov"], "noise_band_b": cb["noise_band_var"]}
+            "r_cortex": sp["r"][sel], "cov_b": cb["cov"], "noise_band_b": cb["noise_band_var"], "edge_thr_b": edge_thr_full}
 
 
 def _segregation_perm(corr: np.ndarray, networks: np.ndarray, n: int, rng, q: float = 0.95) -> dict:
@@ -738,7 +742,105 @@ def run_dir(frontend_dir, anat_dir, cfg: dict, out_dir, atlas: str | None = None
         figure(summ, res, out / "route_b.png")
     except Exception as exc:
         print(f"route B figure failed: {exc}")
+    try:
+        matrix_figure(summ, res, out / "route_b_matrices.png")
+    except Exception as exc:
+        print(f"route B matrix figure failed: {exc}")
+    try:
+        surface_figure(rows, atlas, out / "route_b_surface.png", title=f"{summ['run']}: region measures on the cortex (fsaverage5, display only)")
+    except Exception as exc:                                           # nilearn missing or a plotting problem
+        print(f"route B surface figure failed: {exc}")
     return summ
+
+
+def matrix_figure(summ, res, path) -> None:
+    """Paired connectivity matrices ordered by network: BOLD-like (R2*-like), S0-like and ordinary (c0, OC-like),
+    BOLD-like minus ordinary, and BOLD-like with only the edges beyond the circular-shift null (95 %)."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    nets = np.array(res["cortex_networks"])
+    order = np.argsort(nets, kind="stable")
+    o = lambda M: np.asarray(M)[np.ix_(order, order)]
+    Cb, Ca, Co = o(res["corr_b"]), o(res["corr_a"]), o(res["corr_oc"])
+    P = Cb.shape[0]
+    beyond = np.full((P, P), np.nan)
+    thr = res.get("edge_thr_b")
+    if thr is not None and len(thr) == P * (P - 1) // 2:
+        T = np.zeros((P, P))
+        iu = np.triu_indices(P, 1)
+        T[iu] = thr
+        T = T + T.T
+        T = o(T)
+        Cb_ = Cb.copy()
+        beyond = np.where(np.abs(Cb_) > T, Cb_, np.nan)
+        np.fill_diagonal(beyond, np.nan)
+    D = Cb - Co
+    np.fill_diagonal(D, np.nan)
+    panels = [("BOLD-like (R2*-like)", Cb, -1, 1), ("S0-like", Ca, -1, 1), ("ordinary (OC-like c0)", Co, -1, 1),
+              ("BOLD-like minus ordinary", D, -0.5, 0.5), ("BOLD-like, edges beyond null", beyond, -1, 1)]
+    fig, axs = plt.subplots(1, len(panels), figsize=(4.0 * len(panels), 4.2))
+    bounds = np.flatnonzero(nets[order][1:] != nets[order][:-1]) + 0.5
+    ticks = [(np.flatnonzero(nets[order] == n).mean(), n) for n in dict.fromkeys(nets[order])]
+    for ax, (t, M, lo, hi) in zip(axs, panels):
+        im = ax.imshow(M, cmap="RdBu_r", vmin=lo, vmax=hi, interpolation="nearest")
+        for b in bounds:
+            ax.axhline(b, color="k", lw=0.4); ax.axvline(b, color="k", lw=0.4)
+        ax.set_xticks([x for x, _ in ticks], [n for _, n in ticks], rotation=90, fontsize=6)
+        ax.set_yticks([x for x, _ in ticks], [n for _, n in ticks], fontsize=6)
+        ax.set_title(t, fontsize=9, loc="left")
+        plt.colorbar(im, ax=ax, fraction=0.046)
+    fig.suptitle(f"{summ['run']}: cortical connectivity (noise-corrected, 0.01-0.1 Hz), ordered by network", x=0.01, ha="left", fontsize=10)
+    fig.tight_layout()
+    fig.savefig(path, dpi=110)
+    plt.close(fig)
+
+
+def surface_figure(rows: list, atlas: str, path, title: str = "") -> None:
+    """Cortical maps of the BOLD-like, S0-like and leftover shares and the reliability of each parcel, painted on
+    the Schaefer parcels in MNI space and shown on nilearn's bundled fsaverage5 inflated surface (display only:
+    each vertex takes the parcel it falls in; parcels not used are grey)."""
+    import matplotlib
+    matplotlib.use("Agg")
+    from pathlib import Path
+
+    import matplotlib.pyplot as plt
+    import nibabel as nib
+    from nilearn import datasets, plotting, surface
+    repo = Path(__file__).resolve().parents[2]
+    n_par, n_net = atlas.split("_")
+    img = nib.load(str(repo / "atlases" / "schaefer2018" / f"Schaefer2018_{n_par}Parcels_{n_net}Networks_order_FSLMNI152_2mm.nii.gz"))
+    fs = datasets.fetch_surf_fsaverage("fsaverage5")
+
+    def labels(h):
+        try:
+            v = surface.vol_to_surf(img, fs[f"pial_{h}"], interpolation="nearest_most_frequent", radius=3.0)
+        except (TypeError, ValueError):                                # older nilearn
+            v = surface.vol_to_surf(img, fs[f"pial_{h}"], interpolation="nearest", radius=3.0)
+        return np.rint(np.nan_to_num(v)).astype(int)
+    lab = {"left": labels("left"), "right": labels("right")}
+    cx = [r for r in rows if r["kind"] == "cortex"]
+    nmax = max(r["id"] for r in cx)
+    measures = [("bold_share", "BOLD-like share", "viridis", 0, 1), ("s0_share", "S0-like share", "magma", 0, 0.5),
+                ("leftover_share", "leftover share", "magma", 0, 0.1), ("b_reliability", "reliability", "cividis", 0, 1)]
+    views = [("left", "lateral"), ("left", "medial"), ("right", "lateral"), ("right", "medial")]
+    fig = plt.figure(figsize=(3.2 * len(views), 2.6 * len(measures)))
+    for i, (key, name, cmap, lo, hi) in enumerate(measures):
+        for j, (h, view) in enumerate(views):
+            vals = np.full(nmax + 1, np.nan)
+            want = "LH" if h == "left" else "RH"
+            for r in cx:
+                if r["used"] and r.get(key) is not None and r.get("hemisphere") == want:
+                    vals[r["id"]] = r[key]
+            ax = fig.add_subplot(len(measures), len(views), i * len(views) + j + 1, projection="3d")
+            plotting.plot_surf_stat_map(fs[f"infl_{h}"], vals[np.clip(lab[h], 0, nmax)], bg_map=fs[f"sulc_{h}"], hemi=h,
+                                        view=view, cmap=cmap, vmin=lo, vmax=hi, axes=ax, figure=fig,
+                                        colorbar=(j == len(views) - 1), bg_on_data=True)
+            ax.set_title((name + ": " if j == 0 else "") + f"{h} {view}", fontsize=9, loc="left")
+    if title:
+        fig.suptitle(title, x=0.01, ha="left", fontsize=10)
+    fig.savefig(path, dpi=100)
+    plt.close(fig)
 
 
 def _network_medians(rows):
