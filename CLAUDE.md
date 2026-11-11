@@ -39,6 +39,7 @@ Stretch goal: a structured factorization with group-sparse channel maps.
   - a gate (section 8) fails twice;
   - a choice would change the scientific claim (for example dropping an echo or changing the outcome);
   - results look too good.
+- **Participant data never go into the repository** (user, 2026-11-12): no clinical tables, labels, per-participant values or images in git, docs or commit messages; read them from the research storage and write results under `outputs/` (`mejoint clinical-compare` refuses tables or outputs inside the repository; `.gitignore` blocks data file types). Clinical variables are compared with the measures only after the measures are fixed; they never define them.
 - **Never fabricate** citations, numbers or tool behaviour. Check library APIs in the installed version (`help()`, source, `--help`). Label anything unverified.
 
 ## 3. Environment (HPC facts the user has confirmed)

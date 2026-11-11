@@ -208,6 +208,15 @@ def main(argv=None) -> int:
     ss.add_argument("--sens-root", default="outputs/sensitivity")
     ss.add_argument("--out", default="outputs/sensitivity")
     ss.add_argument("--config", help="config YAML (default: configs/default.yaml)")
+    cc = sub.add_parser("clinical-compare", help="exploratory: route B measures by a clinical label (table kept outside the repository)")
+    cc.add_argument("--table", required=True, help="clinical table (.xlsx, .csv or .tsv) OUTSIDE the repository")
+    cc.add_argument("--subject-col", default="subject")
+    cc.add_argument("--label-col", default="DX")
+    cc.add_argument("--contrast", action="append", default=[], help="e.g. 'severe:1,2,3,4 vs 0' or 'mutism:1 vs rest' (repeatable)")
+    cc.add_argument("--participants", default="outputs/route_b/summary/participants.tsv")
+    cc.add_argument("--sensitivity", default="outputs/sensitivity/sensitivity_participants.tsv")
+    cc.add_argument("--out", default="outputs/clinical")
+    cc.add_argument("--config", help="config YAML (default: configs/default.yaml)")
     rb = sub.add_parser("route-b", help="route B on one run: region shares, BOLD-like connectivity, integration with circular-shift nulls")
     rb.add_argument("--frontend-dir", required=True, help="front end of the run (maps, nuisance basis, echo paths in done.json)")
     rb.add_argument("--anat-dir", required=True, help="anatomy folder (labels_<atlas>.nii.gz, regions_<atlas>.json)")
@@ -385,6 +394,10 @@ def main(argv=None) -> int:
         from . import route_b_batch
         route_b_batch.sensitivity_summary(args.route_b_root, args.sens_root, cfg, args.out)
         print(open(f"{args.out}/sensitivity.md").read())
+    elif args.cmd == "clinical-compare":
+        from . import clinical
+        clinical.compare(args.participants, args.table, args.out, args.contrast, args.subject_col, args.label_col, args.sensitivity)
+        print(open(f"{args.out}/clinical_compare.md").read())
     elif args.cmd == "route-b":
         from . import regions
         regions.run_dir(args.frontend_dir, args.anat_dir, cfg, args.out, atlas=args.atlas, common_ids_file=args.common_ids)
