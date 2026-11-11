@@ -754,8 +754,9 @@ def run_dir(frontend_dir, anat_dir, cfg: dict, out_dir, atlas: str | None = None
 
 
 def matrix_figure(summ, res, path) -> None:
-    """Paired connectivity matrices ordered by network: BOLD-like (R2*-like), S0-like and ordinary (c0, OC-like),
-    BOLD-like minus ordinary, and BOLD-like with only the edges beyond the circular-shift null (95 %)."""
+    """Paired connectivity matrices ordered by network: BOLD-like (R2*-like) and ordinary (c0, OC-like), BOLD-like
+    minus ordinary, and BOLD-like with only the edges beyond the circular-shift null (95 %). S0-like connectivity is
+    not an outcome (user, 2026-11-11: region S0-like time courses are mostly noise); corr_a.npy stays on disk only."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -777,7 +778,7 @@ def matrix_figure(summ, res, path) -> None:
         np.fill_diagonal(beyond, np.nan)
     D = Cb - Co
     np.fill_diagonal(D, np.nan)
-    panels = [("BOLD-like (R2*-like)", Cb, -1, 1), ("S0-like", Ca, -1, 1), ("ordinary (OC-like c0)", Co, -1, 1),
+    panels = [("BOLD-like (R2*-like)", Cb, -1, 1), ("ordinary (OC-like c0)", Co, -1, 1),
               ("BOLD-like minus ordinary", D, -0.5, 0.5), ("BOLD-like, edges beyond null", beyond, -1, 1)]
     fig, axs = plt.subplots(1, len(panels), figsize=(4.0 * len(panels), 4.2))
     bounds = np.flatnonzero(nets[order][1:] != nets[order][:-1]) + 0.5

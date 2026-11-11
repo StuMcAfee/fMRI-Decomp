@@ -176,6 +176,8 @@ grey-matter threshold.
   eigenvalue count under test on the R3 injections (failed, dropped 2026-11-11). From 2026-11-11 (user) the primary
   cortex also drops voxels of CSF probability > 0.3; all-voxel cortex is a sensitivity analysis; each participant's
   cortical CSF fraction is a covariate.
+  Gate R4 passed (user, 2026-11-11); S0-like connectivity dropped from the outcomes (region S0-like time courses
+  are mostly noise). R5 plan: `docs/R5_PLAN.md` (draft for approval).
 - **D5 Motion handling for the primary analysis:** 24-term motion regression (the current front end default) or
   band-passed motion projected out (the waves default).
 - **D6 CLAUDE.md edits** (proposed text to follow on approval): section 1 (route B as the main analysis; ICA

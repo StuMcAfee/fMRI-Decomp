@@ -443,7 +443,7 @@ Cerebral regions only (section 1): Schaefer 200 parcels / 7 networks (400 / 17 a
 - the participation ratio without the first (brain-wide) pattern, against its circular-shift null, always next to the global BOLD-like share (user, 2026-11-10: R3 showed the primary also rises when anything is added beside one dominant pattern);
 - system segregation of the BOLD-like correlations; the number of eigenvalues above the circular-shift null (conservative; a deflated count failed the R3 injections, 2026-11-11);
 - region BOLD-like, S0-like and leftover shares, by network;
-- BOLD-like versus S0-like versus ordinary connectivity; global BOLD-like share;
+- BOLD-like versus ordinary connectivity; global BOLD-like share (S0-like connectivity dropped, user 2026-11-11: region S0-like time courses are mostly noise);
 - thalamic and striatal BOLD-like coupling with the cortical networks.
 
 **Descriptive:** joint-decomposition components across k with background-corrected eta; the comparison with tedana's components and "Likely BOLD" counts. Counts depend on the estimator, k, scan length and signal strength (interpolation and filtering alone change ME-ICA counts, Olafsson et al. 2015); they are not outcomes.
