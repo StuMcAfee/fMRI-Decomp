@@ -172,6 +172,7 @@ def main(argv=None) -> int:
     an.add_argument("--frontend-dir", required=True, help="front end of the run (analysis_mask.nii.gz)")
     an.add_argument("--atlas", default=None, help="Schaefer parcels_networks, e.g. 200_7 or 400_17 (default regions.atlas)")
     an.add_argument("--tissue-dir", help="data-only tissue classes (CSF-dominated and dropout voxels left out)")
+    an.add_argument("--out-dir", default=None, help="write the labels here instead of --anat-dir (sensitivity variants)")
     an.add_argument("--config", help="config YAML (default: configs/default.yaml)")
 
     ar = sub.add_parser("anatomy-refs", help="route B: candidate EPI reference images for epi_reg (echo 1-3 means, T2*-weighted)")
@@ -202,6 +203,11 @@ def main(argv=None) -> int:
     rs.add_argument("--atlas", default="200_7")
     rs.add_argument("--out", default="outputs/route_b/summary")
     rs.add_argument("--config", help="config YAML (default: configs/default.yaml)")
+    ss = sub.add_parser("sensitivity-summary", help="second-pass sensitivity analyses: each variant against the main analysis")
+    ss.add_argument("--route-b-root", default="outputs/route_b")
+    ss.add_argument("--sens-root", default="outputs/sensitivity")
+    ss.add_argument("--out", default="outputs/sensitivity")
+    ss.add_argument("--config", help="config YAML (default: configs/default.yaml)")
     rb = sub.add_parser("route-b", help="route B on one run: region shares, BOLD-like connectivity, integration with circular-shift nulls")
     rb.add_argument("--frontend-dir", required=True, help="front end of the run (maps, nuisance basis, echo paths in done.json)")
     rb.add_argument("--anat-dir", required=True, help="anatomy folder (labels_<atlas>.nii.gz, regions_<atlas>.json)")
@@ -351,7 +357,7 @@ def main(argv=None) -> int:
     elif args.cmd == "anatomy":
         from . import anatomy
         r = anatomy.run_dir(args.anat_dir, args.frontend_dir, cfg, tissue_dir=args.tissue_dir,
-                            atlas=args.atlas or cfg.get("regions", {}).get("atlas", "200_7"))
+                            atlas=args.atlas or cfg.get("regions", {}).get("atlas", "200_7"), out_dir=args.out_dir)
         print(f"{r['atlas']}: {r['n_usable']} of {r['n_regions']} regions usable; {r['cortex_voxels']} cortical voxels "
               f"(median {r['median_cortex_region_voxels']:.0f} per region); secondary: "
               + ", ".join(f"{x['name']} {x['n_voxels']}" for x in r["secondary"]))
@@ -375,6 +381,10 @@ def main(argv=None) -> int:
         from . import route_b_batch
         route_b_batch.summary(args.route_b_root, args.phase2_root, args.inject_root, cfg, args.out, atlas=args.atlas)
         print(open(f"{args.out}/summary.md").read())
+    elif args.cmd == "sensitivity-summary":
+        from . import route_b_batch
+        route_b_batch.sensitivity_summary(args.route_b_root, args.sens_root, cfg, args.out)
+        print(open(f"{args.out}/sensitivity.md").read())
     elif args.cmd == "route-b":
         from . import regions
         regions.run_dir(args.frontend_dir, args.anat_dir, cfg, args.out, atlas=args.atlas, common_ids_file=args.common_ids)

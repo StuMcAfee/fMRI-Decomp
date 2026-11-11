@@ -121,13 +121,15 @@ def build_labels(cortex_epi: np.ndarray, sub_epi: np.ndarray | None, gm_epi: np.
     return {"labels": lab, "regions": rows}
 
 
-def run_dir(anat_dir, frontend_dir, cfg: dict, tissue_dir=None, atlas: str = "200_7") -> dict:
+def run_dir(anat_dir, frontend_dir, cfg: dict, tissue_dir=None, atlas: str = "200_7", out_dir=None) -> dict:
     """Read the FSL outputs of scripts/anatomy_run.lsf in anat_dir and write labels_<atlas>.nii.gz,
     regions_<atlas>.tsv / .json and a QC figure."""
     import nibabel as nib
 
     from . import io
     A, fe = Path(anat_dir), Path(frontend_dir)
+    O = Path(out_dir) if out_dir else A                    # a sensitivity variant writes its labels elsewhere
+    O.mkdir(parents=True, exist_ok=True)
     G = cfg.get("regions", {})
     mimg = nib.load(str(fe / "analysis_mask.nii.gz"))
     mask3d = np.asarray(mimg.dataobj) > 0
@@ -162,33 +164,38 @@ def run_dir(anat_dir, frontend_dir, cfg: dict, tissue_dir=None, atlas: str = "20
               secondary_csf_max=None if csf_max is None else float(csf_max))
     res = build_labels(cortex, sub, gm, mask3d, classes3d, table, groups,
                        cortex_csf_max=None if ccsf_max is None else float(ccsf_max), **kw)
-    io.save_volume(res["labels"].astype(np.float32), mimg, A / f"labels_{atlas}.nii.gz")
+    io.save_volume(res["labels"].astype(np.float32), mimg, O / f"labels_{atlas}.nii.gz")
     rows = res["regions"]
     csf_cov = None
     if ccsf_max is not None:
         # sensitivity labels with every cortical voxel (deep regions unchanged) and the participant's cortical CSF
         # fraction (covariate, user 2026-11-11)
         res_all = build_labels(cortex, sub, gm, mask3d, classes3d, table, groups, cortex_csf_max=None, **kw)
-        io.save_volume(res_all["labels"].astype(np.float32), mimg, A / f"labels_{atlas}_allvox.nii.gz")
-        io.write_json(A / f"regions_{atlas}_allvox.json", {"atlas": atlas, "regions": res_all["regions"]})
+        io.save_volume(res_all["labels"].astype(np.float32), mimg, O / f"labels_{atlas}_allvox.nii.gz")
+        io.write_json(O / f"regions_{atlas}_allvox.json", {"atlas": atlas, "regions": res_all["regions"]})
         cmask = np.isin(res_all["labels"], list(table))
         csf_cov = {"cortex_csf_mean_allvox": float(np.nanmean(csf[cmask])) if cmask.any() else None,
                    "cortex_voxels_allvox": int(cmask.sum()),
                    "cortex_voxels_removed": int(cmask.sum() - np.isin(res["labels"], list(table)).sum())}
-    io.write_tsv(A / f"regions_{atlas}.tsv", {k: [r[k] for r in rows] for k in rows[0]})
+    io.write_tsv(O / f"regions_{atlas}.tsv", {k: [r[k] for r in rows] for k in rows[0]})
     summ = {"atlas": atlas, "n_regions": len(rows), "n_usable": sum(r["usable"] for r in rows),
             "cortex_voxels": int(sum(r["n_voxels"] for r in rows if r["kind"] == "cortex")),
             "median_cortex_region_voxels": float(np.median([r["n_voxels"] for r in rows if r["kind"] == "cortex"])),
             "secondary": [r for r in rows if r["kind"] == "secondary"], "gm_min": float(G.get("gm_min", 0.3)),
             "secondary_csf_max": csf_max, "cortex_csf_max": ccsf_max, "cortex_csf_covariate": csf_cov,
             "classes_used": classes3d is not None, "regions": rows, **io.provenance(cfg, {})}
-    io.write_json(A / f"regions_{atlas}.json", summ)
+    io.write_json(O / f"regions_{atlas}.json", summ)
+    if O != A:                                             # route B reads the tissue maps next to the labels
+        import shutil
+        for f in ("csf_epi.nii.gz", "gm_epi.nii.gz"):
+            if (A / f).exists():
+                shutil.copy2(A / f, O / f)
     try:
-        qc_figure(A, mimg, res["labels"], A / f"qc_{atlas}.png")
-        qc_subcortical(A, mimg, res["labels"], rows, A / "qc_subcortical.png")
-        if (A / "t1_mni.nii.gz").exists() and ((A / "mni_template.nii.gz").exists() or (A / "mni_template_brain.nii.gz").exists()):
+        qc_figure(A, mimg, res["labels"], O / f"qc_{atlas}.png")
+        qc_subcortical(A, mimg, res["labels"], rows, O / "qc_subcortical.png")
+        if O == A and (A / "t1_mni.nii.gz").exists() and ((A / "mni_template.nii.gz").exists() or (A / "mni_template_brain.nii.gz").exists()):
             qc_mni(A, A / "qc_t1_to_mni.png")
-        if all((A / f).exists() for f in ("epi2t1.nii.gz", "t1_wmseg.nii.gz", "t1.nii.gz")):
+        if O == A and all((A / f).exists() for f in ("epi2t1.nii.gz", "t1_wmseg.nii.gz", "t1.nii.gz")):
             qc_epi_in_t1(A, A / "qc_epi_to_t1.png")
     except Exception as exc:                                           # the labels matter more than the figures
         print(f"QC figure failed: {exc}")

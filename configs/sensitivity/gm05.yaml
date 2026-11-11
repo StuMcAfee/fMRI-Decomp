@@ -1,0 +1,5 @@
+# Sensitivity: cortical voxels need grey-matter probability >= 0.5 (primary 0.3). Anatomy relabel into a separate
+# folder, then route B.
+extends: ../default.yaml
+regions:
+  gm_min: 0.5

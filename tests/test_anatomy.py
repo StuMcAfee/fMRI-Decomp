@@ -176,3 +176,19 @@ def test_reference_images(tmp_path):
     assert np.allclose(e2[mask], 1000 * np.exp(-te[1] / 40.0), rtol=1e-5) and np.all(e2[~mask] == 0)
     sw = np.asarray(nib.load(str(tmp_path / "anat" / "ref_t2sw.nii.gz")).dataobj)
     assert np.all(np.isfinite(sw)) and mu[mask][:, 3].max() < sw[mask].min() < mu[mask][:, 0].min()
+
+
+def test_run_dir_out_dir_leaves_primary_labels(tmp_path):
+    """A sensitivity variant (e.g. grey-matter threshold 0.5) writes its labels to another folder, copies the
+    tissue maps route B reads, and leaves the primary labels alone."""
+    test_run_dir_writes_outputs(tmp_path)
+    import nibabel as nib
+
+    from mejoint import io
+    A, fe = tmp_path / "anat", tmp_path / "fe"
+    before = np.asarray(nib.load(str(A / "labels_200_7.nii.gz")).dataobj).copy()
+    cfg = io.merge(io.load_config(), {"regions": {"gm_min": 0.99}})
+    out = anatomy.run_dir(A, fe, cfg, atlas="200_7", out_dir=tmp_path / "gm")
+    assert (tmp_path / "gm" / "labels_200_7.nii.gz").exists() and (tmp_path / "gm" / "csf_epi.nii.gz").exists()
+    assert np.array_equal(np.asarray(nib.load(str(A / "labels_200_7.nii.gz")).dataobj), before)
+    assert out["cortex_voxels"] <= int((before > 0).sum())

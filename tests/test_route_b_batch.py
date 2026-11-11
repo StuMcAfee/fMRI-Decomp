@@ -117,3 +117,33 @@ def test_without_first_removes_the_brain_wide_pattern():
     Rn = route_b_batch._without_first(Cn)
     keep = np.delete(np.arange(20), 3)
     assert np.isfinite(Rn[np.ix_(keep, keep)]).all() and np.isnan(Rn[3]).all()
+
+
+def test_sensitivity_configs_extend_the_default():
+    """Every variant file under configs/sensitivity extends the default and changes only its own setting."""
+    from pathlib import Path
+    base = io.load_config()
+    root = Path(__file__).resolve().parents[1] / "configs" / "sensitivity"
+    files = sorted(root.glob("*.yaml"))
+    assert len(files) == 7
+    for f in files:
+        c = io.load_config(f)
+        assert c["acquisition"]["te_ms"] == base["acquisition"]["te_ms"] and c["regions"]["n_volumes_common"] == base["regions"]["n_volumes_common"]
+    assert io.load_config(root / "gsr.yaml")["regions"]["global_regression"] is True
+    assert io.load_config(root / "equal_weighting.yaml")["frontend"]["weighting"] == "equal"
+
+
+def test_sensitivity_summary(tmp_path):
+    rng = np.random.default_rng(9)
+    cfg = io.load_config()
+    runs = [f"sub-{300 + k}_acq-1_ser-5" for k in range(5)]
+    for k, run in enumerate(runs):
+        _write_participant(tmp_path / "main", run, rng, list(range(1, 11)), 4.0 + k, 0.1)
+        _write_participant(tmp_path / "sens" / "gsr", run, rng, list(range(1, 11)), 5.0 + k, 0.1)
+    import shutil
+    for k, run in enumerate(runs):                                     # the variant tree: <variant>/route_b/<run>/<atlas>
+        shutil.move(str(tmp_path / "sens" / "gsr" / "route_b" / run), str(tmp_path / "sens" / "gsr" / "route_b" / f"{run}"))
+    res = route_b_batch.sensitivity_summary(tmp_path / "main" / "route_b", tmp_path / "sens", cfg, tmp_path / "out")
+    v = res["variants"][0]
+    assert v["variant"] == "gsr" and v["n"] == 5 and v["primary_spearman_with_main"] == 1.0 and v["primary_median_change"] == 4.0
+    assert (tmp_path / "out" / "sensitivity.md").exists()

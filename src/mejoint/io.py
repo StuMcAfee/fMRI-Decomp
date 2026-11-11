@@ -28,6 +28,10 @@ def load_config(path: str | os.PathLike | None = None) -> dict:
     path = Path(path) if path else DEFAULT_CONFIG
     with open(path) as f:
         cfg = yaml.safe_load(f)
+    base = cfg.pop("extends", None)                     # short override files (sensitivity analyses): extends: default
+    if base:
+        bpath = DEFAULT_CONFIG if base == "default" else (path.parent / base)
+        cfg = merge(load_config(bpath), cfg)
     cfg["_config_path"] = str(path)
     return cfg
 

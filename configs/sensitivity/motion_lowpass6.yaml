@@ -1,0 +1,7 @@
+# Sensitivity (CLAUDE.md section 11): motion handled by the 6 motion parameters low-passed below 0.10 Hz (the slow,
+# analysis-band motion) instead of the 24-term expansion of notch-filtered parameters. Front end rerun, then route B.
+extends: ../default.yaml
+nuisance:
+  motion_filter: lowpass
+  lowpass_hz: 0.10
+  expansion: 6

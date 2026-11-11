@@ -14,7 +14,7 @@ import os
 import numpy as np
 import pytest
 
-from mejoint import inject, regions
+from mejoint import inject, io, regions
 
 SEED = int(os.environ.get("MEJOINT_TEST_SEED", 0))
 TE = np.array([16.20, 31.22, 46.24, 61.26])
@@ -433,3 +433,36 @@ def test_select_frames():
     assert not out["primary_eligible"] and out["n_used"] == 481 and out["longest_stretch"] == [300, 781]
     out = regions.select_frames(vols, vols.size, 400)
     assert out["primary_eligible"] and out["frames"][0] == 300 and out["n_used"] == 400
+
+
+def test_global_regression_and_censoring():
+    """Sensitivity switches (user, 2026-11-12): region-level global signal regression removes a shared signal
+    (global share falls, dimensionality rises); censoring leaves corrupted frames out of the covariance."""
+    rng = np.random.default_rng(SEED + 13)
+    P, n_per, T = 12, 40, 600
+    nets = np.repeat(np.arange(3), 4)
+    g = slow(rng, 1, T)[0]
+    b = 0.25 * slow(rng, 3, T)[nets] + 0.3 * g[None, :] + 0.05 * slow(rng, P, T)
+    S, labels, mu, sigma, use = voxels(rng, P, n_per, T, np.zeros((P, T)), b)
+    table = [{"id": i + 1, "name": f"r{i + 1}", "kind": "cortex", "hemisphere": "LH", "network": f"N{nets[i]}",
+              "n_voxels": n_per, "usable": True} for i in range(P)]
+    cfg = _cfg_small()
+    base = regions.analyze(S, labels, S.mean(2), sigma, RATIOS, use, TE, table, cfg)["integration"][0]
+    cfg_g = io.merge(cfg, {"regions": {"global_regression": True}})
+    gsr = regions.analyze(S, labels, S.mean(2), sigma, RATIOS, use, TE, table, cfg_g)["integration"][0]
+    assert gsr["global_share"] < 0.5 * base["global_share"] and gsr["participation_ratio"] > base["participation_ratio"], (base, gsr)
+    # censoring: corrupt 10 % of frames with large region-specific spikes
+    S2 = S.copy()
+    bad = rng.choice(T, T // 10, replace=False)
+    spikes = rng.standard_normal((P, bad.size)) * 3.0                 # region-specific dR2* spikes (s^-1)
+    te = np.asarray(TE, float)[None, :, None] / 1000.0
+    for p in range(P):
+        v = labels == p + 1
+        S2[np.ix_(v, np.arange(len(TE)), bad)] *= np.exp(-te * spikes[p][None, None, :])
+    censor = np.zeros(T, bool)
+    censor[bad] = True
+    r_bad = regions.analyze(S2, labels, S2.mean(2), sigma, RATIOS, use, TE, table, cfg)
+    r_cen = regions.analyze(S2, labels, S2.mean(2), sigma, RATIOS, use, TE, table, cfg, censor=censor)
+    assert r_cen["censored_fraction"] == 0.1
+    err = lambda r: abs(r["integration"][0]["participation_ratio"] - base["participation_ratio"])
+    assert err(r_cen) < err(r_bad), (err(r_cen), err(r_bad))

@@ -1318,3 +1318,19 @@ Observations for the user's review: right striatum coupling is lowest in both pa
 - **QC-FC with each participant's first pattern removed: 3.4 % of edges at p < 0.05** (chance about 5 %), median r +0.015, median |r| 0.21 (about the chance level for 10 participants), no distance dependence (-0.05). With the full matrices: 42 %, median r +0.58. The motion-related effect lives entirely in the brain-wide pattern. (A first run showed 0 edges: a region without signal blanked the matrix in `_without_first`; fixed with a test.)
 - **User decision: the primary is the participation ratio without the first pattern** (option A), always reported with the global share and the injection-measured sensitivity; the ordinary participation ratio becomes secondary and is not interpreted alone. Limitation recorded in CLAUDE.md section 11 (added coherent networks lower it where baseline dimensionality is already high).
 - **Gate R5: passed** (user).
+
+### 2026-11-12: second-pass sensitivity analyses built (user: go ahead; GSR at region level)
+
+Seven variants, each a short override of the default config in `configs/sensitivity/` (`extends: ../default.yaml`, new in `io.load_config`):
+
+| variant | change | what reruns |
+|---|---|---|
+| band_008 | band 0.01-0.08 Hz | route B |
+| gsr | mean cortical BOLD-like time course (and mean c0) regressed out of every region (`regions.global_regression`) | route B |
+| censor | frames with filtered FD > 0.2 mm interpolated before filtering and left out of every covariance (`regions.censor_fd_mm`) | route B |
+| atlas_400_17 | Schaefer 400 / 17 | route B (needs common_ids_400_17.txt) |
+| gm05 | cortical grey-matter threshold 0.5 | anatomy relabel into a separate folder (`anatomy --out-dir`), route B |
+| equal_weighting | equal echo weights | front end (mc, no MP-PCA check), route B |
+| motion_lowpass6 | 6 motion parameters low-passed below 0.10 Hz instead of the 24-term expansion | front end, route B |
+
+`scripts/sensitivity_run.lsf <subject> <variant>`, `scripts/submit_sensitivity.sh`, `mejoint sensitivity-summary` (per variant, across participants in the primary: Spearman of the primary with the main analysis and the median change; same for the global share and the ordinary PR; censored fractions). Tests: GSR lowers the global share and raises dimensionality on simulated data; censoring brings a spiked run back toward the clean one; variant labels do not touch the primary labels; every variant config extends the default.

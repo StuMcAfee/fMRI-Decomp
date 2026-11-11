@@ -153,13 +153,16 @@ def b_noise_variance(R: np.ndarray, nv: np.ndarray) -> np.ndarray:
 
 
 # ============================================================================ 5: coupling and integration
-def coupling(x: np.ndarray, noise_var: np.ndarray, tr: float, band) -> dict:
+def coupling(x: np.ndarray, noise_var: np.ndarray, tr: float, band, keep=None) -> dict:
     """x (P, T) region time courses (e.g. b), noise_var (P,) their white-noise variance. Band-passed covariance
     with the expected noise removed from the diagonal, and the matching correlation (noise-corrected variances).
-    Regions whose noise-corrected variance is not positive get NaN rows."""
+    Regions whose noise-corrected variance is not positive get NaN rows. keep (T,) bool: frames that enter the
+    covariance after filtering (censoring sensitivity; censored frames were interpolated before filtering)."""
     T = x.shape[1]
     xb = band_pass(np.asarray(x, np.float64), tr, band)
-    C = xb @ xb.T / T
+    if keep is not None:
+        xb = xb[:, np.asarray(keep, bool)]
+    C = xb @ xb.T / xb.shape[1]
     sig = np.diag(C) - np.asarray(noise_var, float) * band_fraction(T, tr, band)
     Cn = C.copy()
     np.fill_diagonal(Cn, sig)
@@ -244,7 +247,7 @@ def global_share(xb: np.ndarray, signal_var: np.ndarray, noise_band=None) -> flo
 
 
 def shift_null(x: np.ndarray, noise_var: np.ndarray, tr: float, band, n: int, min_shift: int, rng,
-               networks=None) -> dict:
+               networks=None, keep=None) -> dict:
     """Circular-shift null (user, 2026-11-08): every region's band-passed time course shifted by its own random
     lag (min_shift..T - min_shift frames, wrapping around); the regions keep their own dynamics, their alignment
     is destroyed. Returns null distributions of the participation ratio (also with the first pattern removed),
@@ -259,7 +262,9 @@ def shift_null(x: np.ndarray, noise_var: np.ndarray, tr: float, band, n: int, mi
     for i in range(n):
         lags = rng.integers(min_shift, T - min_shift + 1, P)
         xs = np.stack([np.roll(xb[p], int(lags[p])) for p in range(P)])
-        C = xs @ xs.T / T
+        if keep is not None:
+            xs = xs[:, np.asarray(keep, bool)]
+        C = xs @ xs.T / xs.shape[1]
         sig = np.diag(C) - nb
         np.fill_diagonal(C, sig)
         d = np.sqrt(np.where(sig > 0, sig, np.nan))
@@ -341,7 +346,7 @@ def share_ci(sp: dict, nv: np.ndarray, tr: float, band, n_boot: int = 200, block
 
 
 def analyze(S, labels, mu, sigma, ratios, use, te_ms, table: list, cfg: dict, Q=None, rng=None, common_ids=None,
-            frames=None) -> dict:
+            frames=None, censor=None) -> dict:
     """Route B on one run, arrays version. S (V, E, T) masked magnitudes; labels (V,) region ids; table: region
     rows from anatomy (id, name, kind, network, n_voxels, usable). Returns per-region rows, the coupling
     matrices, integration measures (full usable set and, if given, the common set) and their circular-shift nulls.
@@ -370,6 +375,24 @@ def analyze(S, labels, mu, sigma, ratios, use, te_ms, table: list, cfg: dict, Q=
         frames = np.asarray(frames, int)
         sp = {**sp, "c": sp["c"][..., frames], "r": sp["r"][..., frames], "a": sp["a"][:, frames], "b": sp["b"][:, frames]}
     T = sp["b"].shape[1]
+    # censoring sensitivity: frames flagged in `censor` (over all frames) are interpolated before filtering and
+    # left out of every covariance after it
+    keep = None
+    if censor is not None:
+        cz = np.asarray(censor, bool)
+        cz = cz[frames] if frames is not None else cz
+        if cz.any() and (~cz).sum() >= 10:
+            keep = ~cz
+            t = np.arange(T)
+
+            def _interp(x):
+                x = np.array(x, np.float64)
+                flat = x.reshape(-1, T)
+                for i in range(flat.shape[0]):
+                    if np.isfinite(flat[i]).all():
+                        flat[i, cz] = np.interp(t[cz], t[keep], flat[i, keep])
+                return flat.reshape(x.shape)
+            sp = {**sp, "a": _interp(sp["a"]), "b": _interp(sp["b"]), "c": _interp(sp["c"])}
     rows = []
     for r in table:
         p = r["id"] - 1
@@ -384,9 +407,27 @@ def analyze(S, labels, mu, sigma, ratios, use, te_ms, table: list, cfg: dict, Q=
                      "bold_share_ci": [_r(np.clip(lo[p], 0, 1)), _r(np.clip(hi[p], 0, 1))] if ok else None,
                      "s0_share": _r(1.0 - bs) if ok else None, "leftover_share": _r(sh["leftover_share"][p]) if ok else None,
                      "E_S0": _r(sh["E_S0"][p]), "E_R2": _r(sh["E_R2"][p]), "E_left": _r(sh["E_left"][p])})
+    # global signal regression sensitivity (user, 2026-11-12: region level): the mean BOLD-like time course of the
+    # usable cortical regions is regressed out of every region's BOLD-like time course (and the mean c0 out of c0)
+    if G.get("global_regression"):
+        cx_ids = [x["id"] - 1 for x in rows if x["used"] and x["kind"] == "cortex"]
+        if len(cx_ids) >= 3:
+            def _gsr(X, g):
+                g = g - g.mean()
+                return X - np.outer(X @ g / float(g @ g), g)
+            b = sp["b"].copy()
+            b[np.isfinite(b).all(1)] = _gsr(b[np.isfinite(b).all(1)], np.nanmean(sp["b"][cx_ids], 0))
+            c = sp["c"].copy()
+            c0 = c[:, 0]
+            okc = np.isfinite(c0).all(1)
+            c0[okc] = _gsr(c0[okc], np.nanmean(sp["c"][cx_ids, 0], 0))
+            c[:, 0] = c0
+            sp = {**sp, "b": b, "c": c}
     # reliability of each region's BOLD-like time course: the share of its slow-band variance that is signal
     # (1 - noise / total). Noise correction divides by its square root, so it amplifies errors where it is low.
     xb_all = band_pass(sp["b"], tr, band)
+    if keep is not None:
+        xb_all = xb_all[:, keep]
     bf = band_fraction(T, tr, band)
     with np.errstate(divide="ignore", invalid="ignore"):
         rel_all = 1.0 - b_noise_variance(sp["R"], nv) * bf / xb_all.var(1)
@@ -399,9 +440,9 @@ def analyze(S, labels, mu, sigma, ratios, use, te_ms, table: list, cfg: dict, Q=
     cx = used & (kinds == "cortex")
     sel = ids[cx] - 1
     bnv = b_noise_variance(sp["R"][sel], nv[sel])
-    cb = coupling(sp["b"][sel], bnv, tr, band)
-    ca = coupling(sp["a"][sel], nv[sel] / sp["R"][sel, 1, 1] ** 2, tr, band)
-    co = coupling(sp["c"][sel, 0], nv[sel], tr, band)
+    cb = coupling(sp["b"][sel], bnv, tr, band, keep)
+    ca = coupling(sp["a"][sel], nv[sel] / sp["R"][sel, 1, 1] ** 2, tr, band, keep)
+    co = coupling(sp["c"][sel, 0], nv[sel], tr, band, keep)
     min_shift = int(round(float(G.get("min_shift_s", 30.0)) / tr))
     n_null = int(G.get("n_null", 1000))
 
@@ -414,8 +455,8 @@ def analyze(S, labels, mu, sigma, ratios, use, te_ms, table: list, cfg: dict, Q=
     def _integration(mask_sub, label):
         b = sp["b"][sel][mask_sub]
         nb_ = bnv[mask_sub]
-        c_ = coupling(b, nb_, tr, band)
-        null = shift_null(b, nb_, tr, band, n_null, min_shift, rng, networks=nets[cx][mask_sub])
+        c_ = coupling(b, nb_, tr, band, keep)
+        null = shift_null(b, nb_, tr, band, n_null, min_shift, rng, networks=nets[cx][mask_sub], keep=keep)
         eig = eigenvalues(c_["corr"])
         pr = participation_ratio(c_["corr"])
         pr1 = participation_ratio_residual(c_["corr"])
@@ -458,8 +499,9 @@ def analyze(S, labels, mu, sigma, ratios, use, te_ms, table: list, cfg: dict, Q=
     sec, sec_raw = [], []
     n_boot = int(G.get("n_boot", 200))
     block = max(2, int(round(float(G.get("boot_block_s", 20.0)) / tr)))
-    nblk = int(np.ceil(T / block))
-    boot_idx = [((rng.integers(0, T, nblk)[:, None] + np.arange(block)[None, :]).ravel()[:T] % T) for _ in range(n_boot)]
+    Tk = xb_all.shape[1]
+    nblk = int(np.ceil(Tk / block))
+    boot_idx = [((rng.integers(0, Tk, nblk)[:, None] + np.arange(block)[None, :]).ravel()[:Tk] % Tk) for _ in range(n_boot)]
 
     def _ccorr(x, y, nx, ny):
         x, y = x - x.mean(), y - y.mean()
@@ -492,6 +534,7 @@ def analyze(S, labels, mu, sigma, ratios, use, te_ms, table: list, cfg: dict, Q=
             "n_frames": int(T), "n_frames_total": int(T_all), "nuisance_rank": int(removed), "band_hz": list(band),
             "a": sp_full["a"], "b": sp_full["b"], "c0": sp_full["c"][:, 0], "R": sp["R"], "noise_var": nv,
             "b_int": sp["b"], "frames": frames,
+            "censored_fraction": None if keep is None else _r(float(1 - keep.mean())),
             "r_cortex": sp["r"][sel], "cov_b": cb["cov"], "noise_band_b": cb["noise_band_var"], "edge_thr_b": edge_thr_full}
 
 
@@ -719,8 +762,16 @@ def run_dir(frontend_dir, anat_dir, cfg: dict, out_dir, atlas: str | None = None
         if vu.shape[0] == S.shape[2]:
             vols = vu[:, 0]
     tl = select_frames(vols, S.shape[2], cfg.get("regions", {}).get("n_volumes_common"))
+    censor = None
+    cfd = cfg.get("regions", {}).get("censor_fd_mm")
+    if cfd is not None and (fe / "frames.tsv").exists():          # censoring sensitivity (CLAUDE.md section 9)
+        import csv
+        with open(fe / "frames.tsv") as fh:
+            fdv = np.array([float(r["fd_filtered_mm"]) for r in csv.DictReader(fh, delimiter="\t")])
+        if fdv.size == S.shape[2]:
+            censor = fdv > float(cfd)
     res = analyze(S, lab3[mask3d], mu, sigma, fs["echo_noise_ratios_used"], use, fs["te_ms"], table, cfg, Q,
-                  np.random.default_rng(int(cfg.get("project_seed", 0)) + 11), common, frames=tl["frames"])
+                  np.random.default_rng(int(cfg.get("project_seed", 0)) + 11), common, frames=tl["frames"], censor=censor)
     # mean tissue probabilities per region (FSL FAST in EPI space; csf_epi from anatomy_run.lsf since 2026-11-10)
     try:
         cids = res["cortex_ids"]
@@ -748,7 +799,7 @@ def run_dir(frontend_dir, anat_dir, cfg: dict, out_dir, atlas: str | None = None
         tab_a = json.loads(fj.read_text())["regions"]
         cfg_c = io.merge(cfg, {"regions": {"reliability_min": None}})
         r2 = analyze(S, lab_a[mask3d], mu, sigma, fs["echo_noise_ratios_used"], use, fs["te_ms"], tab_a, cfg_c, Q,
-                     np.random.default_rng(int(cfg.get("project_seed", 0)) + 11), common, frames=tl["frames"])
+                     np.random.default_rng(int(cfg.get("project_seed", 0)) + 11), common, frames=tl["frames"], censor=censor)
         row = dict(r2["integration"][0])
         row["set"] = "cortex, all voxels (CSF-rich voxels kept; sensitivity)"
         sens.append(row)
@@ -771,7 +822,8 @@ def run_dir(frontend_dir, anat_dir, cfg: dict, out_dir, atlas: str | None = None
             "nuisance_rank": res["nuisance_rank"], "band_hz": res["band_hz"], "integration": res["integration"] + sens,
             "secondary_coupling": res["secondary_coupling"], "secondary_coupling_raw": res["secondary_coupling_raw"],
             "deep_csf_check": deep, "shared_noise_check": shared,
-            "timeline": {k: v for k, v in tl.items() if k != "frames"},
+            "timeline": {k: v for k, v in tl.items() if k != "frames"}, "censored_fraction": res.get("censored_fraction"),
+            "global_regression": bool(cfg.get("regions", {}).get("global_regression")),
             "cortex_csf_max": anat_json.get("cortex_csf_max"), "cortex_csf_covariate": csf_cov, "cortex_ids": res["cortex_ids"], "regions": rows,
             "network_medians": _network_medians(rows), **io.provenance(cfg, {})}
     io.write_json(out / "route_b.json", summ)

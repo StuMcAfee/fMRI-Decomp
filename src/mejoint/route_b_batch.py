@@ -339,3 +339,63 @@ def render(s: dict) -> str:
     L += [f"| {d['region']} | {d['network']} | {d['n']} / {d['n_total']} | {d['pooled']} {d['ci']} |" for d in s["deep_pooled"]]
     L += ["", "## Cohort checks (participants in the primary)", "", "```", json.dumps(s["cohort_checks"], indent=1), "```"]
     return "\n".join(L) + "\n"
+
+
+def sensitivity_summary(primary_root, sens_root, cfg: dict, out_dir, atlas: str = "200_7") -> dict:
+    """Second-pass sensitivity analyses: for each variant (outputs/sensitivity/<variant>/route_b/<run>/<atlas>/),
+    the primary (participation ratio without the first pattern), the global share and the ordinary participation
+    ratio per participant, and across participants in the primary: Spearman with the primary analysis and the
+    median change."""
+    from scipy.stats import spearmanr
+
+    from . import io
+
+    def read(f):
+        s = json.loads(Path(f).read_text())
+        i = s["integration"][0]
+        common = next((x for x in s["integration"] if x["set"] == "common set"), None)
+        return {"pr1": i.get("pr_without_first"), "gs": i.get("global_share"), "pr": i.get("participation_ratio"),
+                "pr1_common": (common or {}).get("pr_without_first"),
+                "in_primary": (s.get("timeline") or {}).get("primary_eligible", True),
+                "censored_fraction": s.get("censored_fraction")}
+    prim = {f.parent.parent.name: read(f) for f in sorted(Path(primary_root).glob(f"sub-*/{atlas}/route_b.json"))}
+    variants = {}
+    for vdir in sorted(p for p in Path(sens_root).glob("*") if (p / "route_b").is_dir()):
+        variants[vdir.name] = {f.parent.parent.name: read(f) for f in sorted((vdir / "route_b").glob("sub-*/*/route_b.json"))}
+    rows, table = [], []
+    for v, runs in variants.items():
+        both = [r for r in runs if r in prim and prim[r]["in_primary"] and runs[r]["pr1"] is not None and prim[r]["pr1"] is not None]
+        row = {"variant": v, "n": len(both)}
+        for key, name in (("pr1", "primary"), ("gs", "global_share"), ("pr", "pr")):
+            a = [prim[r][key] for r in both]
+            b = [runs[r][key] for r in both]
+            row[f"{name}_spearman_with_main"] = round(float(spearmanr(a, b)[0]), 3) if len(both) >= 4 else None
+            row[f"{name}_median_change"] = round(float(np.median(np.subtract(b, a))), 4) if both else None
+        cf = [runs[r]["censored_fraction"] for r in runs if runs[r].get("censored_fraction") is not None]
+        row["censored_fraction_median_max"] = [round(float(np.median(cf)), 3), round(float(np.max(cf)), 3)] if cf else None
+        rows.append(row)
+    for r in sorted(prim):
+        t = {"run": r, "in_primary": prim[r]["in_primary"], "main": prim[r]["pr1"]}
+        for v, runs in variants.items():
+            t[v] = runs.get(r, {}).get("pr1")
+        table.append(t)
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    if table:
+        io.write_tsv(out / "sensitivity_participants.tsv", {k: [t.get(k) for t in table] for k in table[0]})
+    res = {"variants": rows, "participants": table, **io.provenance(cfg, {})}
+    io.write_json(out / "sensitivity.json", res)
+    L = ["# Second-pass sensitivity analyses", "",
+         "Primary = participation ratio without the first pattern. Per variant, across participants in the primary: "
+         "Spearman with the main analysis (does the ranking of participants hold?) and the median change.", "",
+         "| variant | n | primary: Spearman / median change | global share: Spearman / median change | ordinary PR: Spearman / median change | censored fraction (median, max) |",
+         "|---|---|---|---|---|---|"]
+    for r in rows:
+        L.append(f"| {r['variant']} | {r['n']} | {r['primary_spearman_with_main']} / {r['primary_median_change']} | "
+                 f"{r['global_share_spearman_with_main']} / {r['global_share_median_change']} | "
+                 f"{r['pr_spearman_with_main']} / {r['pr_median_change']} | {r.get('censored_fraction_median_max')} |")
+    vs = list(variants)
+    L += ["", "## Primary per participant", "", "| run | in primary | main | " + " | ".join(vs) + " |", "|---|---|---|" + "---|" * len(vs)]
+    L += [f"| {t['run']} | {t['in_primary']} | {t['main']} | " + " | ".join(str(t.get(v)) for v in vs) + " |" for t in table]
+    io.write_text(out / "sensitivity.md", "\n".join(L) + "\n")
+    return res

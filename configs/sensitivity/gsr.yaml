@@ -1,0 +1,5 @@
+# Sensitivity: region-level global signal regression (user, 2026-11-12): the mean cortical BOLD-like time course
+# (and the mean c0 for ordinary connectivity) is regressed out of every region before coupling. Route B only.
+extends: ../default.yaml
+regions:
+  global_regression: true
