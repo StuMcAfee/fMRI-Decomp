@@ -1297,3 +1297,8 @@ Observations for the user's review: right striatum coupling is lowest in both pa
 - **User decision: common number of volumes 797** (replacing 751, which rested on the wrong record); `regions.n_volumes_common: 797`. P10 is analysed on its 531-frame stretch and left out of the primary.
 - **No T1 currently available for P01, P16, P06, P17** (user; recovery possible through data management). R5 proceeds with the 11 participants with a T1 (10 in the primary); the four are added if their T1s are recovered.
 - Fixed: the three R5 commands lacked `--config` (crash); a test now checks every command.
+
+### 2026-11-12: R5 registration gate passed (9 new participants)
+
+- Anatomy (T2* reference) for P14, P15, P10, P03, P13, P09, P11, P05, P07. **User: all QC images reasonable; gate passed.**
+- regcheck summaries seen for 5: residual shifts 0 to 1 mm (at most a third of a voxel) in every direction (P13 0 / 0 / 0; P11, P05, P03, P09 1 mm toward the right, P11 also 1 mm anterior). The boundary contrast was near zero (P03, -0.002) or inverted (P11, -0.025) in two, so the automatic check is not informative there and the visual check stands alone.
