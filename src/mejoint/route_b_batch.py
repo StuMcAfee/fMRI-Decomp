@@ -173,8 +173,9 @@ def _centroids(atlas: str) -> dict:
 def _without_first(C: np.ndarray) -> np.ndarray:
     """Correlation matrix with its first (brain-wide) pattern removed: C - lambda_1 v1 v1', renormalized to unit
     diagonal (the matrix the participation ratio without the first pattern describes). Rows with NaN stay NaN."""
+    from .regions import _signal_rows
     C = np.asarray(C, float)
-    ok = np.all(np.isfinite(C), axis=1)
+    ok = _signal_rows(C)                                   # regions with signal (a NaN row must not blank the rest)
     out = np.full_like(C, np.nan)
     if ok.sum() < 3:
         return out

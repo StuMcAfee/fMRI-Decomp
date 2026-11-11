@@ -12,6 +12,8 @@ def _write_participant(root, run, rng, ids, pr, fd):
     n = len(ids)
     X = rng.standard_normal((n, 300)) + rng.standard_normal(300)
     C = np.corrcoef(X)
+    C[2, :] = np.nan
+    C[:, 2] = np.nan                                         # one region without signal, as in real runs
     np.save(rb / "corr_b.npy", C.astype(np.float32))
     regions = [{"id": i, "name": f"r{i}", "kind": "cortex", "network": "N", "used": True, "n_voxels": 50, "bold_share": 0.9,
                 "bold_share_ci": [0.8, 1.0], "s0_share": 0.1, "leftover_share": 0.01, "b_reliability": 0.9} for i in ids]
@@ -52,6 +54,7 @@ def test_common_regions_and_summary(tmp_path):
     assert len(res["participants"]) == 6 and res["cohort_checks"]["pr_vs_fd_mean"]["spearman"] > 0.9
     assert res["deep_pooled"][0]["n"] == 6 and "qc_fc" in res["cohort_checks"]
     assert "qc_fc_without_first" in res["cohort_checks"] and "pr_vs_global_share" in res["cohort_checks"]
+    assert res["cohort_checks"]["qc_fc_without_first"]["n_edges"] > 0
     for f in ("participants.tsv", "regions.tsv", "deep_regions.tsv", "deep_pooled.tsv", "summary.md"):
         assert (tmp_path / "summary" / f).exists(), f
     json.loads((tmp_path / "summary" / "summary.json").read_text())
@@ -108,3 +111,9 @@ def test_without_first_removes_the_brain_wide_pattern():
     R = route_b_batch._without_first(C)
     iu = np.triu_indices(20, 1)
     assert np.median(C[iu]) > 0.6 and abs(np.median(R[iu])) < 0.15 and np.allclose(np.diag(R), 1.0)
+    Cn = C.copy()
+    Cn[3, :] = np.nan
+    Cn[:, 3] = np.nan                                       # one region without signal (bug found 2026-11-12)
+    Rn = route_b_batch._without_first(Cn)
+    keep = np.delete(np.arange(20), 3)
+    assert np.isfinite(Rn[np.ix_(keep, keep)]).all() and np.isnan(Rn[3]).all()
