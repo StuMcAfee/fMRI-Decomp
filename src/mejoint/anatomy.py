@@ -82,7 +82,7 @@ def subcortical_groups(values: dict) -> dict:
 def build_labels(cortex_epi: np.ndarray, sub_epi: np.ndarray | None, gm_epi: np.ndarray, mask3d: np.ndarray,
                  classes3d: np.ndarray | None, table: dict, groups: dict | None, gm_min: float = 0.3,
                  min_voxels: int = 20, secondary: bool = True, csf_epi: np.ndarray | None = None,
-                 secondary_csf_max: float | None = None) -> dict:
+                 secondary_csf_max: float | None = None, cortex_csf_max: float | None = None) -> dict:
     """Region labels (3D, 0 = none) and the region table. Cortex ids 1..N follow the Schaefer index; secondary
     regions follow, in the order L/R thalamus, L/R striatum. With csf_epi and secondary_csf_max, thalamus and
     striatum voxels with CSF probability above it are dropped (user, 2026-11-10)."""
@@ -93,11 +93,15 @@ def build_labels(cortex_epi: np.ndarray, sub_epi: np.ndarray | None, gm_epi: np.
     rows = []
     cx = np.rint(cortex_epi).astype(int)
     keep_c = ok & (cx > 0) & (np.nan_to_num(gm_epi) >= gm_min)
+    before = np.where(keep_c, cx, 0)
+    if csf_epi is not None and cortex_csf_max is not None:            # primary since 2026-11-11 (user)
+        keep_c &= ~(np.nan_to_num(csf_epi) > float(cortex_csf_max))
     lab[keep_c] = cx[keep_c]
     for i, info in sorted(table.items()):
         n = int((lab == i).sum())
         rows.append({"id": i, "name": info["name"], "kind": "cortex", "hemisphere": info["hemisphere"],
-                     "network": info["network"], "n_voxels": n, "usable": n >= min_voxels})
+                     "network": info["network"], "n_voxels": n, "usable": n >= min_voxels,
+                     "n_voxels_before_csf_exclusion": int((before == i).sum())})
     nxt = max(table) + 1 if table else 1
     if secondary and sub_epi is not None and groups:
         sx = np.rint(sub_epi).astype(int)
@@ -132,9 +136,11 @@ def run_dir(anat_dir, frontend_dir, cfg: dict, tissue_dir=None, atlas: str = "20
     sub = vol("ho_sub_epi.nii.gz") if (A / "ho_sub_epi.nii.gz").exists() else None
     gm = vol("gm_epi.nii.gz")
     csf_max = G.get("secondary_csf_max")
+    ccsf_max = G.get("cortex_csf_max")
     csf = vol("csf_epi.nii.gz") if (A / "csf_epi.nii.gz").exists() else None
-    if csf_max is not None and csf is None:
-        raise FileNotFoundError(f"regions.secondary_csf_max is set but {A / 'csf_epi.nii.gz'} is missing (rerun scripts/anatomy_run.lsf)")
+    if (csf_max is not None or ccsf_max is not None) and csf is None:
+        raise FileNotFoundError(f"a CSF exclusion is set (regions.secondary_csf_max / cortex_csf_max) but {A / 'csf_epi.nii.gz'} "
+                                "is missing (rerun scripts/anatomy_run.lsf)")
     for name, arr in (("cortex atlas", cortex), ("grey matter", gm)):
         if arr.shape != mask3d.shape:
             raise ValueError(f"{name} in {A} has grid {arr.shape}, the front end {mask3d.shape}")
@@ -151,17 +157,30 @@ def run_dir(anat_dir, frontend_dir, cfg: dict, tissue_dir=None, atlas: str = "20
     xml = A / "HarvardOxford-Subcortical.xml"
     if xml.exists():
         groups = subcortical_groups(ho_subcortical_values(xml))
-    res = build_labels(cortex, sub, gm, mask3d, classes3d, table, groups, gm_min=float(G.get("gm_min", 0.3)),
-                       min_voxels=int(G.get("min_voxels", 20)), secondary=bool(G.get("secondary", True)),
-                       csf_epi=csf, secondary_csf_max=None if csf_max is None else float(csf_max))
+    kw = dict(gm_min=float(G.get("gm_min", 0.3)), min_voxels=int(G.get("min_voxels", 20)),
+              secondary=bool(G.get("secondary", True)), csf_epi=csf,
+              secondary_csf_max=None if csf_max is None else float(csf_max))
+    res = build_labels(cortex, sub, gm, mask3d, classes3d, table, groups,
+                       cortex_csf_max=None if ccsf_max is None else float(ccsf_max), **kw)
     io.save_volume(res["labels"].astype(np.float32), mimg, A / f"labels_{atlas}.nii.gz")
     rows = res["regions"]
+    csf_cov = None
+    if ccsf_max is not None:
+        # sensitivity labels with every cortical voxel (deep regions unchanged) and the participant's cortical CSF
+        # fraction (covariate, user 2026-11-11)
+        res_all = build_labels(cortex, sub, gm, mask3d, classes3d, table, groups, cortex_csf_max=None, **kw)
+        io.save_volume(res_all["labels"].astype(np.float32), mimg, A / f"labels_{atlas}_allvox.nii.gz")
+        io.write_json(A / f"regions_{atlas}_allvox.json", {"atlas": atlas, "regions": res_all["regions"]})
+        cmask = np.isin(res_all["labels"], list(table))
+        csf_cov = {"cortex_csf_mean_allvox": float(np.nanmean(csf[cmask])) if cmask.any() else None,
+                   "cortex_voxels_allvox": int(cmask.sum()),
+                   "cortex_voxels_removed": int(cmask.sum() - np.isin(res["labels"], list(table)).sum())}
     io.write_tsv(A / f"regions_{atlas}.tsv", {k: [r[k] for r in rows] for k in rows[0]})
     summ = {"atlas": atlas, "n_regions": len(rows), "n_usable": sum(r["usable"] for r in rows),
             "cortex_voxels": int(sum(r["n_voxels"] for r in rows if r["kind"] == "cortex")),
             "median_cortex_region_voxels": float(np.median([r["n_voxels"] for r in rows if r["kind"] == "cortex"])),
             "secondary": [r for r in rows if r["kind"] == "secondary"], "gm_min": float(G.get("gm_min", 0.3)),
-            "secondary_csf_max": csf_max,
+            "secondary_csf_max": csf_max, "cortex_csf_max": ccsf_max, "cortex_csf_covariate": csf_cov,
             "classes_used": classes3d is not None, "regions": rows, **io.provenance(cfg, {})}
     io.write_json(A / f"regions_{atlas}.json", summ)
     try:

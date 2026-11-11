@@ -173,7 +173,9 @@ grey-matter threshold.
   Added after R4 (user, 2026-11-10): thalamus and striatum without voxels of CSF probability > 0.3; a reliability
   floor of 0.5 (deep-region coupling below it reported as not measurable; cortex sensitivity set without regions
   below it); cortical CSF exclusion (> 0.3) as a sensitivity analysis of the integration measures; a deflated
-  eigenvalue count under test on the R3 injections.
+  eigenvalue count under test on the R3 injections (failed, dropped 2026-11-11). From 2026-11-11 (user) the primary
+  cortex also drops voxels of CSF probability > 0.3; all-voxel cortex is a sensitivity analysis; each participant's
+  cortical CSF fraction is a covariate.
 - **D5 Motion handling for the primary analysis:** 24-term motion regression (the current front end default) or
   band-passed motion projected out (the waves default).
 - **D6 CLAUDE.md edits** (proposed text to follow on approval): section 1 (route B as the main analysis; ICA

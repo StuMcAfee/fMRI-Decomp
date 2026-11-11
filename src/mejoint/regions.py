@@ -695,28 +695,22 @@ def run_dir(frontend_dir, anat_dir, cfg: dict, out_dir, atlas: str | None = None
                                   res, np.nan_to_num(csf3[mask3d]))
         except Exception as exc:                                       # a diagnostic; never block the main result
             print(f"deep CSF check failed: {exc}")
-    # sensitivity (user, 2026-11-10): integration with cortical voxels above each CSF probability removed
+    # sensitivity (user, 2026-11-11): the primary drops CSF-rich cortical voxels; the same measures on cortex with
+    # all voxels (anatomy's labels_<atlas>_allvox), and the participant's cortical CSF fraction (covariate)
     sens = []
-    cuts = cfg.get("regions", {}).get("cortex_csf_sensitivity") or []
-    if cuts and (A / "csf_epi.nii.gz").exists():
-        csf3 = np.nan_to_num(np.asarray(nib.load(str(A / "csf_epi.nii.gz")).dataobj, np.float64))
-        cortex_ids = [r["id"] for r in table if r["kind"] == "cortex"]
-        incx = np.isin(lab3, cortex_ids)
-        mv = int(cfg.get("regions", {}).get("min_voxels", 20))
-        for cut in cuts:
-            lab_c = lab3.copy()
-            drop = incx & (csf3 > float(cut))
-            lab_c[drop] = 0
-            tab_c = []
-            for r in table:
-                n = int((lab_c == r["id"]).sum())
-                tab_c.append({**r, "n_voxels": n, "usable": bool(r.get("usable")) and n >= mv})
-            cfg_c = io.merge(cfg, {"regions": {"reliability_min": None}})
-            r2 = analyze(S, lab_c[mask3d], mu, sigma, fs["echo_noise_ratios_used"], use, fs["te_ms"], tab_c, cfg_c, Q,
-                         np.random.default_rng(int(cfg.get("project_seed", 0)) + 11), common)
-            row = dict(r2["integration"][0])
-            row["set"] = f"cortex without voxels CSF > {cut} ({int(drop.sum())} of {int(incx.sum())} voxels removed)"
-            sens.append(row)
+    G_ = cfg.get("regions", {})
+    anat_json = json.loads((A / f"regions_{atlas}.json").read_text())
+    csf_cov = anat_json.get("cortex_csf_covariate")
+    fa, fj = A / f"labels_{atlas}_allvox.nii.gz", A / f"regions_{atlas}_allvox.json"
+    if G_.get("allvoxel_sensitivity", True) and fa.exists() and fj.exists():
+        lab_a = np.rint(np.asarray(nib.load(str(fa)).dataobj)).astype(int)
+        tab_a = json.loads(fj.read_text())["regions"]
+        cfg_c = io.merge(cfg, {"regions": {"reliability_min": None}})
+        r2 = analyze(S, lab_a[mask3d], mu, sigma, fs["echo_noise_ratios_used"], use, fs["te_ms"], tab_a, cfg_c, Q,
+                     np.random.default_rng(int(cfg.get("project_seed", 0)) + 11), common)
+        row = dict(r2["integration"][0])
+        row["set"] = "cortex, all voxels (CSF-rich voxels kept; sensitivity)"
+        sens.append(row)
     for name, key in (("gm_epi", "gm_mean"), ("csf_epi", "csf_mean")):
         f = A / f"{name}.nii.gz"
         if f.exists():
@@ -735,7 +729,8 @@ def run_dir(frontend_dir, anat_dir, cfg: dict, out_dir, atlas: str | None = None
     summ = {"run": fs.get("run_id"), "atlas": atlas, "frontend_dir": str(fe), "anat_dir": str(A), "n_frames": res["n_frames"],
             "nuisance_rank": res["nuisance_rank"], "band_hz": res["band_hz"], "integration": res["integration"] + sens,
             "secondary_coupling": res["secondary_coupling"], "secondary_coupling_raw": res["secondary_coupling_raw"],
-            "deep_csf_check": deep, "shared_noise_check": shared, "cortex_ids": res["cortex_ids"], "regions": rows,
+            "deep_csf_check": deep, "shared_noise_check": shared,
+            "cortex_csf_max": anat_json.get("cortex_csf_max"), "cortex_csf_covariate": csf_cov, "cortex_ids": res["cortex_ids"], "regions": rows,
             "network_medians": _network_medians(rows), **io.provenance(cfg, {})}
     io.write_json(out / "route_b.json", summ)
     io.write_text(out / "route_b.md", render(summ))
@@ -764,6 +759,11 @@ def render(s: dict) -> str:
          "Segregation null: network labels permuted over the regions (liberal: ignores that neighbouring parcels share "
          "networks). Thalamus and striatum coupling noise-corrected like the cortical matrix (plain correlations in the "
          "JSON). Shares are clipped to 0-1; regions whose S0-like or R2*-like energy fell below its noise estimate are listed.", "",
+         (f"Primary cortex: voxels with CSF probability > {s.get('cortex_csf_max')} removed (user, 2026-11-11). "
+          + (f"Cortical CSF fraction (covariate): mean CSF probability {_r(s['cortex_csf_covariate'].get('cortex_csf_mean_allvox'))} "
+             f"over all cortical voxels; {s['cortex_csf_covariate'].get('cortex_voxels_removed')} of "
+             f"{s['cortex_csf_covariate'].get('cortex_voxels_allvox')} voxels removed." if s.get("cortex_csf_covariate") else "")
+          if s.get("cortex_csf_max") is not None else "Cortex: all voxels (no CSF exclusion)."), "",
          "| set | regions (with signal) | participation ratio | null median [5-95 %] | percentile in null | PR without first pattern | null median [5-95 %] | percentile in null | eigenvalues above null | segregation (null 95 %) | global share | edges beyond null |",
          "|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for i in s["integration"]:

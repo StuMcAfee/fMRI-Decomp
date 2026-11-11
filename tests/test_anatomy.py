@@ -97,6 +97,11 @@ def test_build_labels_rules():
     assert all(rows3[n]["n_voxels"] == 0 for n in ("L_thalamus", "R_thalamus", "L_striatum", "R_striatum"))
     assert rows3["L_striatum"]["n_voxels_before_csf_exclusion"] == rows["L_striatum"]["n_voxels"]
     assert rows3["7Networks_LH_Vis_1"]["n_voxels"] == rows["7Networks_LH_Vis_1"]["n_voxels"]   # cortex untouched
+    r4 = anatomy.build_labels(cortex, sub, gm, mask, classes, table, groups, gm_min=0.3, min_voxels=20,
+                              csf_epi=csf, cortex_csf_max=0.3)                    # primary cortex rule (2026-11-11)
+    rows4 = {row["name"]: row for row in r4["regions"]}
+    assert rows4["7Networks_LH_Vis_1"]["n_voxels"] == 0
+    assert rows4["7Networks_LH_Vis_1"]["n_voxels_before_csf_exclusion"] == rows["7Networks_LH_Vis_1"]["n_voxels"]
 
 
 def test_run_dir_writes_outputs(tmp_path):
@@ -123,6 +128,7 @@ def test_run_dir_writes_outputs(tmp_path):
     assert {r["id"] for r in used} == {1, 101}
     for f in ("labels_200_7.nii.gz", "regions_200_7.tsv", "regions_200_7.json", "qc_200_7.png"):
         assert (A / f).exists(), f
+    assert (A / "labels_200_7_allvox.nii.gz").exists() and out["cortex_csf_covariate"]["cortex_voxels_removed"] == 0
 
 
 def _blob(shape, cx, radii=(35, 42, 32)):

@@ -230,11 +230,13 @@ def test_run_dir_files(tmp_path):
              "n_voxels": int((lab == i).sum()), "usable": bool((lab == i).sum() >= 20)} for i in range(1, 17)]
     io.write_json(A / "regions_200_7.json", {"regions": rows})
     csf = np.zeros(mask.shape, np.float32)
-    csf[xs[0] < 3] = 0.9                                               # one edge strip "CSF": removed in the sensitivity
+    csf[xs[0] < 3] = 0.9
     io.save_volume(csf, mimg, A / "csf_epi.nii.gz")
+    io.save_volume(lab.astype(np.float32), mimg, A / "labels_200_7_allvox.nii.gz")   # all-voxel sensitivity labels
+    io.write_json(A / "regions_200_7_allvox.json", {"regions": rows})
     out = regions.run_dir(fe, A, cfg, tmp_path / "rb")
     sets = [i["set"] for i in out["integration"]]
-    assert any(x.startswith("cortex without voxels CSF > 0.3") for x in sets), sets
+    assert any(x.startswith("cortex, all voxels") for x in sets), sets
     for f in ("route_b.json", "route_b.md", "regions_route_b.tsv", "corr_b.npy", "route_b.png"):
         assert (tmp_path / "rb" / f).exists(), f
     used = [r for r in out["regions"] if r["used"]]

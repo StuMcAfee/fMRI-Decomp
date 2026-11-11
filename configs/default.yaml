@@ -223,7 +223,8 @@ regions:                      # route B (docs/ROUTE_B_PLAN.md; approved 2026-11-
   secondary: true               # left / right thalamus and striatum from Harvard-Oxford subcortical (D1)
   secondary_csf_max: 0.3        # thalamus / striatum voxels with FAST CSF probability above this are dropped (user, 2026-11-10: a few ventricle-edge voxels carried 9-12 % of the late-echo weight); null = keep all
   reliability_min: 0.5          # deep-region coupling below this reliability is reported as not measurable (with its interval); cortex: sensitivity set without regions below it (user, 2026-11-10)
-  cortex_csf_sensitivity: [0.3] # integration measures recomputed with cortical voxels above each CSF probability removed (sensitivity, user 2026-11-10; [] = off)
+  cortex_csf_max: 0.3           # PRIMARY (user, 2026-11-11): cortical voxels with FAST CSF probability above this are dropped (sulcal-CSF voxels carried part of the brain-wide pattern; CSF may differ between groups); null = keep all
+  allvoxel_sensitivity: true    # also report the integration measures on cortex with all voxels (labels_<atlas>_allvox), and each participant's cortical CSF fraction (covariate)
   t1_list: null                 # file with one T1 path per line (quotes allowed); found by subject and scan time
   t1_root: /research_jude/rgs01_jude/dept/DI/tir/vision_lab/stu/CSIMemphis/Data/Rad   # fallback search: <t1_root>/<subject>/**/*T1*MPRAGE*.nii*
   bet_f: 0.4                    # FSL bet fractional threshold for the T1 (children and patients: check the QC figure)
