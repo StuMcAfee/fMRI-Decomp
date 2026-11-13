@@ -460,7 +460,10 @@ def analyze(S, labels, mu, sigma, ratios, use, te_ms, table: list, cfg: dict, Q=
         eig = eigenvalues(c_["corr"])
         pr = participation_ratio(c_["corr"])
         pr1 = participation_ratio_residual(c_["corr"])
+        cis = integration_ci(c_["x_band"], c_["noise_band_var"], int(G.get("n_boot", 200)),
+                             max(2, int(round(float(G.get("boot_block_s", 20.0)) / tr))), rng)
         return {"set": label, "n_regions": int(mask_sub.sum()), "n_regions_with_signal": int(_signal_rows(c_["corr"]).sum()),
+                **cis,
                 "participation_ratio": _r(pr),
                 "pr_null_median": _r(np.nanmedian(null["pr"])), "pr_null_q05_q95": [_r(np.nanquantile(null["pr"], 0.05)), _r(np.nanquantile(null["pr"], 0.95))],
                 "pr_percentile_in_null": _r(float(np.mean(null["pr"] <= pr))),
@@ -609,6 +612,35 @@ def select_frames(volumes, n_total: int, n_common) -> dict:
     out["n_used"] = int(fr.size)
     out["frames"] = fr
     return out
+
+
+def integration_ci(xb: np.ndarray, noise_band: np.ndarray, n_boot: int, block: int, rng, q=(0.025, 0.975)) -> dict:
+    """Block-bootstrap 95 % intervals (circular blocks of frames of the band-passed BOLD-like time courses; the
+    noise correction as in `coupling`) for the participation ratio without the first pattern (the primary), the
+    ordinary participation ratio and the global share (added 2026-11-13: the sensitivity analyses showed some
+    participants' primary to be imprecise)."""
+    xb = np.asarray(xb, np.float64)
+    T = xb.shape[1]
+    nb = np.asarray(noise_band, float)
+    nblk = int(np.ceil(T / block))
+    out = {"pr1": [], "pr": [], "gs": []}
+    for _ in range(int(n_boot)):
+        idx = (rng.integers(0, T, nblk)[:, None] + np.arange(block)[None, :]).ravel()[:T] % T
+        X = xb[:, idx]
+        X = X - X.mean(1, keepdims=True)
+        C = X @ X.T / T
+        sig = np.diag(C) - nb
+        np.fill_diagonal(C, sig)
+        d = np.sqrt(np.where(sig > 0, sig, np.nan))
+        with np.errstate(divide="ignore", invalid="ignore"):
+            R = C / np.outer(d, d)
+        np.fill_diagonal(R, np.where(sig > 0, 1.0, np.nan))
+        out["pr1"].append(participation_ratio_residual(R))
+        out["pr"].append(participation_ratio(R))
+        out["gs"].append(global_share(X, sig, nb))
+    ci = lambda v: [_r(np.nanquantile(v, q[0])), _r(np.nanquantile(v, q[1]))] if np.isfinite(v).sum() > 10 else None
+    return {"pr_without_first_ci": ci(np.array(out["pr1"])), "participation_ratio_ci": ci(np.array(out["pr"])),
+            "global_share_ci": ci(np.array(out["gs"]))}
 
 
 def adjacency(labels3d: np.ndarray, ids) -> np.ndarray:
@@ -965,7 +997,7 @@ def render(s: dict) -> str:
          "|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for i in s["integration"]:
         L.append(f"| {i['set']} | {i['n_regions']} ({i.get('n_regions_with_signal')}) | {i['participation_ratio']} | {i['pr_null_median']} {i['pr_null_q05_q95']} | "
-                 f"{i['pr_percentile_in_null']} | {i.get('pr_without_first')} | {i.get('pr_without_first_null_median')} {i.get('pr_without_first_null_q05_q95')} | "
+                 f"{i['pr_percentile_in_null']} | {i.get('pr_without_first')} {i.get('pr_without_first_ci')} | {i.get('pr_without_first_null_median')} {i.get('pr_without_first_null_q05_q95')} | "
                  f"{i.get('pr_without_first_percentile_in_null')} | {i['n_eigen_above_null']} | {i['segregation']} ({i['segregation_null_q95']}; within {i.get('within_mean')}, between {i.get('between_mean')}) | "
                  f"{i['global_share']} | {i['edges_beyond_null']} |")
     L += ["", "## Shares by network (median over usable regions)", "", "| network | regions | BOLD-like | S0-like | leftover |", "|---|---|---|---|---|"]

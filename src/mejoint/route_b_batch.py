@@ -230,7 +230,10 @@ def summary(route_b_root, phase2_root, inject_root, cfg: dict, out_dir, atlas: s
         part.append({"run": run, "in_primary": tl.get("primary_eligible", True), "frames": s["n_frames"],
                      "regions": prim["n_regions"], "regions_common": g(common, "n_regions"),
                      "pr": prim["participation_ratio"], "pr_null_median": prim["pr_null_median"],
-                     "pr_without_first": prim.get("pr_without_first"), "global_share": prim["global_share"],
+                     "pr_without_first": prim.get("pr_without_first"),
+                     "pr_without_first_ci_lo": (prim.get("pr_without_first_ci") or [None, None])[0],
+                     "pr_without_first_ci_hi": (prim.get("pr_without_first_ci") or [None, None])[1],
+                     "global_share": prim["global_share"],
                      "segregation": prim["segregation"], "eigen_above_null": prim["n_eigen_above_null"],
                      "pr_common": g(common, "participation_ratio"), "pr_without_first_common": g(common, "pr_without_first"),
                      "global_share_common": g(common, "global_share"),
@@ -324,12 +327,13 @@ def render(s: dict) -> str:
          "(independent networks / one shared network).", "",
          "Primary (user, 2026-11-12): PR without the first (brain-wide) pattern, read with the global share; the ordinary "
          "PR is secondary (across participants it mostly tracks the global share). dPR-1 / dPR: change with injection.", "",
-         "| run | in primary | regions (common) | PR without first (primary) | global share | PR | segregation | PR all voxels | "
+         "| run | in primary | regions (common) | PR without first (primary) [95 % CI] | global share | PR | segregation | PR all voxels | "
          "CSF fraction | reliability median | mean FD | coil | inj. indep. dPR-1 / dPR | inj. shared dPR-1 / dPR |",
          "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for p in s["participants"]:
         r4 = lambda v: round(v, 4) if isinstance(v, float) else v
-        L.append(f"| {p['run']} | {p['in_primary']} | {p['regions']} ({p.get('regions_common')}) | {p.get('pr_without_first')} | "
+        L.append(f"| {p['run']} | {p['in_primary']} | {p['regions']} ({p.get('regions_common')}) | {p.get('pr_without_first')} "
+                 f"[{p.get('pr_without_first_ci_lo')}, {p.get('pr_without_first_ci_hi')}] | "
                  f"{p['global_share']} | {p['pr']} | {p['segregation']} | {p.get('pr_allvox')} | {r4(p.get('cortex_csf_fraction'))} | "
                  f"{p.get('reliability_median')} | {p.get('fd_mean')} | {p['coil']} | "
                  f"{p.get('inj_independent_d_pr_without_first')} / {p.get('inj_independent_d_pr')} | "

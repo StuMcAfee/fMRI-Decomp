@@ -1339,3 +1339,17 @@ Seven variants, each a short override of the default config in `configs/sensitiv
 
 - The user supplied a table of post-surgical neurologic outcome per participant (kept on the research storage; not in the repository). An exploratory look over the 10 primary participants (28 tests, no correction, very small groups) found no difference in the primary measure; the only nominal differences were in the motion-linked measures (global share, ordinary PR, segregation) for one outcome group that also moved most, and they disappeared after adjusting for mean FD. Not a result; recovering the four missing T1s would most enlarge the smallest group. No per-participant labels or values are recorded here.
 - **User decision: all participant data stay out of the repository.** Added `mejoint clinical-compare` (`src/mejoint/clinical.py`): reads a clinical table (.xlsx, .csv, .tsv) from outside the repository, merges it with `participants.tsv` (and the sensitivity table if present), reports medians by label and exact Mann-Whitney tests per contrast, also after adjusting for mean FD, and writes only under `outputs/`; it refuses a table or an output folder inside the repository. `.gitignore` now blocks spreadsheet, delimited-text and array files.
+
+### 2026-11-13: first sensitivity results (3 of 7 variants); script fix; bootstrap intervals for the primary
+
+- **Bug:** the four route-B-only variants (band_008, gsr, censor, atlas_400_17) failed: `sensitivity_run.lsf` sent route B's log into the variant folder before anything had created it (the front-end and grey-matter variants created it in an earlier step). Fixed (`mkdir -p`); those four are to be resubmitted.
+- **Results so far (10 participants in the primary; aggregate only, per the no-participant-data rule):**
+
+| variant | primary: Spearman with main / median change | global share: Spearman / median change |
+|---|---|---|
+| equal echo weighting | 0.78 / +1.39 | 0.98 / -0.03 |
+| grey-matter threshold 0.5 | 0.83 / -0.40 | 0.98 / -0.00 |
+| 6 low-passed motion parameters | 0.52 / -0.24 | 0.99 / -0.02 |
+
+- The global share is very stable across variants; the primary is less so. Equal weighting raised the primary most in the participants with the lowest reliability (consistent with equal weights breaking the whitening that the noise correction assumes). Lighter motion handling lowered the primary strongly in the two highest-motion participants: the primary is not tied to the global share, but it still depends on how motion is removed where motion is large. One low-reliability participant moved by +2 to +10 across all variants.
+- **Added:** block-bootstrap 95 % intervals (20 s blocks, 200 resamples) for the primary, the ordinary participation ratio and the global share in every route B run (`regions.integration_ci`), shown in `route_b.md` and in the R5 participant table, so imprecise participants are visible. Test: the interval contains the estimate and widens with more noise.

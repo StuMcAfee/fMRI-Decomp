@@ -18,6 +18,7 @@ if [ -d "outputs/phase2/$RUNARG" ]; then NAME="$RUNARG"; else NAME="$(ls -d outp
 FE="outputs/phase2/$NAME/mc"; A="outputs/anatomy/$NAME"; TIS="outputs/tissue/$NAME/mc"
 [ -n "$NAME" ] && [ -f "$FE/c0.npy" ] || fail "no front end for '$RUNARG'"
 O="outputs/sensitivity/$VARIANT"
+mkdir -p "$O"                                              # the route B log goes here (route-B-only variants failed without it, 2026-11-13)
 echo "== sensitivity $VARIANT | $NAME | $(date) | host $(hostname) | job ${LSB_JOBID:-interactive} | git $(git rev-parse --short HEAD 2>/dev/null || echo '?')"
 case "$VARIANT" in
     equal_weighting|motion_lowpass6)

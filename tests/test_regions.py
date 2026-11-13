@@ -466,3 +466,22 @@ def test_global_regression_and_censoring():
     assert r_cen["censored_fraction"] == 0.1
     err = lambda r: abs(r["integration"][0]["participation_ratio"] - base["participation_ratio"])
     assert err(r_cen) < err(r_bad), (err(r_cen), err(r_bad))
+
+
+def test_integration_ci():
+    """Bootstrap intervals for the primary: they contain the point estimate and widen when the regions' BOLD-like
+    signal is weaker relative to noise."""
+    rng = np.random.default_rng(SEED + 14)
+    P, T = 30, 800
+    nets = np.repeat(np.arange(5), 6)
+    sig = slow(rng, 5, T)[nets] + 0.6 * slow(rng, P, T)
+    out = {}
+    for name, noise in (("clean", 0.02), ("noisy", 2.0)):
+        x = sig + rng.standard_normal((P, T)) * noise
+        c = regions.coupling(x, np.full(P, noise ** 2), TR, BAND)
+        ci = regions.integration_ci(c["x_band"], c["noise_band_var"], 100, 27, rng)
+        pr1 = regions.participation_ratio_residual(c["corr"])
+        lo, hi = ci["pr_without_first_ci"]
+        assert lo <= pr1 <= hi and ci["global_share_ci"] is not None
+        out[name] = hi - lo
+    assert out["noisy"] > out["clean"], out
