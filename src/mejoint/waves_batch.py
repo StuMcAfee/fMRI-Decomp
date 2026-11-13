@@ -2,7 +2,7 @@
 outputs/waves/<run>/<commit>/, the leading modes of each variant (no regression, motion-regressed,
 motion-orthogonal) with their motion correlations, energy against the null, eta, the dS0 / dR2* sign check by
 region, direction, and the run's mean framewise displacement. Question it answers first (user, 2026-11-05):
-is the coupling of the leading mode with the y translation seen in P04 unique to that participant?
+is the coupling of the leading mode with the y translation seen in the first pilot unique to that participant?
 
 This is a description across participants, not the group stage (brief section 7; W4): no labels, no tests.
 """

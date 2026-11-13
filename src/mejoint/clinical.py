@@ -49,7 +49,7 @@ def read_table(path, subject_col: str = "subject", label_col: str = "DX") -> dic
     out = {}
     for r in rows[1:]:
         if len(r) > max(i, j) and r[i] and r[j]:
-            s = r[i].split(".")[0]                                     # P12.0 from a spreadsheet -> P12
+            s = r[i].split(".")[0]                                     # 12345.0 from a spreadsheet -> 12345
             lab = r[j].split(".")[0] if r[j].replace(".", "", 1).isdigit() else r[j]
             out[s] = lab
     return out

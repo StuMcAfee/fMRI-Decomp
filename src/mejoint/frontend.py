@@ -513,7 +513,7 @@ def resolve_run(run_dir, cfg: dict, source: str = "raw") -> dict:
     m = re.match(r"sub-([^_]+)", run_id)
     subject = str(res.get("subject") or (m.group(1) if m else run_id))
     if subject in {str(k) for k in (cfg.get("subjects", {}).get("exclude") or {})}:
-        raise ValueError(f"subject {subject} is excluded in configs/default.yaml: {cfg['subjects']['exclude'][subject]}")
+        raise ValueError(f"subject {subject} is excluded in the site config: {cfg['subjects']['exclude'][subject]}")
     te = res.get("echo_times_ms") or cfg["acquisition"]["te_ms"]
     if source == "raw":
         ei = run_dir / "echo_info.json"
@@ -575,7 +575,7 @@ def resolve_echo1(echo1, cfg: dict) -> dict:
     ms = re.search(r"_(\d{14})_(\d+)_e1\.nii", e1.name)
     run_id = f"sub-{subj}_acq-{ms.group(1)}_ser-{ms.group(2)}" if (subj and ms) else m["base"]
     if subj and subj in {str(k) for k in (cfg.get("subjects", {}).get("exclude") or {})}:
-        raise ValueError(f"subject {subj} is excluded in configs/default.yaml: {cfg['subjects']['exclude'][subj]}")
+        raise ValueError(f"subject {subj} is excluded in the site config: {cfg['subjects']['exclude'][subj]}")
     return {"run_dir": None, "run_id": run_id, "subject": subj, "source": "raw", "echo_files": [str(f) for f in files],
             "volumes": None, "te_ms": te, "mask": None, "fd": None, "par": None}
 

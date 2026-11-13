@@ -375,6 +375,11 @@ def sensitivity_summary(primary_root, sens_root, cfg: dict, out_dir, atlas: str 
             b = [runs[r][key] for r in both]
             row[f"{name}_spearman_with_main"] = round(float(spearmanr(a, b)[0]), 3) if len(both) >= 4 else None
             row[f"{name}_median_change"] = round(float(np.median(np.subtract(b, a))), 4) if both else None
+        # the ordinary PR of a variant against the main primary: the comparable check for global signal regression,
+        # which removes the brain-wide mean before the measure is computed
+        a_ = [prim[r]["pr1"] for r in both]
+        b_ = [runs[r]["pr"] for r in both]
+        row["pr_vs_main_primary_spearman"] = round(float(spearmanr(a_, b_)[0]), 3) if len(both) >= 4 else None
         cf = [runs[r]["censored_fraction"] for r in runs if runs[r].get("censored_fraction") is not None]
         row["censored_fraction_median_max"] = [round(float(np.median(cf)), 3), round(float(np.max(cf)), 3)] if cf else None
         rows.append(row)
@@ -392,12 +397,12 @@ def sensitivity_summary(primary_root, sens_root, cfg: dict, out_dir, atlas: str 
     L = ["# Second-pass sensitivity analyses", "",
          "Primary = participation ratio without the first pattern. Per variant, across participants in the primary: "
          "Spearman with the main analysis (does the ranking of participants hold?) and the median change.", "",
-         "| variant | n | primary: Spearman / median change | global share: Spearman / median change | ordinary PR: Spearman / median change | censored fraction (median, max) |",
-         "|---|---|---|---|---|---|"]
+         "| variant | n | primary: Spearman / median change | global share: Spearman / median change | ordinary PR: Spearman / median change | variant's ordinary PR vs main primary (Spearman) | censored fraction (median, max) |",
+         "|---|---|---|---|---|---|---|"]
     for r in rows:
         L.append(f"| {r['variant']} | {r['n']} | {r['primary_spearman_with_main']} / {r['primary_median_change']} | "
                  f"{r['global_share_spearman_with_main']} / {r['global_share_median_change']} | "
-                 f"{r['pr_spearman_with_main']} / {r['pr_median_change']} | {r.get('censored_fraction_median_max')} |")
+                 f"{r['pr_spearman_with_main']} / {r['pr_median_change']} | {r.get('pr_vs_main_primary_spearman')} | {r.get('censored_fraction_median_max')} |")
     vs = list(variants)
     L += ["", "## Primary per participant", "", "| run | in primary | main | " + " | ".join(vs) + " |", "|---|---|---|" + "---|" * len(vs)]
     L += [f"| {t['run']} | {t['in_primary']} | {t['main']} | " + " | ".join(str(t.get(v)) for v in vs) + " |" for t in table]

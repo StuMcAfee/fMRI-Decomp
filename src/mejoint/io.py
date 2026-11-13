@@ -32,6 +32,13 @@ def load_config(path: str | os.PathLike | None = None) -> dict:
     if base:
         bpath = DEFAULT_CONFIG if base == "default" else (path.parent / base)
         cfg = merge(load_config(bpath), cfg)
+    site = cfg.get("site_config")
+    sp = (Path(site) if Path(site).is_absolute() else DEFAULT_CONFIG.parent.parent / site) if site else None
+    if sp is not None and cfg.get("_site_loaded") != str(sp):  # participant identifiers, kept outside git
+        if sp.exists():
+            with open(sp) as f:
+                cfg = merge(cfg, yaml.safe_load(f) or {})
+            cfg["_site_loaded"] = str(sp)
     cfg["_config_path"] = str(path)
     return cfg
 

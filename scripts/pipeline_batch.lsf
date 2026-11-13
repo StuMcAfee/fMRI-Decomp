@@ -2,7 +2,7 @@
 # One participant through the whole pipeline (one element of an LSF job array; submitted by
 # scripts/submit_pipeline_batch.sh). Line $LSB_JOBINDEX of an echo-1 list:
 #   1. mbme_tedana.py run --keep-intermediates into OUT_keep (pairing, motion correction, mask, tedana; the
-#      script skips a run that already finished, e.g. P04), same settings as the existing analysis;
+#      script skips a run that already finished, e.g. a pilot run), same settings as the existing analysis;
 #   2. scripts/waves_overnight.lsf <run folder> full: front ends (with and without motion regression), tissue
 #      classes, rank (MAPCA), waves (primary, motion-regressed, motion-orthogonal), joint-ICA sweep.
 # Arguments: <echo-1 list> <mbme_tedana.py> <OUT_keep folder> [line number, default $LSB_JOBINDEX] [config.yaml]

@@ -1353,3 +1353,21 @@ Seven variants, each a short override of the default config in `configs/sensitiv
 
 - The global share is very stable across variants; the primary is less so. Equal weighting raised the primary most in the participants with the lowest reliability (consistent with equal weights breaking the whitening that the noise correction assumes). Lighter motion handling lowered the primary strongly in the two highest-motion participants: the primary is not tied to the global share, but it still depends on how motion is removed where motion is large. One low-reliability participant moved by +2 to +10 across all variants.
 - **Added:** block-bootstrap 95 % intervals (20 s blocks, 200 resamples) for the primary, the ordinary participation ratio and the global share in every route B run (`regions.integration_ci`), shown in `route_b.md` and in the R5 participant table, so imprecise participants are visible. Test: the interval contains the estimate and widens with more noise.
+
+### 2026-11-13: participant identifiers removed from the repository and its history (user decision)
+
+- **User decision:** subject numbers, scan dates and acquisition times are replaced everywhere in the repository and in the history of every branch by pseudonyms P01-P17 (assigned at random) and placeholders. The key (`outputs/pseudonyms.tsv`) and the site file with the subject exclusions and the head-only coil set (`outputs/site.yaml`, merged into the config through `site_config`) are kept on the research storage only. `configs/default.yaml` holds no identifiers; tests and scripts use made-up numbers (90001-90009) and no default subjects.
+- **Bootstrap intervals corrected:** the percentile intervals added earlier today fell below the estimate in most participants. Resampling repeats blocks of frames, which lowers the effective number of independent frames; eigenvalues of a correlation matrix spread out as that number falls, so every participation ratio drops in the resamples (a bias of several units here). Now reported: bootstrap SD, bootstrap bias, and the interval estimate +- 1.96 SD. The size of the bias shows that the primary depends strongly on the effective number of frames (about 2 x 0.09 Hz x 598 s, roughly 110 independent values per region, fewer than the number of regions), so frame count and band must be identical across participants (they are in the primary).
+- **Sensitivity results, all 7 variants (aggregate, 10 participants in the primary):**
+
+| variant | primary: Spearman with main / median change |
+|---|---|
+| Schaefer 400 / 17 | 0.64 / +6.7 |
+| band 0.01-0.08 Hz | 0.60 / -1.3 |
+| censoring FD > 0.2 mm (median 7 %, max 53 % of frames removed) | 0.62 / +2.0 |
+| equal echo weighting | 0.78 / +1.4 |
+| grey-matter threshold 0.5 | 0.83 / -0.4 |
+| region-level global signal regression | 0.15 / +2.6 |
+| 6 low-passed motion parameters | 0.52 / -0.2 |
+
+- The ranking of participants on the primary holds only moderately across defensible choices (Spearman 0.5-0.8), and the level shifts with the number of regions (400 parcels: +6.7) and the band (fewer independent values: -1.3), as expected for a measure limited by the number of independent frames. Global signal regression changes what the measure describes (the mean is removed before, and the first remaining pattern after, so two patterns go), so its low agreement is not a robustness failure of the primary as defined; the comparable check is the ordinary participation ratio after global signal regression against the primary (to be added to the summary).

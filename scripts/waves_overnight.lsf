@@ -11,7 +11,7 @@
 # Each step logs its start and end; a failed step is reported and the next one still runs.
 #
 # Submit from inside the repository (one line; quotes keep the space in "Monitoring Visit"):
-#   bsub -q standard -n 8 -R "rusage[mem=2000] span[hosts=1]" -env "all" -J wavesP04 -o waves_%J.log \
+#   bsub -q standard -n 8 -R "rusage[mem=2000] span[hosts=1]" -env "all" -J waves_<subject> -o waves_%J.log \
 #        "bash scripts/waves_overnight.lsf '<OUT_keep run folder>' [all|waves] [config.yaml]"
 # Second argument: all (default) = every step; waves = skip the joint-ICA sweep (step 5); batch = steps 1-3 plus
 # the no-projection and motion-regressed comparisons (scripts/waves_batch.lsf); full = batch plus the MAPCA rank

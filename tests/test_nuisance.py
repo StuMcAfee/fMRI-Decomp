@@ -34,7 +34,7 @@ def fake_par(T, rng, resp_hz=0.35, resp_mm=0.15):
 
 
 def test_segments_and_fd_respect_gaps():
-    vols = np.r_[np.arange(0, 300), np.arange(319, 800)]           # a 19-frame gap, as in run P10
+    vols = np.r_[np.arange(0, 300), np.arange(319, 800)]           # a 19-frame gap, as in one real run
     segs = nuisance.segments(vols)
     assert [(s.start, s.stop) for s in segs] == [(0, 300), (300, 781)]
     par = np.zeros((781, 6))

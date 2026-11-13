@@ -16,7 +16,7 @@ import pytest
 from mejoint import io, inventory
 
 TE_MS = [16.20, 31.22, 46.24, 61.26]
-STAMP = "TIMESTAMP"
+STAMP = "19990421124817"
 SHAPE = (10, 10, 8)
 
 
@@ -102,7 +102,7 @@ def make_subject(root: Path, n_vol=40, n_noise=2, n_nss=3, phase=True, physio=Fa
         other.mkdir()
         _dicom(other / "IM0001", 3, "gre_field_mapping", ["ORIGINAL", "PRIMARY", "M", "ND"], 1, 4.92)
 
-    rd = root / "OUT" / f"sub-P01_acq-{STAMP}_ser-{series}"
+    rd = root / "OUT" / f"sub-90001_acq-{STAMP}_ser-{series}"
     (rd / "motion").mkdir(parents=True)
     (rd / "work").mkdir()
     (rd / "tedana").mkdir()
@@ -142,7 +142,7 @@ def cfg():
 
 def test_full_subject(tmp_path, cfg):
     nd, rd = make_subject(tmp_path)
-    inv = inventory.inventory_subject(None, cfg, run_dir=rd, subject="P01")   # NIfTI folder from result.json
+    inv = inventory.inventory_subject(None, cfg, run_dir=rd, subject="90001")   # NIfTI folder from result.json
 
     assert inv["nifti_dir"] == str(nd)
     assert inv["rest_series_how"] == "result.json input_echo1"

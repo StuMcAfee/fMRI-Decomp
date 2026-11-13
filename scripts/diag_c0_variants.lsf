@@ -3,7 +3,7 @@
 # (c) c0 z-scored, at k = MAPCA AIC and 25, matched to the run's tedana components.
 # Submit from inside the repository:
 #   bsub -q standard -n 8 -R "rusage[mem=2000] span[hosts=1]" -env "all" -J diag_c0 -o logs/diag_c0_%J.log \
-#        "bash scripts/diag_c0_variants.lsf '<run name, e.g. sub-P04_acq-TIMESTAMP_ser-5>' [mc|mc_noreg_current]"
+#        "bash scripts/diag_c0_variants.lsf '<run name, e.g. sub-<subject>_acq-<time>_ser-<n>>' [mc|mc_noreg_current]"
 # Second argument: which front end (default mc = the current Phase 4 input, 24-term motion regression).
 set -uo pipefail
 PY="${MEJOINT_PY:-$HOME/miniconda3_new/envs/mejoint/bin/python}"

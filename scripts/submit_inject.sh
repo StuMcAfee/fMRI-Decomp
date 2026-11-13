@@ -2,9 +2,9 @@
 # Phase 5 injection calibration: one LSF job per participant and amplitude level, then a pooled summary once all
 # have ended. Run from inside the repository, on the login node:
 #   bash scripts/submit_inject.sh [--layout focal|network] [--levels "strong weak"] [--seed 1] [--clean] <subject or run folder name> [...]
-# e.g.  bash scripts/submit_inject.sh P04 P12
-#       bash scripts/submit_inject.sh --layout network P04 P12
-#       bash scripts/submit_inject.sh --layout regions --levels weak --conditions "independent shared" P04 P12   (R3)
+# e.g.  bash scripts/submit_inject.sh <subject> <subject>
+#       bash scripts/submit_inject.sh --layout network <subject> <subject>
+#       bash scripts/submit_inject.sh --layout regions --levels weak --conditions "independent shared" <subject> <subject>   (R3)
 # A subject number selects its run folder in OUT_keep (sub-<number>_*). The original run must already have been
 # through the whole pipeline (front end, tissue classes, sweep), as in scripts/submit_pipeline_batch.sh.
 set -euo pipefail

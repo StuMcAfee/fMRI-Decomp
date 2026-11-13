@@ -61,8 +61,8 @@ def test_common_regions_and_summary(tmp_path):
 
 
 def test_preflight(tmp_path):
-    cfg = io.load_config()
-    for run, gap in (("sub-201_acq-1_ser-5", False), ("sub-202_acq-1_ser-5", True), ("sub-P08_acq-1_ser-5", False)):
+    cfg = io.merge(io.load_config(), {"subjects": {"exclude": {"90009": "test exclusion"}}})
+    for run, gap in (("sub-201_acq-1_ser-5", False), ("sub-202_acq-1_ser-5", True), ("sub-90009_acq-1_ser-5", False)):
         fe = tmp_path / "phase2" / run / "mc"
         fe.mkdir(parents=True)
         echoes = []
@@ -77,7 +77,7 @@ def test_preflight(tmp_path):
         io.write_tsv(fe / "frames.tsv", {"frame": list(range(vols.size))})
     rows = route_b_batch.preflight(tmp_path / "phase2", tmp_path / "anatomy", cfg, out_dir=tmp_path / "out")
     by = {r["run"]: r for r in rows}
-    assert "sub-P08_acq-1_ser-5" not in by                            # excluded subject
+    assert "sub-90009_acq-1_ser-5" not in by                            # excluded subject
     assert by["sub-201_acq-1_ser-5"]["primary_eligible"] and by["sub-201_acq-1_ser-5"]["frames_used"] == cfg["regions"]["n_volumes_common"]
     assert not by["sub-202_acq-1_ser-5"]["primary_eligible"] and by["sub-202_acq-1_ser-5"]["gap_free_stretches"] == 2
     assert (tmp_path / "out" / "preflight.md").exists()
@@ -147,3 +147,18 @@ def test_sensitivity_summary(tmp_path):
     v = res["variants"][0]
     assert v["variant"] == "gsr" and v["n"] == 5 and v["primary_spearman_with_main"] == 1.0 and v["primary_median_change"] == 4.0
     assert (tmp_path / "out" / "sensitivity.md").exists()
+
+
+def test_site_config_holds_participant_identifiers(tmp_path):
+    """Participant identifiers (exclusions, coil set) come from a site file outside git (user, 2026-11-13); the
+    default config holds none."""
+    from pathlib import Path
+    base = io.load_config()
+    assert base["subjects"]["exclude"] in ({}, None) or base.get("_site_loaded")
+    site = tmp_path / "site.yaml"
+    site.write_text('subjects:\n  exclude:\n    "90009": "test"\nacquisition:\n  coil_head_only: ["90008"]\n')
+    over = tmp_path / "cfg.yaml"
+    over.write_text(f"extends: {Path(io.DEFAULT_CONFIG).resolve()}\nsite_config: {site}\n")
+    c = io.load_config(over)
+    assert c["subjects"]["exclude"] == {"90009": "test"} and c["acquisition"]["coil_head_only"] == ["90008"]
+    assert c["acquisition"]["te_ms"] == base["acquisition"]["te_ms"]

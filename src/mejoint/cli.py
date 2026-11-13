@@ -164,7 +164,7 @@ def main(argv=None) -> int:
     ebs.add_argument("--phase5-root", default="outputs/phase5")
     ebs.add_argument("--out", default="outputs/eta_background")
     ebs.add_argument("--k", type=int, action="append", help="k (repeatable; default 50, 90, 150)")
-    ebs.add_argument("--runs", nargs="*", help="only runs whose folder name contains one of these (e.g. P04 P12)")
+    ebs.add_argument("--runs", nargs="*", help="only runs whose folder name contains one of these (subject numbers)")
     ebs.add_argument("--config", help="config YAML (default: configs/default.yaml)")
 
     an = sub.add_parser("anatomy", help="route B: region labels in EPI space from the FSL outputs of scripts/anatomy_run.lsf")

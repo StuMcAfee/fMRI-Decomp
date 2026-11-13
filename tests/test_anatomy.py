@@ -18,16 +18,16 @@ REPO = Path(__file__).resolve().parents[1]
 
 def test_find_t1(tmp_path):
     lst = tmp_path / "t1.txt"
-    lst.write_text('"/data/Rad/P04/SCANDATE/x/2_-_SAG/2_-_SAG_3D_T1_MPRAGE_TIMESTAMP_2.nii.gz"\n'
-                   '"/data/Rad/P04/20250101/x/SAG_3D_T1_MPRAGE_20250101000000_2.nii.gz"\n'
-                   '"/data/Rad/P15/SCANDATE/x/SAG_3D_T1_MPRAGE_TIMESTAMP_2.nii.gz"\n')
-    assert anatomy.find_t1("sub-P04_acq-TIMESTAMP_ser-5", lst).endswith("TIMESTAMP_2.nii.gz")
-    assert "P15" in anatomy.find_t1("sub-P15_acq-TIMESTAMP_ser-5", lst)
+    lst.write_text('"/data/Rad/90001/19990603/x/2_-_SAG/2_-_SAG_3D_T1_MPRAGE_19990603110010_2.nii.gz"\n'
+                   '"/data/Rad/90001/20250101/x/SAG_3D_T1_MPRAGE_20250101000000_2.nii.gz"\n'
+                   '"/data/Rad/90002/19990721/x/SAG_3D_T1_MPRAGE_19990721133747_2.nii.gz"\n')
+    assert anatomy.find_t1("sub-90001_acq-REDACTED_ser-5", lst).endswith("19990603110010_2.nii.gz")
+    assert "90002" in anatomy.find_t1("sub-90002_acq-REDACTED_ser-5", lst)
     root = tmp_path / "Rad"
-    f = root / "P12" / "SCANDATE" / "MR" / "SAG_3D_T1_MPRAGE_TIMESTAMP_2.nii.gz"
+    f = root / "90003" / "19990616" / "MR" / "SAG_3D_T1_MPRAGE_19990616105615_2.nii.gz"
     f.parent.mkdir(parents=True)
     f.write_bytes(b"")
-    assert anatomy.find_t1("sub-P12_acq-TIMESTAMP_ser-5", lst, root) == str(f)
+    assert anatomy.find_t1("sub-90003_acq-REDACTED_ser-5", lst, root) == str(f)
     assert anatomy.find_t1("sub-99999_acq-1_ser-1", lst, root) is None
 
 

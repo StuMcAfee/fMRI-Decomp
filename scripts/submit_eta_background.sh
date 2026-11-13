@@ -1,12 +1,12 @@
 #!/bin/bash
 # Background-corrected eta: one LSF job per participant (native components at each k, computing k = 150 if missing,
 # and that participant's injections), then the pooled summaries. Run from inside the repository, on the login node:
-#   bash scripts/submit_eta_background.sh [--k "50 90 150"] [subject ...]      (default subjects: P04 P12)
+#   bash scripts/submit_eta_background.sh [--k "50 90 150"] [subject ...]      
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 KS="50 90 150"; RUNS=()
 while [ $# -gt 0 ]; do case "$1" in --k) KS="$2"; shift 2 ;; *) RUNS+=("$1"); shift ;; esac; done
-[ ${#RUNS[@]} -gt 0 ] || RUNS=(P04 P12)
+[ ${#RUNS[@]} -gt 0 ] || { echo "usage: bash scripts/submit_eta_background.sh [--k \"...\"] <subject> [...]" >&2; exit 2; }
 PY="${MEJOINT_PY:-$HOME/miniconda3_new/envs/mejoint/bin/python}"
 mkdir -p logs
 IDS=()

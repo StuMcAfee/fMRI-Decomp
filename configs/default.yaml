@@ -1,6 +1,7 @@
 # Every tunable for mejoint lives here. A copy (and its hash) is written into every output folder.
 # Values marked "from CLAUDE.md" are the brief's defaults; change them here, never in code.
 
+site_config: outputs/site.yaml   # participant identifiers (exclusions, coil set) live here, on the research storage, never in git
 project_seed: 20261102        # root of all SeedSequence-derived seeds (CLAUDE.md section 12)
 
 acquisition:
@@ -12,13 +13,11 @@ acquisition:
   mb_factor: 6                           # derived from SliceTiming (not in the JSON)
   slice_stack_separation: 8              # slices acquired together are 8 apart (48 / 6)
   phase_encoding: i                      # left-right; CAIPI shift unknown
-  coil_head_only: ["P12", "P06", "P09", "P08"]   # HE1-4 only, without neck elements (CLAUDE.md section 4); reported per participant in R5
+  coil_head_only: []            # subject numbers scanned with the head elements only (HE1-4, no neck elements); set in the site file (outputs/site.yaml), never here
   slice_axis: 2                          # axial slices along array axis 2 (48 slices; Phase 0)
 
 subjects:
-  exclude:                               # user decision 2026-11-02
-    "P08": "267-278 volumes per echo; volume pairing failed in mbme_tedana"
-    "P02": "metal artefact or similar in the right cerebral hemisphere (user, 2026-11-03)"
+  exclude: {}                            # {subject number: reason}; set in the site file (outputs/site.yaml), never here (user, 2026-11-13)
 
 inventory:                    # Phase 0 audit
   search_depth: 1             # NIfTI/DICOM may sit in the NIfTI folder or one level deeper

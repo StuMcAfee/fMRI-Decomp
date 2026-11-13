@@ -614,33 +614,49 @@ def select_frames(volumes, n_total: int, n_common) -> dict:
     return out
 
 
-def integration_ci(xb: np.ndarray, noise_band: np.ndarray, n_boot: int, block: int, rng, q=(0.025, 0.975)) -> dict:
-    """Block-bootstrap 95 % intervals (circular blocks of frames of the band-passed BOLD-like time courses; the
-    noise correction as in `coupling`) for the participation ratio without the first pattern (the primary), the
-    ordinary participation ratio and the global share (added 2026-11-13: the sensitivity analyses showed some
-    participants' primary to be imprecise)."""
+def integration_ci(xb: np.ndarray, noise_band: np.ndarray, n_boot: int, block: int, rng) -> dict:
+    """Block-bootstrap precision (circular blocks of frames of the band-passed BOLD-like time courses; noise
+    correction as in `coupling`) for the participation ratio without the first pattern (the primary), the ordinary
+    participation ratio and the global share. Reported: the bootstrap SD, the bootstrap bias (mean of the resamples
+    minus the estimate) and the normal interval estimate +- 1.96 SD.
+
+    Why not the percentile interval (first version, 2026-11-13): resampling repeats blocks, so a resample holds fewer
+    independent frames; eigenvalues of a correlation matrix spread out as independent frames get fewer, which lowers
+    every participation ratio. The percentile interval then sat below the estimate in most participants. The bias
+    itself is reported: it shows how strongly the measure depends on the effective number of frames."""
     xb = np.asarray(xb, np.float64)
     T = xb.shape[1]
     nb = np.asarray(noise_band, float)
-    nblk = int(np.ceil(T / block))
-    out = {"pr1": [], "pr": [], "gs": []}
-    for _ in range(int(n_boot)):
-        idx = (rng.integers(0, T, nblk)[:, None] + np.arange(block)[None, :]).ravel()[:T] % T
-        X = xb[:, idx]
+
+    def measures(X):
         X = X - X.mean(1, keepdims=True)
-        C = X @ X.T / T
+        C = X @ X.T / X.shape[1]
         sig = np.diag(C) - nb
         np.fill_diagonal(C, sig)
         d = np.sqrt(np.where(sig > 0, sig, np.nan))
         with np.errstate(divide="ignore", invalid="ignore"):
             R = C / np.outer(d, d)
         np.fill_diagonal(R, np.where(sig > 0, 1.0, np.nan))
-        out["pr1"].append(participation_ratio_residual(R))
-        out["pr"].append(participation_ratio(R))
-        out["gs"].append(global_share(X, sig, nb))
-    ci = lambda v: [_r(np.nanquantile(v, q[0])), _r(np.nanquantile(v, q[1]))] if np.isfinite(v).sum() > 10 else None
-    return {"pr_without_first_ci": ci(np.array(out["pr1"])), "participation_ratio_ci": ci(np.array(out["pr"])),
-            "global_share_ci": ci(np.array(out["gs"]))}
+        return participation_ratio_residual(R), participation_ratio(R), global_share(X, sig, nb)
+    est = measures(xb)
+    nblk = int(np.ceil(T / block))
+    boots = []
+    for _ in range(int(n_boot)):
+        idx = (rng.integers(0, T, nblk)[:, None] + np.arange(block)[None, :]).ravel()[:T] % T
+        boots.append(measures(xb[:, idx]))
+    B = np.array(boots, float)
+    out = {}
+    for j, name in enumerate(("pr_without_first", "participation_ratio", "global_share")):
+        v = B[:, j]
+        v = v[np.isfinite(v)]
+        if v.size > 10 and np.isfinite(est[j]):
+            sd = float(v.std(ddof=1))
+            out[f"{name}_ci"] = [_r(est[j] - 1.96 * sd), _r(est[j] + 1.96 * sd)]
+            out[f"{name}_boot_sd"] = _r(sd)
+            out[f"{name}_boot_bias"] = _r(float(v.mean() - est[j]))
+        else:
+            out[f"{name}_ci"] = None
+    return out
 
 
 def adjacency(labels3d: np.ndarray, ids) -> np.ndarray:
