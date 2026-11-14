@@ -1,0 +1,12 @@
+#!/bin/bash
+# White paper figures from existing outputs (pseudonymized): bash scripts/whitepaper_figures.lsf [--example P04]
+# Submits one small job (standard queue, 1 core, 8 GB); results in outputs/whitepaper/ (figures, numbers.json,
+# manifest.md). Run from inside the repository, on the login node.
+set -euo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+[ -f outputs/pseudonyms.tsv ] || { echo "STOP: outputs/pseudonyms.tsv not found (pseudonym key, kept outside git)" >&2; exit 1; }
+PY="${MEJOINT_PY:-$HOME/miniconda3_new/envs/mejoint/bin/python}"
+mkdir -p logs
+bsub -q standard -n 1 -R "rusage[mem=8000]" -env "all" -J whitepaper -o "logs/whitepaper_%J.log" \
+     "cd $PWD && PYTHONPATH=$PWD/src MPLBACKEND=Agg $PY scripts/whitepaper_figures.py $*"
+echo "when done: cat outputs/whitepaper/manifest.md"
