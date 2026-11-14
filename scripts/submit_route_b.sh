@@ -5,6 +5,7 @@
 # --after-anatomy: each job waits for that participant's anat_<subject> job (submit_anatomy.sh) to finish.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
+[ -f outputs/site.yaml ] || { echo "STOP: outputs/site.yaml not found (subject exclusions and coil set live there, outside git; see CLAUDE.md section 2)" >&2; exit 1; }
 PY="${MEJOINT_PY:-$HOME/miniconda3_new/envs/mejoint/bin/python}"
 ATLAS="200_7"; AFTER=""
 RUNS=()

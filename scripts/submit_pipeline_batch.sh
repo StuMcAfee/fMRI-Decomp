@@ -7,6 +7,7 @@
 # Subjects excluded in configs/default.yaml (subjects.exclude) are dropped before submission.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
+[ -f outputs/site.yaml ] || { echo "STOP: outputs/site.yaml not found (subject exclusions and coil set live there, outside git; see CLAUDE.md section 2)" >&2; exit 1; }
 SRC="${1:-}"
 ANALYSIS="/research_jude/rgs01_jude/dept/DI/tir/vision_lab/stu/CSIMemphis/Analysis/Monitoring Visit"
 MBME="${2:-$ANALYSIS/mbme_tedana.py}"

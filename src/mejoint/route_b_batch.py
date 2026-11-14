@@ -68,7 +68,7 @@ def preflight(phase2_root, anat_root, cfg: dict, t1_list=None, out_dir=None, atl
         out = Path(out_dir)
         out.mkdir(parents=True, exist_ok=True)
         io.write_tsv(out / "preflight.tsv", {k: [r[k] for r in rows] for k in rows[0]} if rows else {"run": []})
-        L = ["# R5 preflight", "", f"{len(rows)} runs (excluded subjects dropped). Frames used: the first "
+        L = ["# R5 preflight", "", io.site_status(cfg), "", f"{len(rows)} runs (excluded subjects dropped). Frames used: the first "
              f"{G.get('n_volumes_common')} of the longest gap-free stretch (R5-1).", "",
              "| run | echo files | frames | gap-free stretches | frames used | in primary | T1 | anatomy | coil |",
              "|---|---|---|---|---|---|---|---|---|"]
@@ -314,14 +314,14 @@ def summary(route_b_root, phase2_root, inject_root, cfg: dict, out_dir, atlas: s
     tsv("regions.tsv", reg)
     tsv("deep_regions.tsv", deep)
     tsv("deep_pooled.tsv", pooled)
-    res = {"atlas": atlas, "n_volumes_common": cfg.get("regions", {}).get("n_volumes_common"), "participants": part, "deep_pooled": pooled, "cohort_checks": checks, **io.provenance(cfg, {})}
+    res = {"atlas": atlas, "site": io.site_status(cfg), "n_volumes_common": cfg.get("regions", {}).get("n_volumes_common"), "participants": part, "deep_pooled": pooled, "cohort_checks": checks, **io.provenance(cfg, {})}
     io.write_json(out / "summary.json", res)
     io.write_text(out / "summary.md", render(res))
     return res
 
 
 def render(s: dict) -> str:
-    L = [f"# R5: route B over all participants ({s['atlas']})", "",
+    L = [f"# R5: route B over all participants ({s['atlas']})", "", s.get("site", ""), "",
          f"Primary: cortex without CSF-rich voxels, first {s.get('n_volumes_common')} frames of the longest gap-free stretch. 'in primary' = "
          "False: the stretch was too short (reported, not in the cohort checks). Injection: change at resting strength "
          "(independent networks / one shared network).", "",
@@ -392,9 +392,9 @@ def sensitivity_summary(primary_root, sens_root, cfg: dict, out_dir, atlas: str 
     out.mkdir(parents=True, exist_ok=True)
     if table:
         io.write_tsv(out / "sensitivity_participants.tsv", {k: [t.get(k) for t in table] for k in table[0]})
-    res = {"variants": rows, "participants": table, **io.provenance(cfg, {})}
+    res = {"variants": rows, "participants": table, "site": io.site_status(cfg), **io.provenance(cfg, {})}
     io.write_json(out / "sensitivity.json", res)
-    L = ["# Second-pass sensitivity analyses", "",
+    L = ["# Second-pass sensitivity analyses", "", res["site"], "",
          "Primary = participation ratio without the first pattern. Per variant, across participants in the primary: "
          "Spearman with the main analysis (does the ranking of participants hold?) and the median change.", "",
          "| variant | n | primary: Spearman / median change | global share: Spearman / median change | ordinary PR: Spearman / median change | variant's ordinary PR vs main primary (Spearman) | censored fraction (median, max) |",

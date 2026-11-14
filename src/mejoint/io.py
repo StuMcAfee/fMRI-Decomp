@@ -39,8 +39,24 @@ def load_config(path: str | os.PathLike | None = None) -> dict:
             with open(sp) as f:
                 cfg = merge(cfg, yaml.safe_load(f) or {})
             cfg["_site_loaded"] = str(sp)
+            cfg.pop("_site_missing", None)
+        else:  # never silent: without it, excluded subjects are kept and every run reads as head-neck
+            cfg["_site_missing"] = str(sp)
+            import sys
+            print(f"WARNING: site file {sp} not found: subject exclusions and the coil set are NOT applied",
+                  file=sys.stderr)
     cfg["_config_path"] = str(path)
     return cfg
+
+
+def site_status(cfg: dict) -> str:
+    """One line for every report: whether the site file (exclusions, coil set) was applied."""
+    if cfg.get("_site_loaded"):
+        return f"Site file loaded ({cfg['_site_loaded']}): subject exclusions and coil set applied."
+    if cfg.get("_site_missing"):
+        return (f"**WARNING: site file not found ({cfg['_site_missing']}): subject exclusions and coil set NOT "
+                "applied (every run reads as head-neck).**")
+    return "No site file configured."
 
 
 def config_hash(cfg: dict) -> str:

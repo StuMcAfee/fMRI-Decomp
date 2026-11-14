@@ -162,3 +162,18 @@ def test_site_config_holds_participant_identifiers(tmp_path):
     c = io.load_config(over)
     assert c["subjects"]["exclude"] == {"90009": "test"} and c["acquisition"]["coil_head_only"] == ["90008"]
     assert c["acquisition"]["te_ms"] == base["acquisition"]["te_ms"]
+
+
+def test_missing_site_file_is_reported(tmp_path, capsys):
+    """A missing site file is never silent: a warning on stderr and a status line for every report."""
+    from pathlib import Path
+    over = tmp_path / "cfg.yaml"
+    over.write_text(f"extends: {Path(io.DEFAULT_CONFIG).resolve()}\nsite_config: {tmp_path / 'absent.yaml'}\n")
+    c = io.load_config(over)
+    assert "not found" in capsys.readouterr().err
+    assert c.get("_site_missing") and "NOT applied" in io.site_status(c)
+    site = tmp_path / "site.yaml"
+    site.write_text('acquisition:\n  coil_head_only: ["90008"]\n')
+    over.write_text(f"extends: {Path(io.DEFAULT_CONFIG).resolve()}\nsite_config: {site}\n")
+    c = io.load_config(over)
+    assert not c.get("_site_missing") and io.site_status(c).startswith("Site file loaded")
