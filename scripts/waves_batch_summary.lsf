@@ -1,0 +1,13 @@
+#!/bin/bash
+# Cross-participant summaries after a batch (waves; and the joint-ICA sweep when it ran):
+#   bash scripts/waves_batch_summary.lsf <git commit of the batch>
+set -uo pipefail
+PY="${MEJOINT_PY:-$HOME/miniconda3_new/envs/mejoint/bin/python}"
+COMMIT="${1:-}"
+[ -n "$COMMIT" ] || { echo "usage: waves_batch_summary.lsf <git commit>" >&2; exit 2; }
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}" PYTHONUNBUFFERED=1
+"$PY" -m mejoint.cli waves-summary --root outputs/waves --commit "$COMMIT" --out "outputs/waves_batch/$COMMIT"
+if [ -d outputs/phase5 ]; then                                  # the joint-ICA sweep, when the whole pipeline ran
+    "$PY" -m mejoint.cli sweep-summary --root outputs/phase5 --out "outputs/sweep_batch/$COMMIT"
+fi

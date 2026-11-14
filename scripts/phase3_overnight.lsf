@@ -1,0 +1,28 @@
+#!/bin/bash
+# Overnight run on one subject: front end (motion-corrected echoes, nuisance projection with the
+# surrogate-regressor check) then Phase 3 rank (EXPLORATORY: the rank gate has not passed) and figures.
+#   bsub ... "bash scripts/phase3_overnight.lsf '<OUT_keep run folder>'"
+set -euo pipefail
+PY="$HOME/miniconda3_new/envs/mejoint/bin/python"
+RUN_DIR="${1:-}"
+REPO=""
+for cand in "$(dirname "${BASH_SOURCE[0]:-.}")/.." "$PWD" "${LS_SUBCWD:-}"; do
+    if [ -n "$cand" ] && [ -f "$cand/src/mejoint/__init__.py" ]; then REPO="$(cd "$cand" && pwd)"; break; fi
+done
+[ -n "$REPO" ] || { echo "Cannot find the fMRI-Decomp folder (src/mejoint). Run from inside it." >&2; exit 2; }
+cd "$REPO"
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONUNBUFFERED=1
+NT="${LSB_DJOB_NUMPROC:-4}"; export OMP_NUM_THREADS="$NT" MKL_NUM_THREADS="$NT" OPENBLAS_NUM_THREADS="$NT"
+[ -n "$RUN_DIR" ] && [ -f "$RUN_DIR/result.json" ] || { echo "first argument must be an mbme_tedana run folder (with result.json)" >&2; exit 2; }
+NAME="$(basename "$RUN_DIR")"
+FE="outputs/phase2/$NAME/mc"
+RK="outputs/phase3/$NAME/mc"
+echo "== mejoint overnight | $(date) | host $(hostname) | job ${LSB_JOBID:-interactive} | git $(git rev-parse --short HEAD 2>/dev/null || echo '?')"
+mkdir -p "$FE" "$RK"
+"$PY" -m mejoint.cli frontend --run-dir "$RUN_DIR" --source mc --mask auto --out "$FE"
+"$PY" scripts/plot_frontend.py "$FE" "$FE/frontend_qc.png" || echo "front-end figure failed (continuing)"
+echo "== front end done | $(date)"
+"$PY" -m mejoint.cli rank --frontend-dir "$FE" --out "$RK"
+"$PY" scripts/plot_rank.py "$RK" || echo "rank figure failed"
+echo "== done | $(date) | $PWD/$FE/summary.md and $PWD/$RK/rank.md"

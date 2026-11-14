@@ -1,0 +1,13 @@
+#!/bin/bash
+# One element of the wave batch (LSF job array): runs scripts/waves_overnight.lsf in "batch" mode on line
+# $LSB_JOBINDEX of a run-list file (one mbme_tedana run folder with --keep-intermediates per line).
+# Submitted by scripts/submit_waves_batch.sh; by hand:  bash scripts/waves_batch.lsf <runs.txt> <line number> [config]
+set -uo pipefail
+LIST="${1:-}"
+IDX="${LSB_JOBINDEX:-${2:-}}"
+CONFIG="${3:-}"
+[ -f "$LIST" ] && [ -n "$IDX" ] || { echo "usage: waves_batch.lsf <run-list file> [line number]" >&2; exit 2; }
+RUN="$(sed -n "${IDX}p" "$LIST")"
+[ -n "$RUN" ] || { echo "line $IDX of $LIST is empty" >&2; exit 2; }
+echo "== wave batch element $IDX: $RUN"
+exec bash "$(dirname "${BASH_SOURCE[0]}")/waves_overnight.lsf" "$RUN" batch "$CONFIG"

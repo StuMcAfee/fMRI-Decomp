@@ -23,11 +23,11 @@ Stretch goal: a structured factorization with group-sparse channel maps.
 - **User:** Stu McAfee, PhD (St. Jude, Diagnostic Imaging). He is expert in fMRI physiology and cerebellar/posterior fossa neuroscience.
 - **Python level:** novice to intermediate. Explain code by what it does, not by language mechanics.
 - **Writing:** keep scientific writing concise and defensible. Avoid em dashes in prose written for him.
-- **Git:** work on one feature branch per phase, never directly on `main`. Whenever you create, switch or merge a branch, give the exact commands and one line on why:
+- **Git:** all phases are developed on the single branch `claude/beautiful-hamilton-141ubf` (user decision, 2026-11-02; this replaces one branch per phase). Never commit directly to `main`; merge into `main` only when the user agrees. Whenever you create, switch or merge a branch, give the exact commands and one line on why:
   ```bash
-  git switch -c phase2-frontend                  # new branch for this phase
-  git add -A && git commit -m "..."              # save progress
-  git switch main && git merge phase2-frontend   # only after the gate passes and the user agrees
+  git pull origin claude/beautiful-hamilton-141ubf     # get the latest work on the project branch
+  git add -A && git commit -m "..."                    # save progress
+  git switch main && git merge claude/beautiful-hamilton-141ubf   # only when the user agrees
   ```
 - **Stop and ask, do not guess,** when any of these happens:
   - an acquisition fact (section 4) is unknown and changes the design;
@@ -51,7 +51,9 @@ Stretch goal: a structured factorization with group-sparse channel maps.
   - `rusage[mem=]` is **per core**.
   - Multi-core jobs need `span[hosts=1]`.
   - Inside a job, use `$LSB_DJOB_NUMPROC` for worker counts, not `os.cpu_count()`.
-- **Python:** conda lives in `~/miniconda3_new`. The cluster `python/3.11.0` module, which loads with `fsl/6`, shadows conda's python. Always call the env's python by full path in job scripts.
+- **Python:** conda lives in `~/miniconda3_new`. Project env: `~/miniconda3_new/envs/mejoint` (a clone of the tedana env: tedana 26.0.3, torch 2.6.0+cu124, dipy, pytest, pyyaml); always call `~/miniconda3_new/envs/mejoint/bin/python` by full path. Keep `~/miniconda3_new/envs/tedana` unchanged for the existing analysis. Job scripts use the code in `src/` via `PYTHONPATH` (no pip install).
+- **Interactive sessions** started from Open OnDemand are LSF jobs whose `LS_SUBCWD` is the dashboard folder; scripts must not rely on it to find the repository.
+- **LSF memory:** `rusage[mem=]` is in MB and enforced as a hard limit. Exported variables did not reliably reach jobs; pass paths as arguments or in list files. The cluster `python/3.11.0` module, which loads with `fsl/6`, shadows conda's python. Always call the env's python by full path in job scripts.
 - **FSL:** `fsl/6` does not set `FSLOUTPUTTYPE`; export it in scripts.
 - **GPU:** the driver is CUDA 12.4. Use a cu124 torch build; `torch==2.6.0+cu124` is known to work.
 - **Packages:** install them on the login node.
@@ -62,22 +64,28 @@ Stretch goal: a structured factorization with group-sparse channel maps.
 - Resting-state multiband multi-echo EPI with 4 echoes.
 - **TE = 16.20, 31.22, 46.24, 61.26 ms.**
 - TR ≈ 0.75 s, so Nyquist is 0.667 Hz.
-- Most acquisitions have about 800 volumes in one run. One (subject P08) has only about 267–278 volumes per echo, which is why the existing pipeline already handles unequal volume counts across echoes.
-- 52×64×48 matrix (~3.5 mm voxels), likely 3T.
+- 17 runs (one per subject) were audited in Phase 0. Most have 800 volumes per echo. Echo volume counts differ in 5 runs; the pipeline's data-driven pairing kept 797, 751, 777 and 797 volumes in four of them (run P10 has a 19-volume gap inside the run, so kept volumes are not always consecutive in time). **Subject P08** (267–278 volumes per echo) failed pairing in the pipeline and is **excluded** (user decision, 2026-11-02). **Subject P02** is **excluded** (metal artefact or similar in the right cerebral hemisphere; user decision, 2026-11-03). 15 runs remain.
+- 52×64×48 matrix, **3.281 × 3.281 × 3.3 mm** voxels (no slice gap). 3T Siemens MAGNETOM Prisma, syngo MR XA60, CMRR `cmrr_mbep2d_bold`. DICOMs are enhanced (XA) multi-frame files.
+- **MB 6** (derived from SliceTiming: 48 slices, 8 distinct times; `MultibandAccelerationFactor` is absent from the JSON). Slices acquired together are 8 slices (26.4 mm) apart. GRAPPA 2, partial Fourier 7/8, effective echo spacing 0.31 ms, total readout 15.8 ms.
+- **Phase encoding is left-right** (`PhaseEncodingDirection` = i, DICOM `ROW`; the 52-line axis has the narrower 170 mm FOV). Distortion, ghosting and any CAIPI shift run left-right.
+- HeadNeck_20 coil, elements HE1-4;NE1,2 (HE1-4 only, without neck elements, in P12, P06, P09 and P08); sum-of-squares coil combination, so low-SNR magnitude noise is noncentral-χ.
 - Participants are children and young adults, including patients after posterior fossa tumor surgery (resection cavities, hemosiderin, clips).
 
-**Unknown facts, to establish in Phase 0 and report:**
-- Whether phase was saved (dcm2niix `_ph` files, or `ImageType` containing `P`).
-- Noise frames at the end of the run. Use a detection rule such as trailing volumes with mean signal below 10% of the median.
-- Physiological recordings: whether they exist, their format and location.
-- Non-steady-state volumes.
-- From the JSON sidecars: MB factor, in-plane acceleration, partial Fourier, phase-encode direction, and coil combination if recorded.
-- Slice-stack spacing and CAIPI shift, needed for the MB alias test; they may need the user or the protocol PDF.
-- Where native-space tissue masks (grey matter, CSF/ventricles, large vessels/sinuses) and patient cavity/peri-cavity masks will come from. **Ask the user.**
+**Established in Phase 0 (all 17 runs; details in `docs/decisions.md`):**
+- Phase: **not saved**.
+- Noise frames: **none**. Non-steady-state volumes: **none** (first-volume / median signal ratio about 1.00).
+- Physiological recordings: **none recorded** (user). No RETROICOR/RVT; respiratory and cardiac effects must be handled from the data and reported as a limitation.
+- Sequence fields: see the acquisition bullets above.
+- Slice-stack spacing: 8 slices (26.4 mm). **CAIPI shift unknown** (no protocol PDF; not found in the DICOM sample).
+- Tissue masks (grey matter, CSF/ventricles, vessels/sinuses) and cavity/peri-cavity masks: **no ready-made source exists** (user). Each session has a **T1w scan** (user, 2026-11-04). Build both a T1-based option (segmentation registered to EPI space) and a **data-only option** (classes from the multi-echo data alone), so the analysis can run from this data only.
+
+**Analysis mask and independence (user decisions, 2026-11-02):**
+- The analysis always uses its own hole-filled brain mask, built from the input echoes by `mask.py` (head vs air from the measured noise level, coil-shading correction, brain vs scalp with a brain-like echo-1/echo-4 decay to exclude neck and face muscle, every enclosed hole filled, then regrowth into adjacent bright tissue so dephased cerebellar and orbitofrontal edges are kept). The user requires the cerebellum and orbitofrontal cortex to be included (2026-11-03). mbme_tedana's `brain_mask.nii.gz` (nilearn `compute_epi_mask`, which never fills holes) drops the deep brain in many participants; use it only to restrict comparisons with tedana to the voxels tedana saw.
+- The analysis should run without tedana intermediates or outputs. The front end already runs from the raw echo files alone (`--echo1`, equal echo volume counts). Volume pairing and motion correction still come from mbme_tedana; how to remove that dependence is an open decision (see `docs/decisions.md`).
 
 DICOM headers sit in the NIfTI folder or one level deeper.
 
-**Existing pipeline: `mbme_tedana.py`.** Ask the user for its path and output folder. What it does:
+**Existing pipeline: `mbme_tedana.py`** at `/research_jude/rgs01_jude/dept/DI/tir/vision_lab/stu/CSIMemphis/Analysis/Monitoring Visit/mbme_tedana.py`, outputs in `.../Monitoring Visit/OUT/` (paths contain a space; always quote them). What it does:
 - Finds the echoes from an echo-1 list.
 - Pairs volumes across echoes when the echo counts differ, and writes `volumes_used.tsv`.
 - Motion-corrects: mcflirt on echo 1, then one `flirt -applyxfm` resampling with the same transforms on every echo (spline interpolation by default; read it from `result.json` parameters). Motion parameters are written to `<run>/motion/mcflirt.par`.
@@ -85,6 +93,10 @@ DICOM headers sit in the NIfTI folder or one level deeper.
 - Has a `--focal` option for focal kappa/rho.
 - Keeps the motion-corrected echoes only with `--keep-intermediates`, at `<run>/work/echo-k_desc-mc_bold.nii.gz`.
 - Writes tedana outputs to `<run>/tedana/`.
+- The existing runs used the script's defaults `--ica-method robustica --n-robust-runs 30 --tedpca aic --tree tedana_orig --seed 42 --interp spline` (robustica, not tedana's own fastica default).
+- TEs were passed with `--echo-times`: the script cannot read TEs from these enhanced DICOMs (JSON agrees).
+- No run kept its motion-corrected echoes. A rerun of P01 with `--keep-intermediates` into `.../Monitoring Visit/OUT_keep/` provides them.
+- 5 of the 16 completed runs hit tedana's "no provisional accept" fallback and report 0 "Likely BOLD" components (P12, P04, P10, P03, P07).
 
 **Reuse it for preprocessing and as the tedana baseline. Do not reimplement volume pairing or motion correction.** Run tedana by full path from the pinned environment, and confirm flag spellings with `tedana --help`. The 26.0.3 source uses `--ica-method` and `--n-robust-runs`; some docs show underscores.
 
@@ -120,7 +132,9 @@ What follows from this:
 
 ### 5.3 Front-end construction
 
-Batched over voxels, with σ assumed equal across echoes within a voxel (see 5.4):
+**Per-echo noise (user decision, 2026-11-03, option A).** The noise survey (15 runs) found echo 1 noisiest in 14 of 15 runs, so σ is **not** equal across echoes in this protocol. The front end uses σ_ve = σ_v·r_e with one study-wide ratio vector **r = [1, 0.721, 0.631, 0.560]** (`frontend.echo_noise_ratios`; median over the 15 runs of the differenced-residual estimates, see 5.4 step 4; echo 1 = 1; user decision 2026-11-03, replacing the low-drift estimate [1, 0.761, 0.671, 0.602]). Everywhere below, replace the mean μ_e used as the noise scale by the noise-scaled mean μ_e/r_e: `Xw = (m / (sigma * r))[:, None] * D`, `yw = (m / (sigma * r))[:, None] * y`, and the σ-free residual basis is built from (μ/r)∘D. σ_v is then the echo-1 noise, estimated exactly as in 5.4. `frontend.weighting: equal` restores the original equal weights; use it for the Phase 4 tedana-equivalence test (property 1 below holds only with equal weights) and as a sensitivity analysis of every main result. On simulated data with these ratios, per-echo weights whiten to within 1 % of I; equal weights miss by up to 65 %.
+
+Batched over voxels, written here for equal σ across echoes (with per-echo noise, use m / r as above):
 
 ```python
 import numpy as np
@@ -157,10 +171,12 @@ Do not add extra weighting by df or echo count. Whitening already gives unit noi
    - Config default 5; report sensitivity at 3.
    - Magnitude noise is Rician/noncentral-χ, and in the simulation echo-4 means were biased up to 1.6× near μ/σ ≈ 1.
    - To break the chicken-and-egg loop (σ is needed to choose echoes, and echoes are needed for σ), first estimate σ only in voxels with μ_min/σ_init > ~10, using σ_init from a robust background or MP-PCA estimate.
-3. σ-free residual: build the residual basis from μ∘D only. It is independent of σ when σ is equal across echoes. Then `Qperpᵀ(μ∘y) = σ·r`.
-4. Estimate σ per voxel robustly over time:
-   - with df = 2: `σ² = median(Σ r²) / (2 ln 2)`;
-   - with df = 1: `σ² = median(r²) / 0.4549`.
+3. σ-free residual: build the residual basis from μ∘D only (with per-echo noise: from (μ/r)∘D). It is independent of σ_v. Then `Qperpᵀ((μ/r)∘y) = σ_v·r`.
+4. Estimate σ per voxel robustly over time, from **frame-to-frame differences** of the residual, Δr_t = r_t − r_(t−1) (user decision 2026-11-03; `frontend.sigma_estimator: differenced`). White thermal noise has variance 2σ² after differencing; slow, drift-paced model violations cancel. On P04 they inflated the non-differenced σ by about 8 % (brain median).
+   - with df = 2: `σ² = median(Σ Δr²) / (2 · 2 ln 2)`;
+   - with df = 1: `σ² = median(Δr²) / (2 · 0.4549)`.
+   - The standard error is 1.10× (df = 1) and 1.12× (df = 2) that of the non-differenced form (simulation). Fast violations (e.g. respiration-paced) do not cancel.
+   - The non-differenced form (`median(Σ r²) / (2 ln 2)`, `median(r²) / 0.4549`; `sigma_estimator: residual`) is kept as a sensitivity analysis.
 5. Fit a smooth σ map (g-factor varies smoothly) and use it in low-SNR voxels and df = 0 voxels.
 6. Whiten using that σ.
 7. **Never estimate σ from temporal variance of the data.** Physiological noise scales with signal and TE, so that would be circular.
@@ -169,7 +185,10 @@ Do not add extra weighting by df or echo count. Whitening already gives unit noi
 - Motion correction resamples each volume. With trilinear interpolation, noise SD can drop to about 0.35× at half-voxel shifts. It varies frame by frame and becomes spatially correlated.
 - The ratio across echoes stays equal (the same transform is used for all echoes), so the weights remain valid.
 - Absolute σ and the unit-variance claims are approximate on motion-corrected data.
-- Run the dipy MP-PCA σ cross-check (`mppca(..., return_sigma=True)`, per echo) on **raw, non-motion-corrected** echoes. If brain-median residual σ (raw data) and MP-PCA σ differ by more than 20%, stop and report.
+- Run the dipy MP-PCA σ cross-check (`mppca(..., return_sigma=True)`, per echo) on **raw, non-motion-corrected** echoes. Compare it per echo with the residual model σ_v·r_e, in two parts (user decision 2026-11-03, replacing one 20% rule for all echoes):
+  - **Shape** (each echo's model/MP-PCA ratio divided by echo 1's; tests the echo ratios r, which set the weighting): within ±10%. Worst case at 10%: c0–c1 noise correlation about 0.1.
+  - **Level** (echo 1's ratio after the simulated MP-PCA bias; the overall noise scale, which only rescales the channels): within ±20%.
+  - If either fails, stop and report. `mejoint mppca-recheck <summary.json>` re-evaluates an existing output. (Under the original equal-σ model this check failed on P04 with up to 70% disagreement; that led to the per-echo model above. With per-echo weights and the non-differenced σ it failed again at 33–53%; that led to the differenced estimator in step 4.)
 
 ## 6. Architecture (build in this order)
 
@@ -178,6 +197,7 @@ src/mejoint/
   io.py          # nibabel dataobj -> float32 masked (V x T); NIfTI/TSV/JSON writers; provenance
   inventory.py   # Phase 0 audit
   simulate.py    # ground-truth multi-echo simulator (Phase 1)
+  mask.py        # robust brain mask from the input echoes (noise-referenced, shading-corrected, holes filled)
   frontend.py    # mu/T2* fit, sigma (5.4), echo usability, df map, log-ratio, QR whitening -> c0, c1, r
   nuisance.py    # one projector applied to y (log-ratio, all echoes) and to r (Phase 2b)
   rank.py        # spectra, thermal and temporal nulls, shrinkage (Phase 3)
@@ -228,13 +248,18 @@ E_R2 = Σ_v R00²·q_v²           −  Σ_v (1 + R01²/R11²)/‖t‖²
 eta  = E_S0 / (E_S0 + E_R2)     (≈ 0 pure R2*, ≈ 1 pure S0, bounded and sign-symmetric for mixed)
 ```
 
-A simulation check in the planning session gave η = 0.003 (pure R2*), 1.000 (pure S0) and 0.18–0.98 for mixed sources of either relative sign. For pure noise η is arbitrary, so **interpret η only when E_S0 + E_R2 exceeds its null** (random/phase-randomized time courses).
+A simulation check in the planning session gave η = 0.003 (pure R2*), 1.000 (pure S0) and 0.18–0.98 for mixed sources of either relative sign. For pure noise η is arbitrary, so **interpret η only when E_S0 + E_R2 exceeds its null.**
+
+**Implementation (user decision, 2026-11-04; found in Phase 4 simulations, `docs/decisions.md`):**
+- **Cross-fitted maps for η.** The debiasing above holds for a fixed regressor. ICA time courses are chosen from the same noise (a pure-ΔR2* source showed η = 0.09). Each voxel's betas come from a time course estimated from the other voxel half (readout slabs), which makes the debiasing exact.
+- **Null through the same selection, family-wise.** Random or phase-randomized single time courses ignore that components are top-variance directions (on pure noise every component exceeded them about 10×). The null is the top-k PCA directions of phase-randomized surrogates, and a component must beat the 0.95 quantile of the largest of the k. Components above a first, conservative pass are removed before the final surrogates, so strong signals do not inflate the null.
+- **Label margin.** Matched-SNR bands hold thermal noise only; a 0.05 margin covers ICA cross-talk. Real-data bands by injection come in Phase 5.
 
 Do **not** use either of these instead:
 - **The raw channel-energy fraction φ = ‖m1‖²/(‖m0‖² + ‖m1‖²).** A pure-S0 component gives only φ ≈ 0.15–0.21 at these TEs (lower in 3-echo voxels), while pure noise gives φ ≈ 0.5.
 - **E_S0 divided by total channel energy.** It is unbounded for mixed sources, because ΔS0 and ΔR2* can cancel in c0.
 
-**Reference bands.** Define η bands by simulation: pure-R2*-only, pure-S0-only and noise-only components at **matched component SNR**, run through the same pipeline. Real-data nulls come from random and phase-randomized time courses.
+**Reference bands.** Define η bands by simulation: pure-R2*-only, pure-S0-only and noise-only components at **matched component SNR**, run through the same pipeline. Real-data nulls come from phase-randomized surrogates through the same selection (see Implementation above); single random time courses are reported for reference only.
 
 **Also report for each component:**
 - ‖s‖ and ‖q‖ with bootstrap intervals;
@@ -295,6 +320,8 @@ Do **not** use either of these instead:
 
 **Gate:** simulated true rank recovered within ±10%, and real-data spectra plotted.
 
+**Outcome (user decision, 2026-11-04):** no gated k. The phase-randomized estimators either under-count (index by index) or run to their limit on real data (deflated, split-half), because the noise is coloured and nonstationary at a precision of tens of thousands of voxels (`docs/decisions.md`). Phase 4 runs on the fixed sweep (MAPCA AIC/KIC/MDL, 50, 70, 90) with every result reported across k; the other estimates are reported as descriptions.
+
 **Phase 4: joint ICA (option 1) and metrics.**
 
 Tests:
@@ -334,6 +361,8 @@ Tests:
 - **pBOLD / echo-pair FC geometry** as a decomposition-independent referee, **only after the user supplies the full preprint** (PubMed 41929219; DOI unverified). It is a preprint metric; label it as such.
 
 **Gate:** results table and figures shown to the user before any batch run.
+
+**Between Phase 5 and Phase 6 (user decision, 2026-11-04):** traveling-wave detection (`docs/WAVES_BRIEF.md`).
 
 **Phase 6: batch run and summary.**
 - LSF job array over subjects, plus a dependent summary job.

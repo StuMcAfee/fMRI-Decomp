@@ -1,0 +1,19 @@
+#!/bin/bash
+# Two-stage design, step 1 diagnostic on one run: joint ICA variants (a) [c0 | c1] thermal, (b) c0 thermal,
+# (c) c0 z-scored, at k = MAPCA AIC and 25, matched to the run's tedana components.
+# Submit from inside the repository:
+#   bsub -q standard -n 8 -R "rusage[mem=2000] span[hosts=1]" -env "all" -J diag_c0 -o logs/diag_c0_%J.log \
+#        "bash scripts/diag_c0_variants.lsf '<run name, e.g. sub-P04_acq-TIMESTAMP_ser-5>' [mc|mc_noreg_current]"
+# Second argument: which front end (default mc = the current Phase 4 input, 24-term motion regression).
+set -uo pipefail
+PY="${MEJOINT_PY:-$HOME/miniconda3_new/envs/mejoint/bin/python}"
+NAME="${1:-}"; FE_SUB="${2:-mc}"
+[ -n "$NAME" ] || { echo "usage: diag_c0_variants.lsf <run name> [mc|mc_noreg_current]" >&2; exit 2; }
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}" PYTHONUNBUFFERED=1
+export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1      # parallelism comes from the ICA restarts
+TED="/research_jude/rgs01_jude/dept/DI/tir/vision_lab/stu/CSIMemphis/Analysis/Monitoring Visit/OUT_keep/$NAME/tedana"
+echo "== step 1 diagnostic | $(date) | $NAME | front end $FE_SUB | git $(git rev-parse --short HEAD 2>/dev/null || echo '?')"
+"$PY" scripts/diag_c0_variants.py "outputs/phase2/$NAME/$FE_SUB" "$TED" "outputs/two_stage_step1/$NAME/$FE_SUB" \
+    --rank-dir "outputs/phase3/$NAME/mc" --k 25
+echo "== done | $(date) | outputs/two_stage_step1/$NAME/$FE_SUB/diag.md"

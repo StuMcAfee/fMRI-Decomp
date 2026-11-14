@@ -1,0 +1,55 @@
+#!/bin/bash
+# One participant through the whole pipeline (one element of an LSF job array; submitted by
+# scripts/submit_pipeline_batch.sh). Line $LSB_JOBINDEX of an echo-1 list:
+#   1. mbme_tedana.py run --keep-intermediates into OUT_keep (pairing, motion correction, mask, tedana; the
+#      script skips a run that already finished, e.g. P04), same settings as the existing analysis;
+#   2. scripts/waves_overnight.lsf <run folder> full: front ends (with and without motion regression), tissue
+#      classes, rank (MAPCA), waves (primary, motion-regressed, motion-orthogonal), joint-ICA sweep.
+# Arguments: <echo-1 list> <mbme_tedana.py> <OUT_keep folder> [line number, default $LSB_JOBINDEX] [config.yaml]
+set -uo pipefail
+LIST="${1:-}"; MBME="${2:-}"; OUTK="${3:-}"; IDX="${LSB_JOBINDEX:-${4:-}}"; CONFIG="${5:-}"
+TPY="${TEDANA_PY:-$HOME/miniconda3_new/envs/tedana/bin/python}"    # the env of the existing analysis (unchanged)
+PY="${MEJOINT_PY:-$HOME/miniconda3_new/envs/mejoint/bin/python}"
+fail() { echo "PREFLIGHT FAILED: $*" >&2; exit 2; }
+[ -f "$LIST" ] && [ -f "$MBME" ] && [ -n "$OUTK" ] && [ -n "$IDX" ] || fail "usage: pipeline_batch.lsf <list> <mbme_tedana.py> <OUT_keep> [line] [config]"
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}" PYTHONUNBUFFERED=1
+E1="$(sed -n "${IDX}p" "$LIST" | sed -e "s/^[[:space:]]*[\"']//" -e "s/[\"'][[:space:]]*$//")"
+[ -n "$E1" ] || fail "line $IDX of $LIST is empty"
+echo "== pipeline element $IDX | $(date) | host $(hostname) | job ${LSB_JOBID:-interactive} | cores ${LSB_DJOB_NUMPROC:-?} | git $(git rev-parse --short HEAD 2>/dev/null || echo '?')"
+echo "echo 1: $E1"
+
+# --- 1. preprocessing with mbme_tedana (FSL 6 needed; bsub shells do not define `module`)
+for init in /usr/share/Modules/init/bash /etc/profile.d/modules.sh /cm/local/apps/environment-modules/*/init/bash; do
+    [ -f "$init" ] && { source "$init"; break; }
+done
+if command -v module >/dev/null 2>&1; then module load fsl/6 || echo "warning: module load fsl/6 failed"; fi
+export FSLOUTPUTTYPE=NIFTI_GZ                                  # fsl/6 does not set it
+command -v mcflirt >/dev/null 2>&1 || echo "warning: mcflirt not on PATH; mbme_tedana will stop if it needs FSL"
+echo; echo "== [mbme_tedana run] start $(date)"
+"$TPY" "$MBME" run --list "$LIST" --index "$IDX" --out "$OUTK" --keep-intermediates \
+    --echo-times 16.20 31.22 46.24 61.26 --interp spline --ica-method robustica --n-robust-runs 30 \
+    --tedpca aic --tree tedana_orig --seed 42
+echo "== [mbme_tedana run] exit $? $(date)"
+
+# --- the run folder mbme_tedana wrote for this echo-1 file (matched through result.json)
+RUN="$("$PY" - "$OUTK" "$E1" <<'PYEOF'
+import json, sys
+from pathlib import Path
+out, e1 = Path(sys.argv[1]), Path(sys.argv[2]).resolve()
+for f in sorted(out.glob("*/result.json")):
+    try:
+        r = json.loads(f.read_text())
+    except ValueError:
+        continue
+    if r.get("input_echo1") and Path(r["input_echo1"]).resolve() == e1:
+        print(f.parent)
+        break
+PYEOF
+)"
+[ -n "$RUN" ] || fail "no run folder in $OUTK has input_echo1 = $E1 (see the mbme_tedana output above)"
+[ -f "$RUN/work/echo-1_desc-mc_bold.nii.gz" ] || fail "$RUN has no motion-corrected echoes (work/); was it made without --keep-intermediates?"
+echo "run folder: $RUN"
+
+# --- 2. the mejoint pipeline on this run
+exec bash scripts/waves_overnight.lsf "$RUN" full "$CONFIG"

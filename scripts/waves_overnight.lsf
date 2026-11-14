@@ -1,0 +1,110 @@
+#!/bin/bash
+# Overnight real-data run on one participant (W3 review + the pending Phase 5 reruns), from the
+# motion-corrected echoes of an mbme_tedana run made with --keep-intermediates:
+#   1. front ends on mc, with and without motion regression (built only if missing);
+#   2. data-only tissue classes (built only if missing);
+#   3. waves, primary: no-regression channels with the band-passed motion projected out (user decision
+#      2026-11-06), with figures and full bootstrap/null;
+#   4. waves, comparisons: the same without the projection; motion-regressed channels; and (all / waves modes)
+#      no slice-timing correction (shows the artifact) and c0 only, z-scored (the tedana-like path);
+#   5. the Phase 4 joint-ICA sweep with tissue classes (eta by class, the partial-volume diagnostic, corrected norms).
+# Each step logs its start and end; a failed step is reported and the next one still runs.
+#
+# Submit from inside the repository (one line; quotes keep the space in "Monitoring Visit"):
+#   bsub -q standard -n 8 -R "rusage[mem=2000] span[hosts=1]" -env "all" -J wavesP04 -o waves_%J.log \
+#        "bash scripts/waves_overnight.lsf '<OUT_keep run folder>' [all|waves] [config.yaml]"
+# Second argument: all (default) = every step; waves = skip the joint-ICA sweep (step 5); batch = steps 1-3 plus
+# the no-projection and motion-regressed comparisons (scripts/waves_batch.lsf); full = batch plus the MAPCA rank
+# and the joint-ICA sweep (the whole pipeline per participant, scripts/pipeline_batch.lsf).
+# Third argument: a config YAML (default configs/default.yaml).
+# Wave outputs go to outputs/waves/<run>/<git commit>/, so a rerun with newer code never overwrites older results.
+set -uo pipefail
+PY="${MEJOINT_PY:-$HOME/miniconda3_new/envs/mejoint/bin/python}"   # the env's python by full path (override only for local tests)
+RUN_DIR="${1:-}"
+STEPS="${2:-all}"                                          # all | waves | batch | full
+CONFIG="${3:-}"                                            # optional config YAML (default configs/default.yaml)
+REPO=""
+for cand in "$(dirname "${BASH_SOURCE[0]:-.}")/.." "$PWD" "${LS_SUBCWD:-}"; do
+    if [ -n "$cand" ] && [ -f "$cand/src/mejoint/__init__.py" ]; then REPO="$(cd "$cand" && pwd)"; break; fi
+done
+[ -n "$REPO" ] || { echo "Cannot find the fMRI-Decomp folder (src/mejoint). Run from inside it." >&2; exit 2; }
+cd "$REPO"
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONUNBUFFERED=1
+NT="${LSB_DJOB_NUMPROC:-8}"                                # worker count from LSF, not os.cpu_count()
+threads() { export OMP_NUM_THREADS="$1" MKL_NUM_THREADS="$1" OPENBLAS_NUM_THREADS="$1"; }
+
+fail() { echo "PREFLIGHT FAILED: $*" >&2; exit 2; }
+[ -x "$PY" ] || fail "no python at $PY"
+[ -n "$RUN_DIR" ] && [ -f "$RUN_DIR/result.json" ] || fail "first argument must be an mbme_tedana run folder (with result.json)"
+[ -f "$RUN_DIR/work/echo-1_desc-mc_bold.nii.gz" ] || fail "no motion-corrected echoes in $RUN_DIR/work (rerun mbme_tedana with --keep-intermediates)"
+"$PY" -c "import mejoint.waves, mejoint.wave_figures, matplotlib" || fail "python packages missing (see the import error above)"
+case "$STEPS" in all|waves|batch|full) ;; *) fail "second argument must be all, waves, batch or full (got $STEPS)";; esac
+CFGARG=(); if [ -n "$CONFIG" ]; then [ -f "$CONFIG" ] || fail "no config file $CONFIG"; CFGARG=(--config "$CONFIG"); fi
+NAME="$(basename "$RUN_DIR")"
+FE_REG="outputs/phase2/$NAME/mc"
+FE_NOREG="outputs/phase2/$NAME/mc_noreg"
+TIS="outputs/tissue/$NAME/mc"
+RK="outputs/phase3/$NAME/mc"
+WOUT="outputs/waves/$NAME/$(git rev-parse --short HEAD 2>/dev/null || echo nogit)"
+P4="outputs/phase5/$NAME/phase4_sweep_mc"
+echo "== mejoint waves overnight | $(date) | host $(hostname) | job ${LSB_JOBID:-interactive} | cores $NT | git $(git rev-parse --short HEAD 2>/dev/null || echo '?') ($(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?'))"
+echo "run: $RUN_DIR"
+STATUS=()
+step() {   # step <name> <command...>
+    local name="$1"; shift
+    echo; echo "== [$name] start $(date)"
+    if "$@"; then echo "== [$name] ok $(date)"; STATUS+=("ok      $name")
+    else echo "== [$name] FAILED (exit $?) $(date)"; STATUS+=("FAILED  $name"); fi
+}
+
+threads "$NT"
+[ -f "$FE_REG/c0.npy" ] || step "front end mc (motion regression)" \
+    "$PY" -m mejoint.cli frontend "${CFGARG[@]}" --run-dir "$RUN_DIR" --source mc --no-mppca --out "$FE_REG"
+# reuse an existing no-regression front end only if the same code version built it as the regressed one;
+# otherwise build a fresh copy beside it (the older folder is left untouched)
+sha() { "$PY" -c "import json,sys; print(json.load(open(sys.argv[1])).get('git_sha'))" "$1/done.json" 2>/dev/null || echo none; }
+if [ -f "$FE_NOREG/c0.npy" ] && [ "$(sha "$FE_NOREG")" != "$(sha "$FE_REG")" ]; then
+    echo "existing $FE_NOREG was built by git $(sha "$FE_NOREG"), $FE_REG by $(sha "$FE_REG"): building ${FE_NOREG}_current"
+    FE_NOREG="${FE_NOREG}_current"
+fi
+[ -f "$FE_NOREG/c0.npy" ] || step "front end mc (no regression)" \
+    "$PY" -m mejoint.cli frontend "${CFGARG[@]}" --run-dir "$RUN_DIR" --source mc --no-mppca --no-nuisance --out "$FE_NOREG"
+[ -f "$TIS/classes.npy" ] || step "tissue classes" "$PY" -m mejoint.cli tissue "${CFGARG[@]}" --frontend-dir "$FE_REG" --out "$TIS"
+TISARG=(); [ -f "$TIS/classes.npy" ] && TISARG=(--tissue-dir "$TIS")
+
+# primary (user decision 2026-11-06): no-regression channels with the band-passed motion projected out
+# (waves.motion_orthogonal: true); the same channels without the projection and the motion-regressed channels
+# are the comparisons
+step "waves primary (no regression, motion projected out, figures)" \
+    "$PY" -m mejoint.cli waves "${CFGARG[@]}" --frontend-dir "$FE_NOREG" --out "$WOUT/noreg_motion_orth" "${TISARG[@]}" \
+    --motion-orthogonal
+step "waves comparison: no regression, motion not projected out" \
+    "$PY" -m mejoint.cli waves "${CFGARG[@]}" --frontend-dir "$FE_NOREG" --out "$WOUT/noreg" "${TISARG[@]}" \
+    --no-motion-orthogonal --bootstrap 50 --surrogates 50 --plot-modes 1
+step "waves comparison: 24-term motion regression" \
+    "$PY" -m mejoint.cli waves "${CFGARG[@]}" --frontend-dir "$FE_REG" --out "$WOUT/reg" "${TISARG[@]}" \
+    --no-motion-orthogonal --bootstrap 50 --surrogates 50 --plot-modes 1
+if [ "$STEPS" = "all" ] || [ "$STEPS" = "waves" ]; then
+step "waves sensitivity: no slice-timing correction" \
+    "$PY" -m mejoint.cli waves "${CFGARG[@]}" --frontend-dir "$FE_NOREG" --out "$WOUT/noreg_no_stc" "${TISARG[@]}" --no-slice-timing \
+    --bootstrap 0 --surrogates 20 --plot-modes 1
+step "waves sensitivity: c0 only, z-scored (OC-like)" \
+    "$PY" -m mejoint.cli waves "${CFGARG[@]}" --frontend-dir "$FE_NOREG" --out "$WOUT/noreg_c0_zscore" "${TISARG[@]}" --channels c0 \
+    --voxel-scaling zscore_c0 --bootstrap 0 --surrogates 20 --plot-modes 1
+fi
+
+if [ "$STEPS" = "all" ] || [ "$STEPS" = "full" ]; then
+    [ -f "$RK/rank.json" ] || step "rank (spectrum and MAPCA estimates for the sweep)" \
+        "$PY" -m mejoint.cli rank "${CFGARG[@]}" --mapca-only --frontend-dir "$FE_REG" --out "$RK"
+    threads 1                                                     # the ICA restarts parallelize with joblib
+    RKARG=(); [ -f "$RK/rank.json" ] && RKARG=(--rank-dir "$RK")
+    step "joint ICA sweep with tissue classes" \
+        "$PY" -m mejoint.cli decompose "${CFGARG[@]}" --frontend-dir "$FE_REG" --out "$P4" "${RKARG[@]}" "${TISARG[@]}"
+    for d in "$P4"/k*/; do [ -d "$d" ] && { "$PY" scripts/plot_components.py "$d" "$FE_REG" || echo "figure failed for $d"; }; done
+fi
+
+echo; echo "== summary $(date)"
+printf '  %s\n' "${STATUS[@]}"
+echo "waves:  $PWD/$WOUT/*/waves_summary.md and figures/"
+if [ "$STEPS" = "all" ] || [ "$STEPS" = "full" ]; then echo "sweep:  $PWD/$P4/sweep.md"; fi

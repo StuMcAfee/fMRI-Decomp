@@ -1,0 +1,46 @@
+#!/bin/bash
+# Phase 0 audit of every run in the mbme_tedana output folder, plus a cross-run summary.
+# Interactive session (recommended; values as arguments, quotes keep spaces):
+#   bash scripts/phase0_all_subjects.lsf "<mbme_tedana OUT folder>" "<path to mbme_tedana.py>"
+# Safe to rerun: runs already audited with the same config are skipped; failures are listed.
+#BSUB -J mejoint_phase0_all
+#BSUB -q standard
+#BSUB -n 1
+#BSUB -R "rusage[mem=4000]"
+#BSUB -env "all"
+#BSUB -o phase0_all_%J.log
+set -euo pipefail
+
+PY="$HOME/miniconda3_new/envs/mejoint/bin/python"     # always the env's python, by full path
+PIPELINE_OUT="${1:-${PIPELINE_OUT:-}}"
+PIPELINE="${2:-${PIPELINE:-}}"
+
+REPO=""
+for cand in "$(dirname "${BASH_SOURCE[0]:-.}")/.." "$PWD" "${LS_SUBCWD:-}"; do
+    if [ -n "$cand" ] && [ -f "$cand/src/mejoint/__init__.py" ]; then REPO="$(cd "$cand" && pwd)"; break; fi
+done
+[ -n "$REPO" ] || { echo "Cannot find the fMRI-Decomp folder (src/mejoint). Run from inside it." >&2; exit 2; }
+cd "$REPO"
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONUNBUFFERED=1          # progress lines reach the log as they happen
+
+echo "== mejoint phase 0 (all runs) | $(date) | host $(hostname) | job ${LSB_JOBID:-interactive}"
+echo "repo:         $PWD (git $(git rev-parse --short HEAD 2>/dev/null || echo '?'))"
+echo "PIPELINE_OUT: ${PIPELINE_OUT:-<unset>}"
+echo "PIPELINE:     ${PIPELINE:-<unset>}"
+fail() { echo "PREFLIGHT FAILED: $*" >&2; exit 2; }
+[ -x "$PY" ] || fail "no python at $PY"
+"$PY" -c "import mejoint, numpy, scipy, nibabel, yaml" || fail "python packages missing (see the import error above)"
+[ -n "$PIPELINE_OUT" ] && [ -d "$PIPELINE_OUT" ] || fail "first argument must be the mbme_tedana OUT folder"
+[ -z "$PIPELINE" ] || [ -f "$PIPELINE" ] || fail "PIPELINE is not a file: $PIPELINE"
+echo "== preflight ok"
+
+OUT="outputs/phase0/all"
+mkdir -p "$OUT"
+PIPE_ARG=()
+if [ -n "$PIPELINE" ]; then PIPE_ARG=(--pipeline-script "$PIPELINE"); fi
+status=0
+"$PY" -m mejoint.cli inventory-all --pipeline-out "$PIPELINE_OUT" ${PIPE_ARG[@]+"${PIPE_ARG[@]}"} --out "$OUT" || status=$?
+"$PY" -m pip freeze > "$OUT/env_pip_freeze.txt" 2>/dev/null || true
+echo "done: $PWD/$OUT/phase0_summary.md (exit $status: nonzero means some runs failed, listed in the summary)"
+exit $status

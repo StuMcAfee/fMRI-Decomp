@@ -38,6 +38,24 @@ def config_hash(cfg: dict) -> str:
     return hashlib.sha256(json.dumps(clean, sort_keys=True).encode()).hexdigest()
 
 
+def seed_sequence(cfg: dict, *spawn_key: int) -> np.random.SeedSequence:
+    """Reproducible seeds: SeedSequence(project_seed, spawn_key=(subject, run, stage, restart, ...))."""
+    return np.random.SeedSequence(int(cfg["project_seed"]), spawn_key=tuple(int(k) for k in spawn_key))
+
+
+def merge(base: dict, overrides: dict | None) -> dict:
+    """Copy of `base` with `overrides` applied (nested dicts merged, other values replaced)."""
+    import copy
+
+    out = copy.deepcopy(base)
+    for k, v in (overrides or {}).items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = merge(out[k], v)
+        else:
+            out[k] = copy.deepcopy(v)
+    return out
+
+
 # ---------------------------------------------------------------- hashing / versions
 def file_sha256(path: str | os.PathLike, chunk: int = 1 << 20) -> str:
     h = hashlib.sha256()
@@ -59,7 +77,8 @@ def git_sha(repo: Path = REPO_ROOT) -> str:
         return "unknown"
 
 
-def package_versions(names=("numpy", "scipy", "nibabel", "pyyaml", "pydicom", "mejoint")) -> dict:
+def package_versions(names=("numpy", "scipy", "nibabel", "pyyaml", "pydicom", "scikit-learn", "joblib", "threadpoolctl",
+                                  "dipy", "mapca", "tedana", "mejoint")) -> dict:
     out = {"python": platform.python_version()}
     for n in names:
         try:
@@ -156,3 +175,65 @@ def load_4d_float32(path) -> tuple[np.ndarray, "object"]:
     import nibabel as nib
     img = nib.load(str(path))
     return np.asarray(img.dataobj, dtype=np.float32), img
+
+
+def load_masked_echoes(paths, mask3d: np.ndarray, volumes=None, per_echo_hook=None) -> np.ndarray:
+    """Masked magnitude data (V, E, T) float32 from one 4D NIfTI per echo.
+
+    volumes: optional list (one index array per echo) selecting and pairing volumes across echoes
+    (mbme_tedana's volumes_used.tsv). per_echo_hook(k, data4d_selected) is called with each echo's
+    full selected 4D array before it is masked and freed (used for the MP-PCA cross-check)."""
+    import nibabel as nib
+
+    out = None
+    for k, p in enumerate(paths):
+        img = nib.load(str(p))
+        if img.shape[:3] != mask3d.shape:
+            raise ValueError(f"{p}: grid {img.shape[:3]} differs from the mask {mask3d.shape}")
+        d = np.asarray(img.dataobj, dtype=np.float32)
+        if volumes is not None:
+            d = d[..., np.asarray(volumes[k], int)]
+        if per_echo_hook is not None:
+            per_echo_hook(k, d)
+        if out is None:
+            out = np.empty((int(mask3d.sum()), len(paths), d.shape[3]), np.float32)
+        out[:, k, :] = d[mask3d]
+        del d
+    return out
+
+
+def save_map(values: np.ndarray, mask3d: np.ndarray, ref_img, path, fill=np.nan) -> None:
+    """Write masked values (V,) or (V, K) as a 3D or 4D float32 NIfTI on the reference grid (atomic)."""
+    import nibabel as nib
+
+    values = np.asarray(values, dtype=np.float32)
+    vol = np.full(mask3d.shape + values.shape[1:], fill, np.float32)
+    vol[mask3d] = values
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    hdr = ref_img.header.copy()
+    hdr.set_data_dtype(np.float32)
+    hdr.set_slope_inter(None, None)
+    img = nib.Nifti1Image(vol, ref_img.affine, hdr)
+    if vol.ndim == 3:
+        img.header.set_data_shape(vol.shape)
+    tmp = path.with_name(f".{path.name}.tmp.nii.gz")
+    nib.save(img, str(tmp))
+    os.replace(tmp, path)
+
+
+def save_volume(vol: np.ndarray, ref_img, path) -> None:
+    """Write a full-grid 3D/4D array as float32 NIfTI on the reference grid (atomic)."""
+    import nibabel as nib
+
+    vol = np.asarray(vol, dtype=np.float32)
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    hdr = ref_img.header.copy()
+    hdr.set_data_dtype(np.float32)
+    hdr.set_slope_inter(None, None)
+    img = nib.Nifti1Image(vol, ref_img.affine, hdr)
+    img.header.set_data_shape(vol.shape)
+    tmp = path.with_name(f".{path.name}.tmp.nii.gz")
+    nib.save(img, str(tmp))
+    os.replace(tmp, path)

@@ -8,6 +8,16 @@ acquisition:
   te_tolerance_ms: 0.05                  # a JSON TE further than this from te_ms is flagged
   expected_matrix: [52, 64, 48]
   tr_s: 0.75
+  voxel_mm: [3.281, 3.281, 3.3]          # confirmed in Phase 0 (all runs)
+  mb_factor: 6                           # derived from SliceTiming (not in the JSON)
+  slice_stack_separation: 8              # slices acquired together are 8 apart (48 / 6)
+  phase_encoding: i                      # left-right; CAIPI shift unknown
+  slice_axis: 2                          # axial slices along array axis 2 (48 slices; Phase 0)
+
+subjects:
+  exclude:                               # user decision 2026-11-02
+    "P08": "267-278 volumes per echo; volume pairing failed in mbme_tedana"
+    "P02": "metal artefact or similar in the right cerebral hemisphere (user, 2026-11-03)"
 
 inventory:                    # Phase 0 audit
   search_depth: 1             # NIfTI/DICOM may sit in the NIfTI folder or one level deeper
@@ -17,11 +27,14 @@ inventory:                    # Phase 0 audit
   noise_frame_rel_threshold: 0.10   # trailing volumes with whole-volume mean < 10% of the run median
   nss_robust_z: 5.0           # leading volumes whose in-mask mean exceeds the median by > 5 robust SD
   nss_max_volumes: 20         # never call more than this many leading volumes non-steady-state
-  dicom_max_files: 20000      # cap on DICOM headers read per subject
-  dicom_search_depth: 2       # DICOMs may sit in per-series subfolders one level below that
+  dicom_max_folders: 10       # NIfTI folder + subfolders searched for DICOMs (series-numbered folder first)
+  dicom_max_headers_per_folder: 400   # random sample of headers read per folder (MB/ME series hold 1e4+ files)
   json_fields:                # always reported, "absent" if missing
     - EchoTime
     - EchoNumber
+    - SeriesNumber
+    - SeriesDescription
+    - ProtocolName
     - ImageType
     - RepetitionTime
     - MagneticFieldStrength
@@ -77,8 +90,171 @@ inventory:                    # Phase 0 audit
     - sWipMemBlock
     - ucReconstructionMode
 
+  pipeline_keywords:          # lines of mbme_tedana.py reported verbatim (settings we must not guess)
+    - interp
+    - flirt
+    - tedana
+    - tedpca
+    - ica-method
+    - ica_method
+    - robust
+    - seed
+    - fittype
+    - mask
+    - keep-intermediates
+    - focal
+    - argparse
+    - add_argument
+  pipeline_max_lines: 120
+
 frontend:                     # Phase 2 (CLAUDE.md section 5.4); listed now so they are fixed in advance
+  weighting: per_echo          # per_echo (user decision 2026-11-03, option A) or equal (CLAUDE.md original; sensitivity / tedana equivalence)
+  echo_noise_ratios: [1.0, 0.721, 0.631, 0.560]   # thermal noise per echo / echo 1: median of 15 runs, differenced residual (noise survey rerun 2026-11-03; user approved). Was [1, 0.761, 0.671, 0.602] (low-drift, non-differenced)
+  sigma_estimator: differenced  # differenced = frame-to-frame differences of the residual (cancels slow, drift-paced violations; user approved 2026-11-03, CLAUDE.md 5.4 step 4); residual = median of the residual energy (sensitivity)
   snr_min: 5.0
   snr_min_sensitivity: 3.0
-  sigma_init_snr: 10.0
-  mppca_sigma_tolerance: 0.20
+  sigma_init_snr: 10.0        # trusted voxels for sigma_init: weakest included echo (all usable, else echoes 1-3) above this
+  sigma_init_min_voxels: 50   # stop with an error if fewer trusted voxels exist
+  mppca_level_tolerance: 0.20  # MP-PCA check, level: echo-1 model / MP-PCA sigma within 1 +/- 0.20 (after mppca_expected_ratio)
+  mppca_shape_tolerance: 0.10  # MP-PCA check, shape: each echo's ratio / echo 1's within 1 +/- 0.10 (worst case: c0-c1 noise corr ~0.1); user decision 2026-11-03
+  mask_source: auto            # auto = built from the input echoes (mask.py; user decision 2026-11-02); pipeline / pipeline_filled = mbme_tedana's brain_mask (comparison only)
+  nonpositive_policy: exclude_echo   # proposed: a voxel-echo with any frame <= 0 (spline undershoot) is unusable; confirm at Phase 2
+  signal_form: log            # log-ratio ln(S / mean S) (CLAUDE.md 5.1); "linear" = S / mean S - 1 (tests only)
+  sigma_smooth_fwhm_vox: 3.0  # smooth sigma map (normalised convolution of trusted voxels)
+  whiten_with: voxel          # voxel = per-voxel sigma, smooth map in low-SNR / df = 0 voxels; or "smooth"
+  chunk_voxels: 5000          # voxels per block (memory)
+  mppca: {enabled: true, patch_radius: 2, n_volumes: 100, slice_step: 6, inplane_step: 2, quiet_window: true}   # sigma cross-check on RAW echoes (dipy); sparse patch centres; also on the 100 frames with least head drift
+  per_echo_noise_min_snr: 10.0      # per-echo noise ratios from the residual: voxels with 4 usable echoes and echo-4 SNR >= 10
+  per_echo_noise_max_voxels: 20000  # evenly spaced subset for speed
+  background: {dilate_vox: 4, rel_threshold: 0.02}   # air voxels: > 4 voxels outside the brain mask and echo-1 mean < 2 % of brain median
+  mppca_expected_ratio: 1.02  # residual / MP-PCA sigma in a full-size simulation (MP-PCA read 2 % low; 6 % on a small grid)
+
+nuisance:                     # Phase 2b: one projector over time, applied to the channels and the residual (= to the log-ratio echoes)
+  enabled: true                 # false = no-regression variant (kept for comparison; CLI --no-nuisance)
+  motion_filter: notch          # notch = band-stop at the breathing peak found in the motion parameters; lowpass; none
+  resp_search_hz: [0.15, 0.60]  # breathing-peak search band (children / young adults; Nyquist 0.667 Hz at TR 0.75 s)
+  notch_halfwidth_hz: 0.06      # band-stop = peak +/- 0.06 Hz (breathing rate varies within a run)
+  min_peak_prominence: 3.0      # peak power / robust power-law background fit in the search band; below this no band-stop is applied (reported)
+  lowpass_hz: 0.10              # used only with motion_filter: lowpass
+  filter_order: 4               # Butterworth, applied forwards and backwards (zero phase), within contiguous segments
+  expansion: 24                 # 6 = parameters; 12 = + frame-to-frame changes; 18 = 12 + squares of the parameters; 24 = + squares of both
+  poly_order: 0                 # Legendre drift terms per segment (0 = constants only)
+  n_surrogates: 5               # diagnostic: projectors from phase-randomized motion parameters (chance overlap with signal); 0 = off
+
+waves:                        # traveling-wave extension, individual stage (docs/WAVES_BRIEF.md; branch claude/waves)
+  band_hz: [0.01, 0.10]
+  filter_order: 4               # Butterworth band-pass, applied forwards and backwards (zero phase)
+  min_contiguous_volumes: 400
+  max_interp_gap: 2
+  slice_timing_correction: true # exact Fourier fractional delay by the slice's acquisition offset (SliceTiming)
+  voxel_scaling: whitened       # or zscore_c0 (Bolt-style: both channels / SD of the voxel's c0)
+  n_modes: 10                   # user decision 2026-11-04
+  plot_modes: 3
+  bootstrap_modes: 3            # modes that get bootstrap intervals (the plotted ones; cost)
+  channels: both                # both = stacked [c0 | c1] (the method); c0 = c0 only (the OC-like equivalence path)
+  amp_z: 3.0                    # a voxel "has" the mode where |q| exceeds this many noise SDs of q
+  band_mc: 50                   # Monte Carlo draws for the matched-SNR eta bands per mode
+  eta_display_fwhm_mm: 6.0      # smoothing of the debiased energies for the voxelwise eta map (display only)
+  motion_orthogonal: true       # project the band-passed motion parameters (6 complex = 12 real regressors) out of the band-passed channels; primary for wave claims (user decision 2026-11-06: in-band motion coupling in 12 of 15 runs); false = comparison
+  gradient_smooth_mm: 4.0
+  path_bin_mm: 6.0
+  bootstrap: 200                # circular block bootstrap over time (blocks >= one cycle of the slowest reported mode)
+  surrogates: 200               # phase-randomized surrogates for the family-wise mode-energy null
+  null_quantile: 0.95
+  noise_mc_rows: 2000           # Monte Carlo rows of unit white noise through the same preprocessing: complex beta noise variance (eta debiasing)
+  te_lag_null_draws: 20         # per-voxel noise draws for the TE4 - TE1 lag null
+  channels_primary: noreg       # user decision 2026-11-04: no-regression channels primary, motion-regressed as sensitivity
+  group:
+    reference: control
+    template_from: all
+    common_volumes: null
+    n_perm: 10000
+
+rank:                         # Phase 3: dimensionality of the stacked whitened channels [c0 | c1]
+  n_surrogates: 20              # phase-randomized surrogates for the index-by-index null (reported) and spectra plot
+  split_n_surrogates: 10        # gated estimator (split-half deflated, whitened): surrogates per tested block of k
+  split_step: 3                 # directions tested per block (one null shared by the block)
+  split_mode: readout_slab      # halves = alternating slabs along the readout axis, so MB / GRAPPA alias partners (same readout coordinate) share a half; "cubes" = random 4^3 blocks (the first real run: k ran to k_max)
+  split_block_vox: 4            # slab thickness (or cube side) in voxels
+  whiten_max_lag: 40            # common noise-whitening filter: median autocovariance tapered to 0 at this lag (frames)
+  contamination_validated_max: 0.50   # validated range of the contamination diagnostic (shared-signal share of the median row variance): passing 30-component cases 0.469-0.481, 60-component cases 0.665-0.692 (broadband over-counts)
+  null_envelope: false          # last attempt (2026-11-04): divide every frame by the shared noise amplitude a(t) before whitening. Failed in simulation (k 37 / 92 for envelope SD 0.15 / 0.30; stationary 34), so off; a(t) is still measured and reported
+  old_deflated: false           # also run the old unsplit deflated search (over-counts with coloured noise; slow)
+  deflated_n_surrogates: 10     # surrogates per tested k in the old unsplit deflated search
+  null_quantile: 0.95           # data eigenvalue must exceed this quantile of the null
+  k_max: 300                    # upper end of the bisection search
+  sweep_fixed: [50, 70, 90]     # fixed k always run in Phase 4 (CLAUDE.md), alongside the MAPCA estimates
+  mapca: true                   # MAPCA AIC / KIC / MDL via the mapca package (tedana's estimator)
+
+tissue:                       # Phase 5 data-only tissue classes (two-compartment fit of the mean decay)
+  csf_t2s_ms: 200.0             # fixed long (CSF-like) T2*; sensitivity to be reported
+  tissue_max: 0.10              # f_long below this: tissue
+  csf_min: 0.50                 # f_long at or above this: CSF-dominated
+  short_t2s_ms: 20.0            # tissue-compartment T2* below this: short-T2* class (veins / sinuses or susceptibility; ambiguous)
+
+decompose:                    # Phase 4 option 1: joint spatial ICA on [c0 | c1] (CLAUDE.md 7.1)
+  n_restarts: 30                # FastICA restarts (robustica-style clustering); >= 30 (CLAUDE.md)
+  max_iter: 1000
+  tol: 1.0e-6
+  fun: logcosh
+  k_sweep_fixed: [50, 70, 90]   # plus MAPCA AIC / KIC / MDL from the Phase 3 rank output (no gated k; user decision 2026-11-04)
+
+metrics:                      # Phase 4 per-component measurements
+  n_null: 200                   # single random Gaussian / phase-randomized time courses (reported only: they ignore that components are top-variance directions)
+  n_null_pipeline: 20           # energy null for significance: top-k PCA directions of phase-randomized surrogates (same selection as the components); family-wise (largest of k); their mean E_S0, E_R2 = selection bias removed before eta
+  pv_z_min: 2.5                 # partial-volume diagnostic: voxels where the component's |q| exceeds 2.5 noise SDs
+  pv_min_s0_share: 0.05         # judge only when dS0 holds >= 5 % of the energy in those voxels ("no dS0 to explain" otherwise; 2 % judged noise)
+  pv_f_long_max: 0.9            # partial-volume diagnostic excludes near-pure CSF only (kappa diverges as the tissue share -> 0)
+  pv_consistent_margin: 0.10    # "consistent with partial volume": the zero-parameter prediction explains > 0 and within 0.10 of the best constant ratio
+  eta_label_margin: 0.05        # decomposition cross-talk added to the matched-SNR (thermal-only) bands; simulation: pure S0 eta 0.971, pure R2* 0.018
+  null_quantile: 0.95
+  band_mc: 100                  # Monte Carlo draws per component for the matched-SNR eta bands
+  n_boot: 100                   # block bootstrap of frames for ||s||, ||q|| intervals
+  boot_block_frames: 20         # 15 s blocks at TR 0.75 s
+
+mask:                         # analysis mask built from the input echoes (mask.py); user decision 2026-11-02
+  border_vox: 3               # image border used to measure the air (noise) level
+  k_head: 4.0                 # head = echo-1 mean > 4 x air level (Rician noise mean ~1.25 sigma: ~5 sigma)
+  shading_fwhm_mm: 40.0       # smoothing that models coil shading (much larger than anatomy)
+  k_brain: 0.45               # brain = shading-corrected intensity > 0.45 (drops the dark skull gap)
+  t2s_min_ms: 25.0            # brain-like decay: echo-last / echo-1 mean > exp(-(TE4 - TE1) / 25 ms) (excludes neck/face muscle)
+  erode_vox: 1                # erosion before keeping the largest piece (cuts thin bridges to scalp/orbits)
+  close_vox: 1                # final closing; enclosed holes are always filled (3D and slice-wise)
+  regrow_vox: 4               # regrow up to 4 voxels (~13 mm) from the core into tissue bright at echo 1, any decay (dephased cerebellar / orbitofrontal edges); phantom: rim 96 %, neck muscle 9 %
+
+simulate:                     # Phase 1 ground-truth simulator; tests override pieces of this
+  grid: [24, 24, 14]          # small grid for tests (the real matrix is 52 x 64 x 48)
+  n_volumes: 200
+  chunk_voxels: 20000         # voxels processed at once (changing it changes the noise realisation)
+  snr0: 150.0                 # S0 / sigma at TE = 0 (brain median); null = noise-free
+  s0_mean: 1000.0
+  s0_variation: 0.10          # smooth S0 variation (fraction)
+  t2s_ms_range: [20.0, 70.0]  # brain T2* spans this range (CLAUDE.md section 8)
+  n_coils: 1                  # 1 = Rician; >1 = sum-of-squares noncentral chi (equal coil sensitivities)
+  smoothness_vox: 3.0         # spatial smoothness of S0, T2* and diffuse maps
+  gfactor: {enabled: false, amplitude: 0.5, smoothness_vox: 4.0}   # sigma x (1 .. 1 + amplitude), smooth
+  echo_sigma_scale: [1.0, 1.0, 1.0, 1.0]   # per-echo noise multiplier (CLAUDE.md 5.3 assumes equal; tests break it on purpose)
+  band_hz: [0.01, 0.10]       # band of neural-like time courses
+  # Source amplitudes: q (dR2*, s^-1) and s (dS0/S0 as delta ln S0) are the SD of the source at its
+  # peak voxel (time courses have unit SD). SD 0.5 keeps ~95% of excursions within +/-1 s^-1 and
+  # +/-1 %, matching CLAUDE.md section 8 ("dR2* about +/-1 s^-1, dS0/S0 about 0.5-2 %").
+  sources:
+    - {name: r2_focal, kind: r2, extent: focal, q: 0.5, radius_vox: 1.5}
+    - {name: s0_focal, kind: s0, extent: focal, s: 0.005, radius_vox: 1.5}
+    - {name: mixed_same, kind: mixed, extent: focal, q: 0.5, s: 0.005, radius_vox: 1.5}
+    - {name: mixed_opposite, kind: mixed, extent: focal, q: -0.5, s: 0.005, radius_vox: 1.5}
+    - {name: r2_diffuse, kind: r2, extent: diffuse, q: 0.25}
+    - {name: s0_diffuse, kind: s0, extent: diffuse, s: 0.0025}
+  respiration: {enabled: true, freq_hz: 0.30, freq_jitter_hz: 0.03, q: 0.25}   # smooth global dR2* (SD at peak)
+  spikes: {n: 3, s0: 0.05, echo_sd: 0.02, region: edge}   # model-violating frames (log-space, per echo)
+  csf_partial_volume: {enabled: false, fraction_max: 0.6, t2s_ms: 200.0, s0_ratio: 1.0}
+  waves: []                     # W1 traveling waves, e.g. {name, kind: neural|vascular|standing, geometry: planar|radial, speed_mm_s, direction, q, s, support, band_hz}
+  slice_timing: {enabled: false, mb_factor: 6, order: interleaved}   # waves sampled at the multiband slice-group times (real data: SliceTiming from the JSON)
+  slice_leakage: {enabled: false, fraction: 0.05}                    # slices acquired together leak into each other (MB leakage proxy)   # static long-T2* compartment without BOLD (Phase 5 partial-volume tests)
+  slow_violation: {enabled: false, amplitude: 0.01, cutoff_hz: 0.01}   # drift-paced curvature change (log units at the extreme echoes); off by default
+  skull_base:                 # through-slice dephasing in the lowest brain slices: curvature in the decay
+    enabled: true
+    slices: 3
+    dephasing_hz_max: 8.0     # field spread across a voxel; signal x |sinc(df * TE)|
+    t2s_ms: 22.0
+    resp_modulation: 0.3      # df(t) = df0 (1 + 0.3 resp(t)): dynamic curvature
