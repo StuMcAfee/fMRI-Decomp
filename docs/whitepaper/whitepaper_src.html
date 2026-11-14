@@ -327,6 +327,26 @@ a { color: var(--accent); }
 </table>
 <p>Three kinds of information are new. First, the <b>share</b> of each region's slow signal that behaves like BOLD, which is directly relevant when vascular effects of treatment are a competing explanation. Second, <b>noise-accounted coupling</b>: because each region's thermal noise is estimated and removed, correlations are not attenuated by differences in SNR between regions, coils or participants. Third, a <b>measured sensitivity</b> for every participant, so that a low value can be read against what that scan could have detected.</p>
 
+<h3>7.1 Relation to multi-echo hemodynamic deconvolution</h3>
+<p>The closest published relative is multivariate multi-echo sparse paradigm free mapping (MvME-SPFM) <span class="tag">[8]</span>, which starts from the same signal model, y(TE) ≈ ΔS0 − TE·ΔR2*, but answers a different question. MvME-SPFM recovers the timing of brief neural events in each voxel: it deconvolves a canonical hemodynamic response from ME-ICA-denoised data, couples voxels through a whole-brain sparsity penalty at each time point, and reports a sparse ΔR2* event series (in s⁻¹) with a probability for every event from stability selection. Route B instead measures how much of each region's slow fluctuation is BOLD-like and how cortical regions co-fluctuate. Table 3 sets the two side by side.</p>
+<table>
+<caption><b>Table 3. Route B compared with MvME-SPFM</b> <span class="tag">[8]</span></caption>
+<thead><tr><th>Property</th><th>MvME-SPFM</th><th>Route B</th></tr></thead>
+<tbody>
+<tr><td>Question</td><td>When did neural events occur in each voxel, and with what probability?</td><td>What share of each region's slow fluctuation is BOLD-like, and how integrated is cortical BOLD-like activity?</td></tr>
+<tr><td>ΔS0</td><td>Removed beforehand by ME-ICA denoising and not modelled</td><td>Estimated in every region and frame; the S0-like share is a reported measure</td></tr>
+<tr><td>Hemodynamic response</td><td>One canonical shape, the same in every voxel, deconvolved</td><td>No assumption on its shape; the band-limited hemodynamic signal is analysed directly</td></tr>
+<tr><td>Spatial pooling</td><td>Data-driven: a whole-brain ℓ2,1 + ℓ1 penalty favours co-activation at each time point</td><td>Fixed in advance by anatomy: echoes averaged within each parcel in native space</td></tr>
+<tr><td>Noise</td><td>Additive white Gaussian noise assumed</td><td>Thermal noise measured per echo and per region and removed from every energy and correlation</td></tr>
+<tr><td>Output</td><td>Sparse ΔR2* events per voxel with an event probability</td><td>Region shares, noise-corrected connectivity, participation ratios against circular-shift nulls, bootstrap intervals</td></tr>
+<tr><td>Tuning</td><td>Regularization strength handled by stability selection; event probabilities still need a threshold, set from white matter</td><td>No tuning parameters in the main analysis</td></tr>
+<tr><td>Validation reported</td><td>Task data against single-trial GLM maps in 10 healthy adults (3 echoes, TR 2 s, 220 volumes)</td><td>Simulation and injection into the raw echoes of every participant (11 patients, 4 echoes, TR 0.75 s, about 800 volumes)</td></tr>
+<tr><td>Computation</td><td>About 10 hours per run on a cluster, as reported</td><td>Minutes per participant</td></tr>
+</tbody>
+</table>
+<p>Two differences matter for the present cohort. First, MvME-SPFM depends on ME-ICA to remove ΔS0, a classification that returned no BOLD-like components in 5 of our 16 tedana runs; and after craniospinal irradiation the non-BOLD part of the signal is itself of interest, so route B measures it rather than discarding it. Second, a canonical hemodynamic response is a reasonable assumption in healthy adults, and its authors name it as the method's main limitation; where treatment may have altered the cortical vasculature, a regionally different response would bias deconvolved events in the regions of interest. Route B's measures do not depend on the shape of the response, although they inherit hemodynamic smoothing.</p>
+<p>The approaches are complementary rather than competing. The authors propose constraining their spatial penalty within atlas parcels such as the Schaefer-Yeo parcellation, which is the region layout route B already uses. Route B's region-level ΔR2* time courses, separated from ΔS0 and with their noise measured, could serve as input to an event-based deconvolution without the ME-ICA step, adding time-resolved, event-level descriptions to the static integration measures, subject to the same caveat about the hemodynamic response.</p>
+
 <!-- ===================================================================== 8 -->
 <h2 id="s8">8. Strengths and limitations</h2>
 <div class="box"><h4>Strengths</h4>
