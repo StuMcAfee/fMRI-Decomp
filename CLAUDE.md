@@ -487,7 +487,7 @@ Sensitivity analyses: cortex with all voxels (CSF-rich voxels kept; integration 
   - Uruñuela's UPV/EHU thesis.
 - **Closest relatives:**
   - ME-SPFM (Caballero-Gaudes et al., NeuroImage 2019;202:116081) models ΔS0 but estimates ΔR2* only.
-  - MvME-SPFM (Uruñuela et al., preprint; final venue unverified; Python package `splora`).
+  - MvME-SPFM (Uruñuela, Gonzalez-Castillo, Zheng, Bandettini, Caballero-Gaudes, Medical Image Analysis 2024;91:103010, doi 10.1016/j.media.2023.103010; full text read 2026-11-14; Python package `splora`). Whole-brain deconvolution of ΔR2* events with a fixed HRF and an ℓ2,1 + ℓ1 penalty; ΔS0 is removed beforehand by ME-ICA and not estimated.
   - Tensor PICA (Beckmann & Smith 2005).
   - Block-term decompositions for fMRI (Chatzichristos et al.).
 - **tedana 26.0.3 facts verified from source:**
