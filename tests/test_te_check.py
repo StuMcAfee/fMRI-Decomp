@@ -78,3 +78,29 @@ def test_r2_with_a_static_blood_compartment_curves_but_does_not_cross_zero():
     c = out["components"][0]
     assert c["curvature_z"] > 8 and c["curvature_fraction"] < 0.002     # detectable, but ~500x below the exchange
     assert c["fraction_te1_te4_opposite"] < 0.1 and c["profile_zero_crossing_ms"] is None
+
+
+def test_curvature_null_with_nuisance_projection(tmp_path):
+    """Pure noise through the front end WITH the motion nuisance projection: the curvature z of every component
+    stays near 0. Before the fix (2026-11-06) the calibration's simulated noise was not projected, the noise was
+    under-estimated by ~p / (T - k - 1), and the median curvature z here was ~4."""
+    import sys
+    sys.path.insert(0, os.path.dirname(__file__))
+    from test_frontend import make_run_folder
+
+    from mejoint import decompose, frontend, io, simulate
+    cfg = io.load_config()
+    c = io.merge(cfg, {"simulate": {"echo_sigma_scale": cfg["frontend"]["echo_noise_ratios"]},
+                       "frontend": {"mppca": {"enabled": False}}, "nuisance": {"n_surrogates": 1},
+                       "decompose": {"n_restarts": 4}, "metrics": {"n_null_pipeline": 5, "n_boot": 4, "band_mc": 10, "n_null": 10}})
+    G = {"grid": [32, 32, 18], "n_volumes": 200, "spikes": {"n": 0}, "skull_base": {"enabled": False},
+         "respiration": {"enabled": False}, "sources": []}
+    sim = simulate.simulate(c, seed=12, overrides=G)
+    rd = make_run_folder(sim, tmp_path)
+    fe = tmp_path / "fe"
+    frontend.run_subject(rd, c, fe, source="raw", nuisance=True)
+    assert (fe / "nuisance_Q.npy").exists()
+    decompose.run_dir(fe, c, fe / "k8", 8)
+    out = te_check.check_dir(fe, fe / "k8")
+    cz = np.array([x["curvature_z"] for x in out["components"]], float)
+    assert abs(np.median(cz)) < 1.5, cz

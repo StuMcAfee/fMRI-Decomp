@@ -1,0 +1,33 @@
+#!/bin/bash
+# R2 registration check (2026-11-10): the user saw the T1 white-matter boundary shifted left-right on the EPI in
+# both pilots (left-right = this EPI's phase-encoding axis). For each candidate EPI reference (temporal mean of
+# echo 1, 2, 3; T2*-weighted combination of the echo means; the static T2* map) run epi_reg into <anat>/reg_<ref>/ and measure the
+# remaining shift of the white-matter boundary against the EPI's white-matter contrast on every axis
+# (`mejoint anatomy-regcheck`: regcheck.md / .json / .png). Needs the T1 steps of scripts/anatomy_run.lsf done.
+# Arguments: <subject number or run folder name>
+set -uo pipefail
+RUNARG="${1:-}"
+PY="${MEJOINT_PY:-$HOME/miniconda3_new/envs/mejoint/bin/python}"
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}" PYTHONUNBUFFERED=1
+fail() { echo "PREFLIGHT FAILED: $*" >&2; exit 2; }
+if [ -d "outputs/phase2/$RUNARG" ]; then NAME="$RUNARG"; else NAME="$(ls -d outputs/phase2/sub-"$RUNARG"_* 2>/dev/null | head -n 1)"; NAME="${NAME:+$(basename "$NAME")}"; fi
+FE="outputs/phase2/$NAME/mc"; A="outputs/anatomy/$NAME"
+[ -n "$NAME" ] && [ -f "$A/t1_wmseg.nii.gz" ] && [ -f "$A/t1_brain.nii.gz" ] || fail "run scripts/anatomy_run.lsf for '$RUNARG' first"
+for init in /usr/share/Modules/init/bash /etc/profile.d/modules.sh /cm/local/apps/environment-modules/*/init/bash; do
+    [ -f "$init" ] && { source "$init"; break; }
+done
+if command -v module >/dev/null 2>&1; then module load fsl/6 || echo "warning: module load fsl/6 failed"; fi
+export FSLOUTPUTTYPE=NIFTI_GZ
+command -v epi_reg >/dev/null 2>&1 || fail "FSL not available (epi_reg)"
+echo "== registration check | $NAME | $(date) | host $(hostname) | job ${LSB_JOBID:-interactive} | git $(git rev-parse --short HEAD 2>/dev/null || echo '?')"
+"$PY" -m mejoint.cli anatomy-refs --frontend-dir "$FE" --out "$A" || fail "anatomy-refs failed"
+for ref in echo1 echo2 echo3 t2sw t2s; do
+    mkdir -p "$A/reg_$ref"
+    [ -f "$A/reg_$ref/epi2t1.mat" ] && { echo "  $ref: registration exists (kept)"; continue; }
+    echo "+ epi_reg ($ref)"
+    epi_reg --epi="$A/ref_$ref" --t1="$A/t1" --t1brain="$A/t1_brain" --wmseg="$A/t1_wmseg" --out="$A/reg_$ref/epi2t1" \
+        > "$A/reg_$ref/epi_reg.log" 2>&1 || echo "epi_reg failed for $ref (see $A/reg_$ref/epi_reg.log)"
+done
+"$PY" -m mejoint.cli anatomy-regcheck --anat-dir "$A"
+echo "== done $(date): $PWD/$A/regcheck.md and regcheck.png"

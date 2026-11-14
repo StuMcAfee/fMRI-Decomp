@@ -307,8 +307,9 @@ def test_run_subject_end_to_end(cfg, tmp_path, record_property):
 
 
 def test_excluded_subject_is_refused(cfg, tmp_path):
+    cfg = io.merge(cfg, {"subjects": {"exclude": {"90009": "test exclusion"}}})
     sim = sim_with(cfg, 11, grid=[16, 16, 10], n_volumes=20, **CLEAN)
-    rd = make_run_folder(sim, tmp_path, run_id="sub-P08_acq-TIMESTAMP_ser-4")
+    rd = make_run_folder(sim, tmp_path, run_id="sub-90009_acq-REDACTED_ser-4")
     with pytest.raises(ValueError, match="excluded"):
         frontend.run_subject(rd, cfg, tmp_path / "fe")
 
@@ -421,17 +422,18 @@ def test_per_echo_noise_ratios_from_residual(cfg, record_property, scale):
 
 
 def test_noise_survey_across_runs(cfg, tmp_path, record_property):
+    cfg = io.merge(cfg, {"subjects": {"exclude": {"90009": "test exclusion"}}})
     import shutil
     out_pipe = tmp_path / "OUT"
     out_pipe.mkdir()
-    for i, run in enumerate(["sub-90001_acq-REDACTED_ser-5", "sub-P02_acq-TIMESTAMP_ser-5"]):
+    for i, run in enumerate(["sub-90001_acq-REDACTED_ser-5", "sub-90009_acq-REDACTED_ser-5"]):
         sim = sim_with(cfg, 20 + i, grid=[30, 30, 16], n_volumes=60)
         rd = make_run_folder(sim, tmp_path / f"r{i}", run_id=run)
         shutil.move(str(rd), out_pipe / run)
     note(sim, record_property)
     logs = []
     rows = frontend.run_all(out_pipe, cfg, tmp_path / "all", log=logs.append)
-    assert [r["run"] for r in rows] == ["sub-90001_acq-REDACTED_ser-5"]       # P02 excluded
+    assert [r["run"] for r in rows] == ["sub-90001_acq-REDACTED_ser-5"]       # 90009 excluded
     assert any("excluded" in l for l in logs)
     md = (tmp_path / "all" / "noise_survey.md").read_text()
     assert "Across 1 runs" in md

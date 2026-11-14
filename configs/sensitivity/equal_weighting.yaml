@@ -1,0 +1,5 @@
+# Sensitivity (CLAUDE.md section 5.3): equal echo weights instead of the per-echo noise ratios. Front end rerun,
+# then route B.
+extends: ../default.yaml
+frontend:
+  weighting: equal

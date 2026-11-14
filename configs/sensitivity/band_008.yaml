@@ -1,0 +1,4 @@
+# Sensitivity (CLAUDE.md section 11): band limits 0.01-0.08 Hz instead of 0.01-0.10 Hz. Route B only.
+extends: ../default.yaml
+regions:
+  band_hz: [0.01, 0.08]

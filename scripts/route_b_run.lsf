@@ -1,0 +1,24 @@
+#!/bin/bash
+# Route B on one run (docs/ROUTE_B_PLAN.md): region shares, BOLD-like connectivity and integration with circular-shift
+# nulls, from the run's motion-regressed front end (outputs/phase2/<run>/mc) and its anatomy (outputs/anatomy/<run>).
+# Arguments: <subject number or run folder name> [atlas: 200_7 | 400_17] [common-ids file]
+# Outputs: outputs/route_b/<run>/<atlas>/ (route_b.md / .json, regions_route_b.tsv, corr_*.npy, route_b.png)
+# CLAUDE.md section 8: route B runs on real participants only after the R3 gate (injection validation); before
+# that it runs on injected data (scripts/inject_run.lsf, layout regions).
+set -uo pipefail
+RUNARG="${1:-}"; ATLAS="${2:-}"; COMMON="${3:-}"
+PY="${MEJOINT_PY:-$HOME/miniconda3_new/envs/mejoint/bin/python}"
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}" PYTHONUNBUFFERED=1
+NT="${LSB_DJOB_NUMPROC:-4}"; export OMP_NUM_THREADS="$NT" MKL_NUM_THREADS="$NT" OPENBLAS_NUM_THREADS="$NT"
+fail() { echo "PREFLIGHT FAILED: $*" >&2; exit 2; }
+if [ -d "outputs/phase2/$RUNARG" ]; then NAME="$RUNARG"; else NAME="$(ls -d outputs/phase2/sub-"$RUNARG"_* 2>/dev/null | head -n 1)"; NAME="${NAME:+$(basename "$NAME")}"; fi
+FE="outputs/phase2/$NAME/mc"; A="outputs/anatomy/$NAME"
+[ -n "$NAME" ] && [ -f "$FE/c0.npy" ] || fail "no front end for '$RUNARG'"
+[ -n "$ATLAS" ] || ATLAS="$("$PY" -c "from mejoint import io; print(io.load_config().get('regions', {}).get('atlas', '200_7'))")"
+[ -f "$A/labels_$ATLAS.nii.gz" ] || fail "no region labels $A/labels_$ATLAS.nii.gz (run scripts/anatomy_run.lsf)"
+ARGS=(); [ -n "$COMMON" ] && ARGS=(--common-ids "$COMMON")
+echo "== route B | $NAME | $ATLAS | $(date) | host $(hostname) | job ${LSB_JOBID:-interactive} | git $(git rev-parse --short HEAD 2>/dev/null || echo '?')"
+"$PY" -m mejoint.cli route-b --frontend-dir "$FE" --anat-dir "$A" --out "outputs/route_b/$NAME/$ATLAS" --atlas "$ATLAS" "${ARGS[@]}" \
+    || fail "route B failed"
+echo "== done $(date): $PWD/outputs/route_b/$NAME/$ATLAS/route_b.md"

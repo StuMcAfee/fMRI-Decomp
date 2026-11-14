@@ -1,0 +1,5 @@
+# Sensitivity (CLAUDE.md section 9): censoring at filtered FD > 0.2 mm (frames interpolated before filtering,
+# left out of every covariance). Route B only.
+extends: ../default.yaml
+regions:
+  censor_fd_mm: 0.2

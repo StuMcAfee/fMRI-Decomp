@@ -112,12 +112,13 @@ def test_mask_excludes_neck_muscle_by_decay(cfg):
 
 
 def test_mask_qc_all_runs(cfg, tmp_path):
+    cfg = io.merge(cfg, {"subjects": {"exclude": {"90009": "test exclusion"}}})
     import sys
     sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent))
     from test_frontend import make_run_folder
     from mejoint import simulate
     out_pipe = tmp_path / "OUT"
-    for i, run in enumerate(["sub-90001_acq-REDACTED_ser-5", "sub-P08_acq-TIMESTAMP_ser-4"]):
+    for i, run in enumerate(["sub-90001_acq-REDACTED_ser-5", "sub-90009_acq-REDACTED_ser-4"]):
         sim = simulate.simulate(cfg, seed=i, overrides={"grid": [30, 30, 18], "n_volumes": 20})
         rd = make_run_folder(sim, tmp_path / f"r{i}", run_id=run)
         rd.rename(out_pipe / run) if out_pipe.exists() else (out_pipe.mkdir(), rd.rename(out_pipe / run))

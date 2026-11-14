@@ -121,6 +121,10 @@ voxel's CSF fraction.*
 | Tissue (data-only) | two-compartment fit of the mean decay: CSF fraction, classes, κ | `mejoint tissue --frontend-dir ... --out ...` |
 | Joint ICA + metrics | components, s and q maps, η, nulls, bootstrap intervals, stability, figures | `scripts/phase4_subject.lsf "<front-end folder>" "<rank folder>"` |
 | Traveling waves (branch `claude/waves`) | complex modes of the band-passed analytic channels: lag maps, speed and direction, η, TE-dependent lag, two figures per mode | `mejoint waves --frontend-dir ... --out ...`, or `mejoint decompose ... --waves --wave-figures`; overnight: `scripts/waves_overnight.lsf "<run>"`; all participants: `scripts/submit_waves_batch.sh runs.txt` |
+| Injection calibration (Phase 5) | known ΔR2\*-only, ΔS0-only and mixed sources added to the raw echoes, then the whole pipeline (mbme_tedana, front end, joint ICA k = 50); where each lands (found?, η, amplitude, ΔS0/ΔR2\* ratio, echo profile at the source, tedana's class); pooled summary | `bash scripts/submit_inject.sh P04 P12`; networks of spheres sharing one time course: `--layout network`; recovery rerun on saved outputs: `scripts/inject_recover_all.sh` (per run: `outputs/inject/<run>/<level>_s1/recovery.md`; pooled: `outputs/inject/inject_summary.md`) |
+| Background-corrected η | removes from each component's ΔS0 and ΔR2\* energies what circularly shifted (and phase-randomized) copies of its own time course pick up; whole brain and the component's own voxels | `bash scripts/submit_eta_background.sh P04 P12` (native: `outputs/eta_background/eta_background_summary.md`; per k folder: `eta_background.md`) |
+| Output folder | moves `outputs/` to the analysis folder on the research drive and leaves a link, so all jobs write there | `bash scripts/use_output_root.sh` (default `.../CSIMemphis/Analysis/MEJOINT_QC`) |
+| Route B anatomy | each participant's EPI registered to their T1 and MNI (FSL); Schaefer cortical parcels plus thalamus and striatum brought into EPI space; QC figures | `bash scripts/submit_anatomy.sh <T1 list> P04 P12` (outputs/anatomy/<run>/) |
 
 The motion-corrected echoes come from the existing `mbme_tedana.py` pipeline (pairing of volumes across
 echoes and motion correction are reused, not reimplemented). Each stage writes a `done.json` (input
@@ -191,4 +195,5 @@ docs/             decisions.md (gates, results), research_report.md, WAVES_BRIEF
 - `claude/waves` holds the traveling-wave extension ([`docs/WAVES_BRIEF.md`](docs/WAVES_BRIEF.md)): complex,
   analytic-signal modes with complex ΔR2\* and ΔS0 maps, run as an option of the decomposition, plus a
   separate group command.
+- `claude/two-stage` (from `claude/waves`, 2026-11-06) holds the two-stage design: stage 1 = the joint decomposition (physics, noise), stage 2 = network analysis after stage-1 noise removal.
 - Nothing is merged into `main` without the user's agreement.

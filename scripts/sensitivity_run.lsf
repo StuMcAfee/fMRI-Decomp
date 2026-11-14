@@ -1,0 +1,49 @@
+#!/bin/bash
+# Second-pass sensitivity analysis on one participant (CLAUDE.md section 11; user, 2026-11-12).
+# Arguments: <subject number or run folder name> <variant>   (variant = configs/sensitivity/<variant>.yaml)
+#   route B only: band_008, gsr, censor, atlas_400_17
+#   anatomy relabel, then route B: gm05
+#   front end rerun (motion-corrected echoes, no MP-PCA check), then route B: equal_weighting, motion_lowpass6
+# Outputs: outputs/sensitivity/<variant>/route_b/<run>/<atlas>/ (and phase2/ or anatomy/ for the variants that need them)
+set -uo pipefail
+RUNARG="${1:-}"; VARIANT="${2:-}"
+PY="${MEJOINT_PY:-$HOME/miniconda3_new/envs/mejoint/bin/python}"
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}" PYTHONUNBUFFERED=1
+NT="${LSB_DJOB_NUMPROC:-4}"; export OMP_NUM_THREADS="$NT" MKL_NUM_THREADS="$NT" OPENBLAS_NUM_THREADS="$NT"
+fail() { echo "PREFLIGHT FAILED: $*" >&2; exit 2; }
+CFG="configs/sensitivity/$VARIANT.yaml"
+[ -f "$CFG" ] || fail "no variant config $CFG"
+if [ -d "outputs/phase2/$RUNARG" ]; then NAME="$RUNARG"; else NAME="$(ls -d outputs/phase2/sub-"$RUNARG"_* 2>/dev/null | head -n 1)"; NAME="${NAME:+$(basename "$NAME")}"; fi
+FE="outputs/phase2/$NAME/mc"; A="outputs/anatomy/$NAME"; TIS="outputs/tissue/$NAME/mc"
+[ -n "$NAME" ] && [ -f "$FE/c0.npy" ] || fail "no front end for '$RUNARG'"
+O="outputs/sensitivity/$VARIANT"
+mkdir -p "$O"                                              # the route B log goes here (route-B-only variants failed without it, 2026-11-13)
+echo "== sensitivity $VARIANT | $NAME | $(date) | host $(hostname) | job ${LSB_JOBID:-interactive} | git $(git rev-parse --short HEAD 2>/dev/null || echo '?')"
+case "$VARIANT" in
+    equal_weighting|motion_lowpass6)
+        RUN_DIR="$("$PY" -c "
+import json, sys
+d = json.load(open(sys.argv[1]))['inputs']['volumes_used']
+d = d['path'] if isinstance(d, dict) else d
+from pathlib import Path; print(Path(d).parent)" "$FE/done.json")"
+        [ -f "$RUN_DIR/result.json" ] || fail "mbme_tedana run folder not found ($RUN_DIR)"
+        FE2="$O/phase2/$NAME/mc"
+        if [ ! -f "$FE2/c0.npy" ]; then
+            echo "== front end ($VARIANT)"
+            "$PY" -m mejoint.cli frontend --run-dir "$RUN_DIR" --source mc --out "$FE2" --no-mppca --config "$CFG" || fail "front end failed"
+        fi
+        FE="$FE2" ;;
+    gm05)
+        TISARG=(); [ -f "$TIS/classes.npy" ] && TISARG=(--tissue-dir "$TIS")
+        "$PY" -m mejoint.cli anatomy --anat-dir "$A" --frontend-dir "$FE" --out-dir "$O/anatomy/$NAME" --config "$CFG" "${TISARG[@]}" || fail "anatomy relabel failed"
+        A="$O/anatomy/$NAME" ;;
+    band_008|gsr|censor|atlas_400_17) ;;
+    *) fail "unknown variant $VARIANT" ;;
+esac
+ATLAS="$("$PY" -c "import sys; from mejoint import io; print(io.load_config(sys.argv[1]).get('regions', {}).get('atlas', '200_7'))" "$CFG")"
+[ -f "$A/labels_$ATLAS.nii.gz" ] || fail "no labels $A/labels_$ATLAS.nii.gz"
+COMMON="outputs/route_b/common_ids_${ATLAS}.txt"; ARGS=(); [ -f "$COMMON" ] && ARGS=(--common-ids "$COMMON")
+"$PY" -m mejoint.cli route-b --frontend-dir "$FE" --anat-dir "$A" --out "$O/route_b/$NAME/$ATLAS" --atlas "$ATLAS" --config "$CFG" "${ARGS[@]}" > "$O/route_b_${NAME}_$ATLAS.log" 2>&1 \
+    || fail "route B failed (see $O/route_b_${NAME}_$ATLAS.log)"
+echo "== done $(date): $O/route_b/$NAME/$ATLAS/route_b.md"

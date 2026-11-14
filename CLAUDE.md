@@ -1,4 +1,4 @@
-# CLAUDE.md: physics-constrained joint decomposition of multi-echo fMRI
+# CLAUDE.md: physics-based separation of BOLD-like and S0-like signal in multi-echo fMRI
 
 This file is the standing brief for this repository. Read it fully before writing code, and re-read the relevant section before each phase. The literature review behind it is `docs/research_report.md`. This file turns that review into decisions. If you find a concrete error here, stop and tell the user rather than silently deviating.
 
@@ -6,15 +6,20 @@ This file is the standing brief for this repository. Read it fully before writin
 
 ## 1. Goal
 
-Build a Python package that decomposes 4-echo multiband resting-state fMRI into components that each carry **two physical maps**: a ΔS0 map (TE-independent, non-BOLD-like) and a ΔR2* map (TE-dependent, BOLD-like). Both maps must be estimated **during** the decomposition, not by classifying ICA components afterwards as tedana/ME-ICA do with kappa/rho.
+**Scientific aim (user, 2026-11-06 / 08).** The participants are survivors of childhood medulloblastoma, at least five years after diagnosis, surgery and treatment; adolescents and adults. Prediction: after childhood cerebellar injury, intrinsic BOLD activity in the cerebral cortex is less integrated. Healthy age- and sex-matched controls will be added later. The cerebellum is not an outcome region: its anatomy, damage and radiation exposure vary too much to interpret BOLD there; those factors are estimated in separate efforts and enter as independent variables for their remote effects on the cortex. Network detection is developed from the single acquisition's physics; clinical variables and reference anatomy are not used to define it.
+
+**Main analysis: route B (`docs/ROUTE_B_PLAN.md`, approved 2026-11-09).** Average the four echoes within each cerebral region, then separate each region's signal into an S0-like part (ΔS0, TE-independent) and an R2*-like part (ΔR2*, TE-dependent, BOLD-like), with the thermal noise removed. No decomposition is involved, so there is no detection limit.
+
+**Descriptive analysis: the joint decomposition (section 7).** Components that each carry a ΔS0 map and a ΔR2* map, both estimated during the decomposition (not by classifying ICA components afterwards, as tedana / ME-ICA do with kappa and rho). The injection tests (2026-11-07 / 08) showed that whole-brain spatial ICA, ours and tedana's, isolates only signals that are both large and strong; it describes the dominant large-scale components and is not the primary outcome.
 
 Deliverables:
-1. A tested front end that turns the echoes into two noise-whitened physical channels plus a residual noise reference.
-2. A calibrated dimensionality estimate.
-3. A joint decomposition with robust restarts.
-4. Per-component physical metrics with null distributions.
-5. A head-to-head comparison with tedana on the same inputs.
-6. An LSF batch interface.
+1. A tested front end: the echoes as noise-whitened physical channels plus leftover channels (done).
+2. Anatomy in each participant's own EPI space: cortical parcels, thalamus and striatum (route B step 3).
+3. Region signals, the split, and the region noise from the leftover channels (route B step 2, done in simulation).
+4. Region shares (BOLD-like, S0-like, leftover), BOLD-like connectivity and integration measures, with circular-shift nulls.
+5. Validation by injection of known signals into the raw echoes, and each participant's measured sensitivity.
+6. The joint decomposition with background-corrected η (descriptive) and the comparison with tedana.
+7. An LSF batch interface; participant- and region-level tables for the joint analysis with the cerebellar factors and, later, the controls.
 
 Stretch goal: a structured factorization with group-sparse channel maps.
 
@@ -23,17 +28,18 @@ Stretch goal: a structured factorization with group-sparse channel maps.
 - **User:** Stu McAfee, PhD (St. Jude, Diagnostic Imaging). He is expert in fMRI physiology and cerebellar/posterior fossa neuroscience.
 - **Python level:** novice to intermediate. Explain code by what it does, not by language mechanics.
 - **Writing:** keep scientific writing concise and defensible. Avoid em dashes in prose written for him.
-- **Git:** all phases are developed on the single branch `claude/beautiful-hamilton-141ubf` (user decision, 2026-11-02; this replaces one branch per phase). Never commit directly to `main`; merge into `main` only when the user agrees. Whenever you create, switch or merge a branch, give the exact commands and one line on why:
+- **Git:** all work is developed on `claude/decomposition` (user permission 2026-11-06; it carries all earlier work). Kept for reference, not developed: `claude/beautiful-hamilton-141ubf` (original project branch, Phases 0-4), `claude/waves` (traveling waves, paused), `claude/two-stage` (dropped design), `claude/pre-two-stage` (return point; it stands in for a tag, because tags cannot be pushed from this session or the cluster). Never commit directly to `main`; merge into `main` only when the user agrees. Whenever you create, switch or merge a branch, give the exact commands and one line on why:
   ```bash
-  git pull origin claude/beautiful-hamilton-141ubf     # get the latest work on the project branch
-  git add -A && git commit -m "..."                    # save progress
-  git switch main && git merge claude/beautiful-hamilton-141ubf   # only when the user agrees
+  git pull origin claude/decomposition     # get the latest work on the working branch
+  git add -A && git commit -m "..."        # save progress
+  git switch main && git merge claude/decomposition   # only when the user agrees
   ```
 - **Stop and ask, do not guess,** when any of these happens:
   - an acquisition fact (section 4) is unknown and changes the design;
   - a gate (section 8) fails twice;
   - a choice would change the scientific claim (for example dropping an echo or changing the outcome);
   - results look too good.
+- **Participant data never go into the repository** (user, 2026-11-12): no clinical tables, labels, per-participant values or images in git, docs or commit messages; read them from the research storage and write results under `outputs/` (`mejoint clinical-compare` refuses tables or outputs inside the repository; `.gitignore` blocks data file types). Clinical variables are compared with the measures only after the measures are fixed; they never define them. **Participants are named by pseudonym (P01-P17) everywhere in the repository** (docs, code comments, commit messages); the key (`outputs/pseudonyms.tsv`), subject exclusions and the coil set (`outputs/site.yaml`, read through `site_config`) live on the research storage only. Scan dates and acquisition times never appear in the repository. The history of every branch was rewritten on 2026-11-13 to replace subject numbers and scan times (user).
 - **Never fabricate** citations, numbers or tool behaviour. Check library APIs in the installed version (`help()`, source, `--help`). Label anything unverified.
 
 ## 3. Environment (HPC facts the user has confirmed)
@@ -57,6 +63,7 @@ Stretch goal: a structured factorization with group-sparse channel maps.
 - **FSL:** `fsl/6` does not set `FSLOUTPUTTYPE`; export it in scripts.
 - **GPU:** the driver is CUDA 12.4. Use a cu124 torch build; `torch==2.6.0+cu124` is known to work.
 - **Packages:** install them on the login node.
+- **Outputs:** the repository's `outputs/` is a link to `/research_jude/rgs01_jude/dept/DI/tir/vision_lab/stu/CSIMemphis/Analysis/MEJOINT_QC/` (user, 2026-11-09; `scripts/use_output_root.sh`), so every job writes there and earlier results stay available as inputs. Job logs stay in the repository's `logs/`. FSL 6 (`module load fsl/6`) provides the registrations.
 
 ## 4. Data and existing pipeline
 
@@ -64,12 +71,13 @@ Stretch goal: a structured factorization with group-sparse channel maps.
 - Resting-state multiband multi-echo EPI with 4 echoes.
 - **TE = 16.20, 31.22, 46.24, 61.26 ms.**
 - TR ≈ 0.75 s, so Nyquist is 0.667 Hz.
-- 17 runs (one per subject) were audited in Phase 0. Most have 800 volumes per echo. Echo volume counts differ in 5 runs; the pipeline's data-driven pairing kept 797, 751, 777 and 797 volumes in four of them (run P10 has a 19-volume gap inside the run, so kept volumes are not always consecutive in time). **Subject P08** (267–278 volumes per echo) failed pairing in the pipeline and is **excluded** (user decision, 2026-11-02). **Subject P02** is **excluded** (metal artefact or similar in the right cerebral hemisphere; user decision, 2026-11-03). 15 runs remain.
+- 17 runs (one per subject) were audited in Phase 0. Most have 800 volumes per echo. Echo volume counts differ in 5 runs; the pipeline's data-driven pairing kept 797 (P12), 798 (P14), 777 (P10) and 797 (P05) volumes in four of them (corrected 2026-11-11 from the R5 preflight and `volumes_used.tsv`; the Phase 0 note said 751 for one of them). Run P10 has a 19-volume gap inside the run (gap-free stretches of 531 and 246 frames), so kept volumes are not always consecutive in time. No T1 is currently available for P01, P16, P06 and P17 (user, 2026-11-11; recovery to be discussed with data management), so route B cannot run for them yet. **Subject P08** (267–278 volumes per echo) failed pairing in the pipeline and is **excluded** (user decision, 2026-11-02). **Subject P02** is **excluded** (metal artefact or similar in the right cerebral hemisphere; user decision, 2026-11-03). 15 runs remain.
 - 52×64×48 matrix, **3.281 × 3.281 × 3.3 mm** voxels (no slice gap). 3T Siemens MAGNETOM Prisma, syngo MR XA60, CMRR `cmrr_mbep2d_bold`. DICOMs are enhanced (XA) multi-frame files.
 - **MB 6** (derived from SliceTiming: 48 slices, 8 distinct times; `MultibandAccelerationFactor` is absent from the JSON). Slices acquired together are 8 slices (26.4 mm) apart. GRAPPA 2, partial Fourier 7/8, effective echo spacing 0.31 ms, total readout 15.8 ms.
 - **Phase encoding is left-right** (`PhaseEncodingDirection` = i, DICOM `ROW`; the 52-line axis has the narrower 170 mm FOV). Distortion, ghosting and any CAIPI shift run left-right.
 - HeadNeck_20 coil, elements HE1-4;NE1,2 (HE1-4 only, without neck elements, in P12, P06, P09 and P08); sum-of-squares coil combination, so low-SNR magnitude noise is noncentral-χ.
 - Participants are children and young adults, including patients after posterior fossa tumor surgery (resection cavities, hemosiderin, clips).
+- The patients are medulloblastoma survivors (section 1). Craniospinal irradiation is standard treatment, so cortical vasculature may be affected: report S0-like and leftover shares next to BOLD-like ones.
 
 **Established in Phase 0 (all 17 runs; details in `docs/decisions.md`):**
 - Phase: **not saved**.
@@ -77,7 +85,7 @@ Stretch goal: a structured factorization with group-sparse channel maps.
 - Physiological recordings: **none recorded** (user). No RETROICOR/RVT; respiratory and cardiac effects must be handled from the data and reported as a limitation.
 - Sequence fields: see the acquisition bullets above.
 - Slice-stack spacing: 8 slices (26.4 mm). **CAIPI shift unknown** (no protocol PDF; not found in the DICOM sample).
-- Tissue masks (grey matter, CSF/ventricles, vessels/sinuses) and cavity/peri-cavity masks: **no ready-made source exists** (user). Each session has a **T1w scan** (user, 2026-11-04). Build both a T1-based option (segmentation registered to EPI space) and a **data-only option** (classes from the multi-echo data alone), so the analysis can run from this data only.
+- Tissue masks: no ready-made source exists (user). Each session has a T1w MPRAGE (`.../CSIMemphis/Data/Rad/<subject>/<date>/.../*SAG_3D_T1_MPRAGE*.nii.gz`; list file from the user, 2026-11-09). The T1 option is built for route B (`src/mejoint/anatomy.py`, `scripts/anatomy_run.lsf`: FSL bet, fast, epi_reg, flirt, fnirt; Schaefer 2018 parcels bundled in `atlases/`; Harvard-Oxford subcortical from FSL). The data-only option (`src/mejoint/tissue.py`: classes from the multi-echo data alone) remains, and its CSF and dropout classes are excluded from regions. Cavity / peri-cavity masks: not built.
 
 **Analysis mask and independence (user decisions, 2026-11-02):**
 - The analysis always uses its own hole-filled brain mask, built from the input echoes by `mask.py` (head vs air from the measured noise level, coil-shading correction, brain vs scalp with a brain-like echo-1/echo-4 decay to exclude neck and face muscle, every enclosed hole filled, then regrowth into adjacent bright tissue so dephased cerebellar and orbitofrontal edges are kept). The user requires the cerebellum and orbitofrontal cortex to be included (2026-11-03). mbme_tedana's `brain_mask.nii.gz` (nilearn `compute_epi_mask`, which never fills holes) drops the deep brain in many participants; use it only to restrict comparisons with tedana to the voxels tedana saw.
@@ -194,29 +202,37 @@ Do not add extra weighting by df or echo count. Whitening already gives unit noi
 
 ```
 src/mejoint/
-  io.py          # nibabel dataobj -> float32 masked (V x T); NIfTI/TSV/JSON writers; provenance
-  inventory.py   # Phase 0 audit
-  simulate.py    # ground-truth multi-echo simulator (Phase 1)
-  mask.py        # robust brain mask from the input echoes (noise-referenced, shading-corrected, holes filled)
-  frontend.py    # mu/T2* fit, sigma (5.4), echo usability, df map, log-ratio, QR whitening -> c0, c1, r
-  nuisance.py    # one projector applied to y (log-ratio, all echoes) and to r (Phase 2b)
-  rank.py        # spectra, thermal and temporal nulls, shrinkage (Phase 3)
-  decompose.py   # joint spatial ICA on stacked [c0 | c1], robust restarts, back-substitution
-  metrics.py     # eta (7.1), map norms with CIs, nulls, tissue-class summaries, tedana concordance
-  gpu_ica.py     # optional batched FastICA in PyTorch
-  structured.py  # stretch: group-sparse structured factorization
-  cli.py         # `mejoint run --subject ... --config ...`, `mejoint summarize`
-scripts/  submit_lsf.sh  (job array over subjects + dependent summary job)
+  io.py            # nibabel dataobj -> float32 masked (V x T); NIfTI/TSV/JSON writers; provenance
+  inventory.py     # Phase 0 audit
+  simulate.py      # ground-truth multi-echo simulator (Phase 1)
+  mask.py          # brain mask from the input echoes (noise-referenced, shading-corrected, holes filled)
+  frontend.py      # mu/T2* fit, sigma (5.4), echo usability, df map, log-ratio, QR whitening -> c0, c1, r
+  nuisance.py      # one projector applied to y (log-ratio, all echoes) and to r (Phase 2b)
+  tissue.py        # data-only tissue classes and partial-volume coupling
+  rank.py          # spectra, nulls, MAPCA estimates (Phase 3)
+  anatomy.py       # route B: T1 matching, atlas tables, region labels in EPI space, QC figures
+  regions.py       # route B: region signals, split, region noise, shares, coupling, dimensionality, circular-shift null
+  inject.py        # known sources added to the raw echoes; recovery against the truth; detectability
+  decompose.py     # joint spatial ICA on stacked [c0 | c1] (descriptive), robust restarts, back-substitution
+  metrics.py       # eta (7.1), map norms with CIs, nulls, tissue-class summaries
+  eta_background.py  # background-corrected eta (circular-shift and phase surrogates; whole brain and support)
+  eta_recheck.py, te_check.py, sweep_batch.py   # post hoc checks and summaries of the decomposition
+  waves.py, wave_figures.py, waves_batch.py     # traveling waves (paused; docs/WAVES_BRIEF.md)
+  cli.py           # `mejoint <command>`
+atlases/  schaefer2018/  (bundled parcellations, MIT license)
+scripts/  LSF job and submit scripts (pipeline, injection, anatomy, eta-background, output folder)
 tests/    pytest unit and synthetic integration tests
 configs/  default.yaml   (every tunable; copied into every output folder)
-docs/     research_report.md, decisions.md (gate results), design notes
+docs/     research_report.md, decisions.md (gate results), ROUTE_B_PLAN.md, WAVES_BRIEF.md, design notes
 ```
 
 - **Done markers:** every stage writes its outputs atomically, plus a `done.json` holding input hashes, config hash, git SHA, package versions and seeds.
 - **Skipping:** a stage skips when its marker matches.
 - **Caching:** cache the front end; do not recompute it for every decomposition setting.
 
-## 7. Decomposition (build option 1 first)
+## 7. Decomposition (descriptive)
+
+Since 2026-11-09 the joint decomposition describes the dominant large-scale components; route B is the main analysis. Working k = 150 (user, 2026-11-08): injected network-sized sources separate only around k = 150 (focal and resting-strength sources are not isolated at any tested k). Results at other k stay reported.
 
 1. **Joint spatial ICA on concatenated channels (the baseline method).**
    1. Stack c0 and c1 rows along the voxel axis (≤ 2V × T), demean over time.
@@ -268,6 +284,8 @@ Do **not** use either of these instead:
 - tedana's label for the best-matching tedana component.
 
 **Do not hard-label ΔS0 as noise.** At 3T and short TR, neural signal has real ΔS0 parts (inflow, intravascular signal, CBV), so mixed components are expected.
+
+**Background-corrected eta (user decision 2026-11-08; `eta_background.py`).** The thermal debiasing above does not remove the energy that any slow time course picks up from the data's own slow fluctuations over ~40,000 voxels; that background has eta ~0.25-0.45 and set every native component's reported eta (~0.42). Remove it: for each component, 50 surrogates of its own time course (primary: circular shifts by at least 30 s, the end wrapping to the beginning, user's choice; secondary: phase randomization), their mean E_S0 and E_R2 subtracted from the component's own, over the whole brain (with a 5-95 % interval) and over the component's support (voxels chosen in one half of the run, measured in the other). The surrogate p is descriptive only: a data-derived component beats shifted copies of itself even on noise; which components count stays with the pipeline null.
 
 ## 8. Phases and gates
 
@@ -362,17 +380,27 @@ Tests:
 
 **Gate:** results table and figures shown to the user before any batch run.
 
+**Phase 5 outcome (2026-11-07 / 08):** injection into the raw echoes, full pipeline. The front end measures ΔS0 vs ΔR2* correctly when the time course is known (ratio, amplitude within ~10 %, no added curvature); processing does not create the native curvature; whole-brain ICA (ours and tedana's) finds no focal source and finds network-sized sources only when strong and at k ~150; the reported component eta measured the background (section 7.1).
+
+**Route B (`docs/ROUTE_B_PLAN.md`; approved 2026-11-09).**
+- **R1, simulation tests** (done 2026-11-09): averaging keeps the model linear; region noise from the leftover channels; shares; dimensionality and the circular-shift null; segregation.
+- **R2, anatomy** for the pilots. **Gate:** the user checks every registration (QC figures).
+- **R3, injection validation:** shares, coupling and dimensionality recovered from injected region-wide signals at resting strength (share tolerance 0.1, set in advance); smallest usable region fixed; per-participant sensitivity. **Gate:** results shown to the user.
+- **R4, pilot** (P04 and a second participant): maps, matrices, spectra, integration measures. **Gate:** user review before any batch run.
+- **R5, batch** over all participants: participant- and region-level tables; QC-FC and distance dependence (they need many subjects). **Passed 2026-11-12** (user) on 11 participants with a T1 (10 in the primary), with the primary redefined as above.
+
+Traveling waves: paused (user, 2026-11-06).
+
 **Between Phase 5 and Phase 6 (user decision, 2026-11-04):** traveling-wave detection (`docs/WAVES_BRIEF.md`).
 
-**Phase 6: batch run and summary.**
-- LSF job array over subjects, plus a dependent summary job.
-- Compute QC-FC and distance dependence here; they need many subjects.
+**Phase 6:** replaced by R5.
 
 **Phase 7 (stretch):** option 2, the thermal-denoising arm (section 9), and notes on a probabilistic version.
 
 ## 9. Signal-to-noise: do and don't
 
 - **No spatial smoothing** before decomposition. It inflates MB-leakage false positives and merges small cerebellar foci with CSF and veins; tedana also advises against it.
+- Route B's region averaging is not smoothing: whole parcels are pooled in native space, no signal is blurred across region borders, and the functional data are never resampled.
 - **Thermal denoising is optional and must be validated by injection.** If used:
   - Run it per echo, before motion correction. That requires adding a hook in `mbme_tedana.py`, not duplicating its motion correction.
   - Use complex NORDIC if phase exists. Otherwise use magnitude MP-PCA/NORDIC, accepting the Rician bias.
@@ -400,18 +428,28 @@ Tests:
 | Interpolation-correlated noise | residual spatial autocorrelation; per-frame σ variation | one resampling only; native space; MP-PCA check on raw echoes |
 | Resection cavity, hemosiderin, clips | dropout, df map, residual | separate cavity / peri-cavity / normal-tissue summaries |
 | Dimensionality and seed dependence | sweeps, restarts | report stability; counts are not the primary outcome |
+| Background energy in whole-brain component metrics | eta uniform (~0.4) across components and participants; a known pure source reads mixed | background-corrected eta (7.1); region-level measures (route B) |
+| Detection limit of whole-brain spatial ICA | injected sources not recovered; share of a source's time course in the top-k PCA dimensions | route B; report k; injection-measured sensitivity per participant |
+| Echo profiles from noise-selected voxels | zero crossing near the noise-weighted mean TE (29-37 ms) and a ~32 ms ratio even on pure noise | profiles at voxels fixed independently (injection truth, regions) |
 
 A small residual does not certify a clean ΔR2*. The residual only sees structure outside span{1, TE}.
 
 ## 11. Outcomes
 
-**Primary:**
-- variance fractions in c0, c1 and the residual, per tissue class;
-- ΔR2* (q-attributable) variance remaining after physiological and global regressors;
-- accepted-versus-rejected-style variance, with spread across seeds;
-- split-half reliability.
+Cerebral regions only (section 1): Schaefer 200 parcels / 7 networks (400 / 17 as sensitivity) and, as secondary regions, left and right thalamus and striatum. Cortical, thalamus and striatum voxels with CSF probability above 0.3 are dropped (deep regions: user, 2026-11-10, a few ventricle-edge voxels carry a large share of the late-echo weight; cortex: user, 2026-11-11, sulcal-CSF voxels carried part of the brain-wide pattern and CSF may differ between groups). Each participant's cortical CSF fraction (mean CSF probability over all cortical voxels) is reported and used as a covariate. Reliability floor 0.5 (user, 2026-11-10): a region's reliability is the signal share of its slow BOLD-like variance; deep-region coupling below the floor is reported as not measurable, with its interval; cortical regions below it stay in the primary and are dropped in a sensitivity analysis.
 
-**Secondary,** for continuity with the user's tedana analysis: the number of components whose η falls in the simulated R2*-only band, reported across the dimension sweep and at a common number of volumes, next to tedana's "Likely BOLD" count. State plainly that counts depend on the estimator: interpolation and filtering alone change ME-ICA counts (Olafsson et al. 2015).
+**Primary (user, 2026-11-12, after the R5 review):** effective dimensionality of cortical BOLD-like activity beyond the brain-wide pattern: the participation ratio without the first pattern, (Σλ − λ1)² / (Σλ² − λ1²), of the noise-corrected correlations of the regions' R2*-like time courses, against its circular-shift null, at a common number of volumes (797), always reported with the global BOLD-like share and each participant's injection-measured sensitivity. Reason: across the R5 participants the ordinary participation ratio was almost the inverse of the global share (Spearman −0.98), and the strong, uniformly positive motion dependence of connectivity (42 % of edges at p < 0.05) disappeared once each participant's brain-wide pattern was removed (3.4 %). Limitation: higher values mean more independent patterns beyond the brain-wide one relative to what is present; added internally coherent networks raised it in most participants but lowered it where baseline dimensionality was already high (R5 injections).
+
+**Secondary:**
+- the ordinary participation ratio (all patterns), against its circular-shift null; across participants it mostly measures the size of the brain-wide pattern (R5), so it is reported with the global share and mean FD and not interpreted alone;
+- system segregation of the BOLD-like correlations; the number of eigenvalues above the circular-shift null (conservative; a deflated count failed the R3 injections, 2026-11-11);
+- region BOLD-like, S0-like and leftover shares, by network;
+- BOLD-like versus ordinary connectivity; global BOLD-like share (S0-like connectivity dropped, user 2026-11-11: region S0-like time courses are mostly noise);
+- thalamic and striatal BOLD-like coupling with the cortical networks.
+
+**Descriptive:** joint-decomposition components across k with background-corrected eta; the comparison with tedana's components and "Likely BOLD" counts. Counts depend on the estimator, k, scan length and signal strength (interpolation and filtering alone change ME-ICA counts, Olafsson et al. 2015); they are not outcomes.
+
+Sensitivity analyses: cortex with all voxels (CSF-rich voxels kept; integration measures); cortical regions below the reliability floor removed; motion handling (24-term regression primary, band-passed motion projection), censoring at filtered FD > 0.2 mm, global regression, equal versus per-echo weighting, parcel resolution, band limits, grey-matter threshold. "BOLD-like" is not "neural": breathing-related CO2 and field changes are partly BOLD-like and global.
 
 ## 12. Efficiency and reproducibility
 

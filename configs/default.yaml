@@ -1,6 +1,7 @@
 # Every tunable for mejoint lives here. A copy (and its hash) is written into every output folder.
 # Values marked "from CLAUDE.md" are the brief's defaults; change them here, never in code.
 
+site_config: outputs/site.yaml   # participant identifiers (exclusions, coil set) live here, on the research storage, never in git
 project_seed: 20261102        # root of all SeedSequence-derived seeds (CLAUDE.md section 12)
 
 acquisition:
@@ -12,12 +13,11 @@ acquisition:
   mb_factor: 6                           # derived from SliceTiming (not in the JSON)
   slice_stack_separation: 8              # slices acquired together are 8 apart (48 / 6)
   phase_encoding: i                      # left-right; CAIPI shift unknown
+  coil_head_only: []            # subject numbers scanned with the head elements only (HE1-4, no neck elements); set in the site file (outputs/site.yaml), never here
   slice_axis: 2                          # axial slices along array axis 2 (48 slices; Phase 0)
 
 subjects:
-  exclude:                               # user decision 2026-11-02
-    "P08": "267-278 volumes per echo; volume pairing failed in mbme_tedana"
-    "P02": "metal artefact or similar in the right cerebral hemisphere (user, 2026-11-03)"
+  exclude: {}                            # {subject number: reason}; set in the site file (outputs/site.yaml), never here (user, 2026-11-13)
 
 inventory:                    # Phase 0 audit
   search_depth: 1             # NIfTI/DICOM may sit in the NIfTI folder or one level deeper
@@ -197,7 +197,7 @@ decompose:                    # Phase 4 option 1: joint spatial ICA on [c0 | c1]
   max_iter: 1000
   tol: 1.0e-6
   fun: logcosh
-  k_sweep_fixed: [50, 70, 90]   # plus MAPCA AIC / KIC / MDL from the Phase 3 rank output (no gated k; user decision 2026-11-04)
+  k_sweep_fixed: [50, 70, 90, 150]   # plus MAPCA AIC / KIC / MDL (no gated k; 2026-11-04); 150 added 2026-11-08: the working k (injection: networks separate there)
 
 metrics:                      # Phase 4 per-component measurements
   n_null: 200                   # single random Gaussian / phase-randomized time courses (reported only: they ignore that components are top-variance directions)
@@ -211,6 +211,58 @@ metrics:                      # Phase 4 per-component measurements
   band_mc: 100                  # Monte Carlo draws per component for the matched-SNR eta bands
   n_boot: 100                   # block bootstrap of frames for ||s||, ||q|| intervals
   boot_block_frames: 20         # 15 s blocks at TR 0.75 s
+  background:                   # background-corrected eta (eta_background.py; user decision 2026-11-08)
+    n: 50                       # surrogates per component and method
+    methods: [shift, phase]     # shift: circular shift of the component's own time course (primary); phase: phase randomization
+    min_shift_s: 30.0           # smallest circular shift (s): beyond the autocorrelation of slow signals
+
+regions:                      # route B (docs/ROUTE_B_PLAN.md; approved 2026-11-09)
+  atlas: "200_7"                # Schaefer parcels_networks: 200_7 primary (D2), 400_17 sensitivity
+  gm_min: 0.3                   # cortical voxels need FAST grey-matter probability >= this (in EPI space)
+  min_voxels: 20                # regions with fewer voxels are kept in the table but flagged unusable (injection test sets the final value)
+  secondary: true               # left / right thalamus and striatum from Harvard-Oxford subcortical (D1)
+  secondary_csf_max: 0.3        # thalamus / striatum voxels with FAST CSF probability above this are dropped (user, 2026-11-10: a few ventricle-edge voxels carried 9-12 % of the late-echo weight); null = keep all
+  reliability_min: 0.5          # deep-region coupling below this reliability is reported as not measurable (with its interval); cortex: sensitivity set without regions below it (user, 2026-11-10)
+  cortex_csf_max: 0.3           # PRIMARY (user, 2026-11-11): cortical voxels with FAST CSF probability above this are dropped (sulcal-CSF voxels carried part of the brain-wide pattern; CSF may differ between groups); null = keep all
+  global_regression: false     # sensitivity (user, 2026-11-12): regress the mean cortical BOLD-like time course out of every region (region-level GSR)
+  censor_fd_mm: null            # sensitivity: frames with filtered FD above this are interpolated before filtering and left out of every covariance
+  allvoxel_sensitivity: true    # also report the integration measures on cortex with all voxels (labels_<atlas>_allvox), and each participant's cortical CSF fraction (covariate)
+  t1_list: null                 # file with one T1 path per line (quotes allowed); found by subject and scan time
+  t1_root: /research_jude/rgs01_jude/dept/DI/tir/vision_lab/stu/CSIMemphis/Data/Rad   # fallback search: <t1_root>/<subject>/**/*T1*MPRAGE*.nii*
+  bet_f: 0.4                    # FSL bet fractional threshold for the T1 (children and patients: check the QC figure)
+  epi_ref: t2s                  # EPI image registered to the T1 (echo1, echo2, echo3, t2sw, t2s): the static T2* map, accepted by the user (2026-11-10; echo1 and echo3 failed R2 by eye)
+  band_hz: [0.01, 0.10]         # analysis band for shares and coupling
+  n_null: 1000                  # circular-shift surrogates (each region its own lag)
+  min_shift_s: 30.0             # smallest circular shift (s)
+  n_boot: 200                   # block bootstrap of frames for the share intervals
+  boot_block_s: 20.0            # bootstrap block length (s)
+  n_volumes_common: 797         # R5-1 (user, 2026-11-11; 797, not 751, after the preflight showed no run keeps 751): coupling and integration on the first 797 frames of the longest gap-free stretch (shares use all frames); runs whose stretch is shorter are left out of the primary
+
+inject:                       # Phase 5 injection calibration (user decision 2026-11-06): known sources added to the RAW echoes
+  radius_mm: 10.0               # each source: cos^2 taper from its centre to zero at this radius (~100 voxels)
+  regions: [cortical, deep, inferior]   # one source of every type per region (data-only placement, see inject.py)
+  types: [r2, s0, mixed]        # r2: dR2* only; s0: dS0 only; mixed: dS0/S0 = (mixed_ratio_ms / 1000) x dR2*, same sign
+  mixed_ratio_ms: 32.0          # zero crossing of the mixed source's echo profile (the ratio te-check finds in the real components)
+  levels:                       # temporal SD of the source at its centre
+    strong: {q_sd_per_s: 0.5, s_sd: 0.010}   # dR2* 0.5 s^-1 = 1.6 % at TE 31 ms; dS0 1 %
+    weak:   {q_sd_per_s: 0.2, s_sd: 0.004}   # about the size of resting BOLD fluctuations
+  band_hz: [0.01, 0.10]         # band-limited Gaussian time courses, mutually orthogonal over the analysis frames
+  cortical_band_mm: 6.0         # cortical: centre between radius and radius + 6 mm from the mask edge, upper two thirds
+  deep_min_mm: 15.0             # deep: centre at least radius + 15 mm from the mask edge, upper two thirds
+  min_tissue_fraction: 0.8      # share of the sphere in tissue or mixed classes (data-only classes); relaxed in 0.1 steps if needed
+  min_separation_mm: 30.0       # between source centres
+  k: 150                        # decomposition of new injection runs (user decision 2026-11-08: working k = 150; the first runs used 50)
+  recovered_r: 0.9              # a source counts as recovered when its best component time course has |r| >= this
+  layout: focal                 # focal: one sphere per source (first runs); network: each source a set of spheres sharing one time course
+  region_layout:                # R3 (route B validation): networks of the participant's own cortical parcels, signal in every voxel of each parcel
+    types: [r2, r2, s0, mixed]  # one network each
+    parcels_per_network: 8
+    min_voxels: 20              # parcels smaller than this are not used as injection targets
+  network:                      # network layout (user decision 2026-11-07): ~7 x 118 = ~800 voxels per network
+    cortical_pairs: 3           # sphere pairs mirrored across the midline, cortical region
+    inferior: 1                 # spheres in the inferior region (approximate posterior fossa)
+    min_separation_mm: 25.0     # between any two spheres of any networks
+    mirror_tolerance_mm: 12.0   # partner centre within this distance of the mirror point
 
 mask:                         # analysis mask built from the input echoes (mask.py); user decision 2026-11-02
   border_vox: 3               # image border used to measure the air (noise) level

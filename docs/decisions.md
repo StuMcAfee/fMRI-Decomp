@@ -936,3 +936,438 @@ User's design: stage 1 = the current joint decomposition, unchanged (thermal whi
 - No tissue masks yet: edge (from the mask), CSF and vessel (from the data-only T2* / f_long classes) proxies, labelled as such.
 
 **Step 1 prepared** (`scripts/diag_c0_variants.py`, `.lsf`; nothing added to the package): variants (a) `decompose.decompose` with the Phase 4 seeds (at k = AIC it reproduces the sweep's k folder), (b) and (c) the same 30-restart path on c0 alone (thermal; z-scored per voxel), each at k = MAPCA AIC and 25; matched to tedana by the Hungarian assignment on |spatial r| (c0-channel maps vs tedana's component maps; tedana file names searched, not assumed) and |temporal r| (vs tedana's mixing matrix); tedana accepted / Likely BOLD components reproduced (best spatial |r| >= 0.7); montages and maps per variant. Tested on a simulation with six planted sources standing in for tedana: matched spatial |r| 0.83-0.91, temporal 0.93-0.96, five of six recovered in every variant.
+
+### 2026-11-06: two-stage work moves to its own branch (user decision)
+
+User: commit the decomposition work and start a new branch that is not waves. Everything was already committed and pushed on claude/waves (9f30dc5). New branch **claude/two-stage** from that commit, so it carries all work to date: Phases 0-5, the wave extension (unchanged from here on), the batch pipeline, the eta and dS0 checks, and the step-1 diagnostic. Two-stage work happens only on claude/two-stage; claude/waves stays as it is; claude/beautiful-hamilton-141ubf is the original project branch (Phases 0-5). The return point is the branch **claude/pre-two-stage** at 69428fd, the state before the two-stage work (tags cannot be pushed from this session or from the cluster, so a branch that is never committed to stands in for the tag). CLAUDE.md section 2 still names the single project branch; updating it waits for the user's approval with the other CLAUDE.md edits.
+
+### 2026-11-06: step 1 result on P04 (motion-regressed front end), review pending
+
+tedana: 19 components (13 accepted, 6 tagged Likely BOLD); matched over 30,637 voxels in both masks.
+
+| k | Variant | Variance in k dims | Spatial: median matched r, >= 0.7 | Temporal: median, >= 0.7 | tedana accepted / Likely BOLD reproduced |
+|---|---|---|---|---|---|
+| 28 (AIC) | (a) [c0 | c1], thermal | 39.8 % | 0.59, 4 of 19 | 0.72, 10 | 3 / 13, 1 / 6 |
+| 28 | (b) c0, thermal | 49.4 % | 0.55, 5 | 0.66, 6 | 4 / 13, 1 / 6 |
+| 28 | (c) c0, z-scored | 31.7 % | 0.63, 7 | 0.70, 10 | 4 / 13, 3 / 6 |
+| 25 | (a) | 38.9 % | 0.59, 4 | 0.63, 9 | 3 / 13, 1 / 6 |
+| 25 | (b) | 48.4 % | 0.58, 4 | 0.67, 7 | 3 / 13, 1 / 6 |
+| 25 | (c) | 30.8 % | 0.61, 7 | 0.70, 9 | 5 / 13, 2 / 6 |
+
+- All variants reproduce tedana only in part (about half of its components by time course at |r| >= 0.7, a quarter to a third by map). (c) is best by a small margin; weighting and k change little.
+- The montages of (c) are dominated by edge rings, the frontal pole, lateral edges, an inferior occipital cluster and posterior-fossa speckle; bilateral grey-matter networks are not evident by eye. The display is limited (5 axial slices, unsmoothed maps thresholded at |z| > 2, array orientation).
+- Not like-for-like yet: our variants used the 24-term motion-regressed front end, tedana did not regress; masks differ (ours includes deep brain and cerebellum); k differs (tedana 19); tedana's maps are z statistics, ours betas (temporal matching is free of the map-type difference).
+- The matching tests agreement with tedana, not "conventional networks" (tedana's own components were not inspected for networks; no network templates in native space yet).
+
+### 2026-11-06: two-stage approach dropped; scientific aim restated (user)
+
+- **Two-stage approach dropped** (user): small expected benefit at the cost of the physics-based decomposition's advantages. Its work stays on claude/two-stage for reference; nothing from it enters the pipeline. Next work returns to the joint decomposition.
+- **Aim (user, 2026-11-06):** participants are survivors of medulloblastoma, at least 5 years after diagnosis, surgery and adjuvant therapy, adolescents and adults. Kundu's group used ME-ICA to identify independent BOLD components in a data-driven way and reported that their number changes with age and development, with findings suggesting that this integration of networks is driven by cerebral-cerebellar interactions (user's summary; the papers are not checked here). Prediction: after childhood cerebellar injury, intrinsic activity reflects less integrated networks. Requirement: identify them in a principled, data-driven way, separating what is likely neuronally driven from noise. tedana's results here are mixed (5 of 16 runs with no "Likely BOLD" component).
+
+### 2026-11-06: focus set; check 1 (is the echo-1 effect created by motion correction?) prepared
+
+User (2026-11-06): survivors are predicted to show less integration, i.e. more independent networks in the cerebral cortex. No reference group yet (healthy age- and sex-matched participants later); clinical variables and reference anatomy exist but the network detection is to be developed from the single acquisition's physics alone; cortical localization is judged by eye. **Focus: get the decomposition right, so that components can be called likely neuronal or likely noise.** Work continues on a new branch, **claude/decomposition** (from claude/two-stage at its last commit, carrying all work and records).
+
+Plan in order: (1) is the uniform echo-1 effect (eta ~0.4, curvature, zero crossing near 30 ms) created by processing? (2) calibrate the neuronal / noise bands on real data by injection (Phase 5); then the component call.
+
+Check 1 (`scripts/te_check_raw_vs_mc.py`, `.lsf`; diagnostic only): the k = 50 components of each run's motion-corrected sweep (their time courses) are measured with the identical method (te_check.check, plain least-squares betas on the same time courses) in the motion-corrected front end and in the raw-echo front end (no motion correction, the same paired frames; from the noise survey). mbme_tedana estimates motion on echo 1 alone and applies it to every echo; if that creates the effect, it shrinks or vanishes in the raw echoes. The raw echoes carry uncorrected motion, so a persisting effect is informative and a vanishing one decisive. Test: identical data in both front ends give identical numbers (paired ratio 1.00).
+
+### 2026-11-06: check 1 result (P04, P12; JSONs, the figure step had crashed on a missing value, fixed)
+
+The same k = 50 components measured in the motion-corrected and the raw-echo front ends:
+- Echo profiles of the strongest components are nearly unchanged (P04 comp 27: mc [2.1, 0.19, -0.38, -0.30] %, raw [2.02, 0.23, -0.32, -0.27] %; P12 comp 8: mc [1.92, 0.82, -0.86, -1.36], raw [1.93, 0.62, -1.10, -1.22]).
+- Ratio unchanged (31.4 vs 32.4 ms; 33.5 vs 33.2 ms). Zero crossings more frequent in raw (26 -> 37; 31 -> 41); TE1/TE4 opposite more frequent (0.53 -> 0.66; 0.64 -> 0.72).
+- **Motion correction does not create the effect.** Caveats: the raw front ends have no nuisance projection (rank 0 vs 25); raw curvature z is negative and many raw curvature fractions are missing (uncorrected motion inflates the empirical noise; a non-positive noise variance is now treated as missing). Only the profiles are a fair comparison.
+
+### 2026-11-06: two findings about te-check (from the injection tests); one is a bug, fixed
+
+1. **The profile zero crossing and the ratio near 32 ms are what noise gives.** te-check's profile is the median over a component's 200 strongest voxels (by |dR2*| z). The noise in the dS0 and dR2* estimates is positively correlated (r ~ 0.9, CLAUDE.md 5.2), so voxels selected on noise change sign between echoes at the noise-weighted mean TE: sum(W TE) / sum(W) with W = (exp(-TE/T2*) / r_e)^2 = 28.9, 33.8, 36.5 ms at T2* 30, 45, 60 ms. Pure-noise simulation (8 components, all below the null): zero crossing 34-36 ms, TE1/TE4 opposite in ~97 % of the selected voxels, ratio 36-39 ms, curvature ~0. The real components' zero crossings (25-33 ms) and ratios (31.5-34.6 ms) fall in this range. **So these two numbers cannot by themselves show a volume change.** What they do not explain: the size of the strongest real profiles (~2 % at TE1, about 10x the beta noise of a typical voxel at 800 frames). The injection runs measure the profile at the source's own voxels, which avoids the selection.
+2. **Bug (fixed): the curvature z was biased upward whenever the nuisance projection was on.** The empirical noise calibration (`eta_recheck.beta_noise` / `calibrate`) simulated noise without the projection but applied the degrees-of-freedom correction for the removed regressors to it; the factor came out too small by ~p / (T - k - 1) and the noise was under-estimated (3.3 % at T = 800, k = 50, p = 25). Summed over ~10^5 voxels this gives a false curvature z of roughly 0.03 x sqrt(V / 2) ~ 7. Pure noise with projection: before, median curvature z 4.1 (T = 200) and 1.4 (T = 800, ~8,000 voxels); after, 0.3 and 0.5; without projection 0 both times. Fix: the simulated noise is projected with the same basis (`nuisance_Q.npy`); all callers pass it. Regression test added (`tests/test_te_check.py`). **Affected earlier results:** te-check curvature z and fractions (and the "What is the dS0?" table built from them) and eta-recheck (slightly). They need rerunning (`scripts/te_check_all.lsf`, `scripts/eta_recheck_all.lsf`, then `mejoint sweep-summary`). The main eta (thermal noise, sigma already corrected for the removed df in the front end) is not affected.
+
+### 2026-11-06: injection calibration built (Phase 5; user approved)
+
+`src/mejoint/inject.py`, CLI `inject-make`, `inject-recover`, `inject-summary`; `scripts/inject_run.lsf`, `scripts/submit_inject.sh`; settings `inject:` in configs/default.yaml.
+- **Sources:** one dR2*-only, one dS0-only and one mixed source (dS0/S0 = 0.032 s x dR2*, same sign, so its profile crosses zero at 32 ms like the real components) in each of three data-only regions: cortical (centre 10-16 mm from the mask edge, upper two thirds), deep (>= 25 mm from the edge), inferior (inferior third, posterior half; approximate posterior fossa). Spheres 10 mm radius with a cos^2 taper, >= 80 % in the tissue or mixed classes, centres >= 30 mm apart. Band-limited (0.01-0.1 Hz) mutually orthogonal time courses. Two levels, separate runs: strong (dR2* SD 0.5 s^-1, dS0 1 %) and weak (0.2 s^-1, 0.4 %; about resting BOLD size).
+- **Injection:** into the raw echoes, before any processing, at the raw volumes that form each analysis frame (volumes_used.tsv), as S + mu (exp(w (a - TE b) u) - 1): exact in the log, measured noise untouched; integer files keep their type, voxels outside the spheres stay bit-identical. JSON sidecars and DICOM folders are linked, not copied.
+- **Pipeline:** mbme_tedana (same settings, so tedana also sees the sources), the mejoint front end (mc, motion regression), joint ICA at k = 50 with the original run's seeds.
+- **Measured per source:** best component (|r| of time courses, after the nuisance projection), above null, label; amplitude recovered vs injected (dS0, dR2*) and their ratio in ms; eta of the component, of its footprint, and the oracle eta (true time course as a fixed regressor, no ICA: separates front end from ICA); te-check profile and curvature, plus the profile and curvature at the source's own voxels (no noise selection); tedana's best match (kappa, rho, class); whether the other components survive (vs the original k = 50).
+- **Not testable by injection:** multiband slice leakage (the signal is added after reconstruction), coil combination, anything upstream of the magnitude images.
+- **Tests** (`tests/test_inject.py`): time courses orthogonal and in band; injection exact in the log; file injection keeps pairing, type and untouched voxels; placement constraints; end to end on simulated echoes (sources found with |r| > 0.9; oracle eta 0.02 for dR2*, 1.00 at the footprint for dS0; ratio -1 ms for dR2* and 31.6 ms for the 32 ms mixed source; recovered amplitudes within 10 %); the run-folder path through make_dir, front end, decomposition and recover_dir. The job script was dry-run end to end with a stand-in for mbme_tedana (no FSL here).
+- **Observation from the simulations:** a weak focal source that ICA does not isolate gets eta ~0.3-0.6 for its best component, while its oracle eta is correct. Low-energy components are not interpretable by eta, as CLAUDE.md 7.1 already says.
+
+### 2026-11-07: injection result (P04, P12; strong and weak; 36 sources) and the fixed te-check
+
+- **Not one source was found**, by our joint ICA at k = 50 or by tedana. Best component |r| median 0.18 (max 0.30), tedana's best 0.14 (max 0.25): chance level for slow time courses. tedana's "accepted / Likely BOLD" labels of those best matches are therefore meaningless. The injected signal is there: with the true time course the recovered amplitudes are 0.87-1.07 of the injected ones.
+- **The front end measures the physics correctly** (true time course, the source's own voxels): ratio dS0/dR2* 1.4 and -0.7 ms for dR2*-only sources (truth 0), 31.9 and 33.6 ms for mixed (truth 32); curvature fraction -0.001 to 0.023 for every type. Oracle eta at the source: strong dR2* 0.05 (correct); weak dR2* 0.29, dS0 0.47-0.61 (truth 1), mixed 0.43: in ~100-voxel footprints chance correlation with the background pulls eta toward ~0.35. **Processing from the magnitude images onward does not create curvature or the 32 ms ratio.**
+- **eta of any slow time course over the whole brain is ~0.33** (every source type, 0.24-0.44): chance correlation with the data's broad fluctuations outweighs a focal source over ~10^5 voxels, and those fluctuations have eta ~0.35. The native components' eta 0.41 is close to this background value.
+- **Curvature survives the fix:** at k = 50 the native components' curvature fraction is 0.085-0.161 with z 18-65 in every run (sweep_batch te_fixed). With the injection result above, the curvature is in the images (upstream of the front end: reconstruction, coil combination, partial Fourier, or the signal: motion effects not linear in TE, a short-T2* compartment), not made by our processing.
+- **Why nothing was found (to be measured):** in white noise a focal source is found once its channel variance summed over voxels exceeds ~3x sqrt(rows / T) (= 10 at 80,000 stacked rows, 800 frames; numerical check: |r| 0.93 at 30, 0.42 at 10). Real data add large structured signals that fill the top PCA dimensions, so a focal source can sit far below dimension 50. Added to the recovery: the source's summed variance, the white-noise limit, and the share of its time course inside the top 50 / 90 / 150 / 300 PCA dimensions of the data (chance k / T), with the k needed for 80 %. `scripts/inject_recover_all.sh` reruns the recovery on the saved outputs.
+
+### 2026-11-07: network-scale injection built (user approved)
+
+The focal test asked the decomposition to find 10 mm spheres; the aim is distributed networks. New layout (`inject.layout: network`, `inject.network` in the config; `--layout network` in `inject-make`, `inject_run.lsf layout=network`, `submit_inject.sh --layout network`):
+- One network per type (dR2*-only, dS0-only, mixed at 32 ms), each 3 sphere pairs mirrored across the midline (left-right axis; partner within 12 mm of the mirror point) in the cortical region plus 1 sphere in the inferior region (approximate posterior fossa): 7 spheres of 10 mm, ~800 voxels, one shared time course. Every sphere of every network >= 25 mm from every other; spheres mostly in tissue or mixed classes.
+- Same amplitudes (strong, weak), time courses, injection, pipeline and measures as the focal runs, including the detectability measures. Outputs in `outputs/inject/<run>/network_<level>_s<seed>/`; seeds differ from the focal runs (extra spawn key); the pooled summary separates the two layouts.
+- Tests: placement on a brain-sized mask (counts, separation, mirrored pairs on opposite sides, no overlap); job script dry-run end to end with a stand-in for mbme_tedana.
+
+### 2026-11-07: network injection result (3 of 4 runs; P04 strong missing) and what it means
+
+- **Networks (7 spheres, ~860 voxels):** none recovered at |r| >= 0.9. The strong dR2*-only network in P12 came closest: |r| 0.75, recovered dR2* 0.90 of the truth, ratio 0.95 ms (truth 0), eta of its footprint 0.10; 74 % of its time course lies in the top 50 PCA dimensions and 80 % needs k = 58. Strong dS0-only and mixed networks: |r| 0.23 and 0.21; 80 % of their time courses needs k = 96 and 148. Weak (resting-size) networks: |r| 0.16-0.21, k for 80 % 171-313.
+- **Focal sources:** 80 % of their time courses needs k 213-348 (the chance level for slow time courses is similar; see below).
+- **The source's energy decides it, against the data's own large-scale structure, not the white-noise limit:** the strong dR2* network had 109 units (10x the white-noise limit), the strong dS0 network 65, the weak ones 21-43, all above the white-noise limit, yet only the strongest was partly found at k = 50. At equal % change a dS0 source carries less energy in the channels than a dR2* one, and the mixed source (its signal cancels near 32 ms) even less.
+- **Oracle eta at the source is pulled toward the background:** with the true time course, strong dR2* network 0.13 (truth 0), dS0 network 0.59 (truth 1). A fixed slow regressor picks up energy from the data's own slow fluctuations in any footprint; the thermal debiasing does not remove it.
+- **Fixes and additions (recovery only):** source energy was NaN when a footprint held a voxel without channel data (fixed); "chance" for the captured share was given as k / T (0.06 at k = 50, T = 800), but the data's top dimensions are slow, so slow time courses score far higher (the focal sources, whose energy is near zero, score 0.21-0.28 at k = 50 on real data); now measured with 50 never-injected time courses from the same generator. The same 50 give the background energy and eta in each footprint and an oracle eta with the background removed (simulation: 0.94 and 1.04 for dS0, -0.03 and 0.03 for dR2*). Recovery outputs can now be named per k (`--out-name`); `scripts/inject_k_sweep.lsf` / `submit_inject_k_sweep.sh` rerun only the decomposition of each saved injection at k = 90 and 150 and find the sources; the pooled summary lists every k.
+
+### 2026-11-08: injection at k = 50, 90, 150 (focal and network; P04 strong network only at k = 50)
+
+- **Higher k separates the strong networks** (best component |r|, k 50 / 90 / 150): strong dR2* network 0.75 / 0.91 / 0.92 (P12; P04 at k 50: 0.23); strong dS0 network 0.23 / 0.66 / 0.83; strong mixed network 0.21 / 0.26 / 0.70; weak dR2* network 0.18 / 0.22 / 0.67; weak dS0 and weak mixed networks and all focal sources not found (focal strong dR2* best 0.79 at k 150). This follows the "k for 80 %" measure: 58, 96, 148, 171 for those four.
+- **With the background removed, eta at the source is right on real data** (true time course, the source's own voxels): dR2* networks -0.06 to 0.06 (truth 0), dS0 networks 0.80 to 1.00 (truth 1), focal dR2* -0.02 / 0.04, focal dS0 0.79 / 1.08, mixed 0.42-0.50 (the 32 ms mixed source's own eta is ~0.4). Without it: 0.12-0.14 for dR2*, 0.41-0.63 for dS0. The background a never-injected slow time course picks up has eta 0.23-0.43.
+- **The eta of the recovered component is not**: the strong dR2* network found at k 90 / 150 has component eta 0.24 / 0.22 and is labelled "mixed" (truth 0), while its dR2* amplitude (0.98-1.01) and ratio (-0.1 / 0.6 ms) are right. A component's eta is computed over the whole brain (~40,000 voxels), where the energy any slow time course picks up from the data's own slow fluctuations is far larger than the source; its eta is that background's, ~0.25-0.45. **This is the likely reason every native component has eta ~0.42**: the reported eta measures the background, not the component. The existing nulls (phase-randomized single time courses, surrogate PCA directions) set the significance threshold and remove a selection bias; they do not remove this background from E_S0 and E_R2.
+- **Bug fixed:** the echo profile and curvature at the source fitted the component and the true time course together; when the component matches the truth well, the two split the signal (in the figures the "component" and "oracle" profiles added up to the expected one). They are now fitted separately; test added.
+
+### 2026-11-08: background-corrected eta; working k = 150 (user decisions)
+
+- **k = 150 is the working k for now** (user): the injections show network-sized sources separating only around k = 150. Added to `decompose.k_sweep_fixed` (50, 70, 90, 150) and made the k of new injection runs (`inject.k`). Results at other k stay reported.
+- **Background-corrected eta** (`src/mejoint/eta_background.py`, `mejoint eta-background`, `mejoint eta-background-summary`; `scripts/eta_background_run.lsf`, `scripts/submit_eta_background.sh`): for each component time course, 50 surrogates per method; their mean E_S0 and E_R2 (single-regression maps over the brain) are removed from the component's own before eta. Surrogates: **circular shifts** of the component's own time course by at least 30 s, the end wrapping to the beginning (user, 2026-11-08: a stronger control than phase scrambling in local field potential work; it keeps the exact spectrum and every within-series feature), and **phase randomization**, side by side. Two scopes: the whole brain (with a 5-95 % interval from single surrogates), and the component's **support** (voxels whose energy exceeds 3 noise SDs in one half of the run, energies and surrogates measured in the other half, both directions summed), because over the whole brain the background a given time course picks up varies by about as much as a network's energy.
+- **Tests:** a pure-dR2* and a pure-dS0 source on a strong, broad, slow background of mixed physics (10 simulated datasets): thermal-only eta 0.20 +- 0.02 and 0.85 +- 0.01; corrected (circular shift, whole brain) 0.00 +- 0.04 and 1.04 +- 0.04; support version the same within 0.05. Circular shifts keep the time course's values (rotation) and phase surrogates its amplitude spectrum. A synthetic test that drew sources and background from one orthogonalized set was wrong (the sources then pick up no background); fixed.
+- **The circular-shift p is descriptive, not a significance test:** a component's time course is fitted to the same data, so it beats shifted copies of itself even on pure noise (dry run: all six noise components p <= 0.02). Which components count stays with the pipeline null (surrogate data through the same selection, `above_null`); the summaries select components that way.
+- **Also:** a single-k decomposition into an existing sweep folder now adds its row to sweep.json / sweep.md instead of replacing them. Recovery reads `eta_background.json` of the k folder and reports the corrected eta of the matched component next to the truth (oracle eta at the source without background).
+- **Next:** validation on the injected networks at k = 150 (corrected eta near 0 for dR2*, 1 for dS0, ~0.4 for the 32 ms mixed source), then the native components of P04 and P12 at k = 50, 90, 150.
+
+### 2026-11-08: route B planned; cerebellum excluded as an outcome region (user)
+
+User: route B (region-level separation of BOLD-like and S0-like signal, BOLD-like connectivity and integration
+measures) makes sense; work is on planning while the cluster connection is down. Cerebellar BOLD is not a focus:
+anatomy, damage and radiation delivery vary too much to interpret it; those factors are estimated in separate efforts
+and used as independent variables for their remote effects on the cerebral cortex. Draft plan for approval:
+`docs/ROUTE_B_PLAN.md` (decisions D1 to D6 listed there). Nothing is built until it is approved.
+
+### 2026-11-09: route B plan approved (user)
+
+Decisions in `docs/ROUTE_B_PLAN.md` section 9, as recommended: D1 cortex as the outcome region, thalamus and striatum
+as secondary regions (cerebellum and brainstem excluded); D2 Schaefer 200 parcels / 7 networks primary, 400 / 17 as
+sensitivity (the injection test sets the minimum region size); D3 FSL for registration (default; ANTs / FreeSurfer
+only if verified); D4 effective dimensionality (participation ratio) of cortical BOLD-like activity as the primary
+integration outcome, segregation and the count above the circular-shift null secondary; D5 24-term motion regression
+for the primary analysis, band-passed motion projection as sensitivity; D6 CLAUDE.md edits to be proposed for
+approval. Work starts with the simulation tests (plan step 2), which need no cluster time.
+
+### 2026-11-09: output folder; route B step 2 (simulation tests) built
+
+- **Output folder (user):** future jobs write to `/research_jude/rgs01_jude/dept/DI/tir/vision_lab/stu/CSIMemphis/Analysis/MEJOINT_QC/`. Earlier results are inputs to later jobs, so the repository's `outputs/` is moved there once and replaced by a link of the same name (`scripts/use_output_root.sh`); every script keeps using `outputs/...`. `.gitignore` also ignores the link. Job logs stay in the repository's `logs/`.
+- **Route B core** (`src/mejoint/regions.py`): region averaging of the log-ratio echoes weighted by inverse thermal noise; the front end's split applied to the region signal (S0-like a(t), R2*-like b(t), two leftover channels); region noise from the leftover channels' frame-to-frame differences; shares in the 0.01-0.1 Hz band; coupling of b(t) with the noise removed from the variances; participation ratio, count of eigenvalues above the circular-shift null, segregation, global share; circular-shift null with each region shifted by its own random lag.
+- **Tests** (`tests/test_regions.py`, 3 seeds): noise-free regions return a(t) and b(t) exactly; the region noise from the leftover channels matches the truth within 15 % for independent and for correlated voxel noise (a shared 30 % makes it 18x the independent-voxel value); BOLD-like share > 0.95 for pure R2*, < 0.05 for pure S0, within 0.05 of the truth for a mixed region; leftover share < 0.05 without curvature and > 0.1 with a curved echo profile; four driven networks give participation ratio > 2.5 against < 1.5 for one shared driver, four eigenvalues above the circular-shift null, segregation > 0.5; independent regions sit inside their null (about 5 % of edges beyond it); global share within 0.1 of the truth.
+- **Observation:** an echo profile strong at echo 1 only (like several real components) is mostly absorbed as an S0 + R2* mixture at region level; only its non-linear part shows as leftover. Two test set-ups were wrong at first (time courses forced exactly uncorrelated by the generator; a first-echo-heavy profile used as the curvature case); fixed.
+
+### 2026-11-09: route B step 3 (anatomy) built; T1 list received
+
+- **T1 list (user):** 11 participants (P04 among them; P12 not listed, P08 listed but excluded). The T1 of a run is found by subject number and scan time in the list (`regions.t1_list`, or the list file given to the job), else by a search under `regions.t1_root`/<subject>/ for `*T1*MPRAGE*.nii*`.
+- **Atlases:** Schaefer 2018 200 / 7 and 400 / 17 (MNI152 FSL 2 mm) and their label tables copied unchanged into `atlases/schaefer2018/` with the CBIG MIT license and source note (no download needed on the cluster). Harvard-Oxford subcortical (thalamus; striatum = caudate + putamen + accumbens) from FSL's own data folder, labels found by name in its XML.
+- **Registration** (`scripts/anatomy_run.lsf`, `scripts/submit_anatomy.sh`; FSL 6): fslreorient2std, bet -R (f = `regions.bet_f`, 0.4), fast; epi_reg (boundary-based) of the front end's mean echo 1 within the analysis mask to the T1; flirt 12 dof then fnirt (T1_2_MNI152_2mm) to MNI; inverse warp; atlases into EPI space by nearest neighbour, grey-matter probability by trilinear interpolation. The functional data are not resampled. No field map: left-right distortion is not corrected. Untested here (no FSL in this session); every participant's registration is checked by eye (QC figures).
+- **Region labels** (`src/mejoint/anatomy.py`, `mejoint anatomy`): cortex = Schaefer parcel, inside the analysis mask, FAST grey matter >= 0.3, not CSF-dominated or dropout in the data-only classes; then L / R thalamus and striatum (not CSF / dropout; FAST grey matter not applied in deep nuclei); regions under `regions.min_voxels` (20) flagged. Outputs per run: `labels_<atlas>.nii.gz`, `regions_<atlas>.tsv/.json`, `qc_<atlas>.png` (T1 white-matter edge and regions on the EPI), `qc_t1_to_mni.png`.
+- **Tests** (`tests/test_anatomy.py`): T1 matching (list with quotes, folder search, none found); the bundled tables (200 / 400 regions, 7 / 17 networks); subcortical grouping (brainstem never a region); the label rules on a toy volume; run_dir outputs.
+
+### 2026-11-09: CLAUDE.md edits approved and applied (D6)
+
+User approved all ten proposed edits (`docs/CLAUDE_md_proposal.md`, E1-E10) and they are applied: title and goal (scientific aim; route B main, joint decomposition descriptive; cerebellum excluded as an outcome region); working branch `claude/decomposition`; output folder (MEJOINT_QC) and FSL 6; participants, T1 location and the built T1 option; architecture; section 7 marked descriptive with working k = 150 and the background-corrected eta; Phase 5 outcome and route B phases R1-R5 with gates (old Phase 6 replaced by R5; waves paused); region averaging is not smoothing; three new pitfalls; outcomes (primary: effective dimensionality of cortical BOLD-like activity).
+
+### 2026-11-10: background-corrected eta fails validation; anatomy QC improved
+
+**Corrected eta against known truth (injection, k = 50 / 90 / 150; P04 and P12).** Matched components with |r| >= 0.7:
+
+| injected | k | n | eta reported | corrected, circular shift: brain / support | corrected, phase: brain / support | truth |
+|---|---|---|---|---|---|---|
+| dR2* network, strong | 150 | 2 | 0.22 | 0.21 / 0.17 | 0.22 / 0.18 | 0.05 |
+| dR2* network, weak | 150 | 1 | 0.27 | 0.20 / 0.18 | 0.20 / 0.18 | -0.06 |
+| dS0 network, strong | 150 | 2 | 0.48 | 0.43 / 0.44 | 0.43 / 0.48 | 0.88 |
+| dR2* network, strong | 50 / 90 | 1 / 1 | 0.29 / 0.24 | 0.26 / 0.22, 0.22 / 0.18 | same | 0.05 / 0.06 |
+| dR2* focal, strong | 150 | 1 | 0.39 | n/a / 0.60 | n/a / 0.92 | -0.02 |
+
+- **The correction barely moves a component's eta, and the corrected values stay pulled toward ~0.2-0.45 whatever the truth** (the dS0 network reads 0.43-0.48 against 0.88). What the surrogates remove (chance overlap with the background) is not what biases a component. A component time course that matches the injected one at |r| ~0.9 still carries ~20 % of its variance from other, native signal, and its maps pick up that native structure (eta ~0.4) by genuine covariance, over the whole brain and inside its own voxels alike.
+- **Conclusion: component-level eta cannot classify components as BOLD-like or S0-like in these data, with or without the correction.** The native components' corrected eta (k = 150: median 0.42, 10-13 of 300 below 0.2, 4-10 above 0.8) is therefore not interpretable as physiology. The joint decomposition stays descriptive (CLAUDE.md section 7), as already decided; no further work on component eta is proposed. Route B is unaffected: it uses no component time courses, and the region-level separation with the true timing gave the truth (0.05 for dR2*, 0.88 for dS0, background removed).
+- Observation, not followed up: in both participants the native eta histograms have two peaks (~0.22 and ~0.47) at every k, reported and corrected alike.
+
+**Anatomy (R2), first look (P04, P12).** T1 to MNI: the template outline follows the brain in both participants (the speckle outside the head was the outline method; it now draws the template's brain surface). Regions on the EPI: cortical parcels follow the cortex, thalamus and striatum sit in the deep grey matter, no regions in the cerebellum. EPI to T1: the old panel (white-matter edge at EPI resolution) could not be judged; replaced by `qc_epi_to_t1.png` (the EPI resampled into T1 space by epi_reg, and the T1, both with the T1 white-matter boundary at 1 mm). Rerunning `scripts/anatomy_run.lsf` reuses the registrations and only redoes the figures and labels. The R2 gate waits for that figure.
+
+### 2026-11-10: anatomy (R2) results for P04 and P12
+
+- Logs: P12's T1 was found by the folder search (same layout as P04's). 200 / 7: 186 (P04) and 195 (P12) of 204 regions usable (>= 20 voxels); 15,010 and 17,377 cortical voxels, median 72 and 78 per region. 400 / 17: 326 and 358 of 404 usable (median 35 and 41). Thalamus L / R 195 / 194 and 222 / 157 voxels; striatum 210 / 186 and 254 / 220.
+- EPI to T1 (`qc_epi_to_t1.png`, white-matter boundary at 1 mm): brain outline, midline, ventricles and cerebellum align, the EPI's darker white matter fills the boundary in all three planes, no visible shift (assistant's reading; gyral detail cannot be judged at 3.3 mm). T1 to MNI: aligned.
+- Regions below 20 voxels are the dropout zones: orbitofrontal and temporal-pole parcels in both (P12: L OFC 2, L TempPole 2, R OFC 1-3, R TempPole 1-3, R Default PFCdPFCm 3; P04 also L OFC 1, L TempPole 1 and 3, L / R Default Temp 1-2, L Cont Temp 1, R Cont PFCl 1, L Cont Cing 2). The Limbic network keeps 4 of 12 parcels in P12 and 2 of 12 in P04: treat it as unreliable in network-level measures.
+- Usable regions differ between participants and the participation ratio depends on the number of regions: R3 / R4 report the integration measures on the regions usable in every participant (common set) and on each participant's full set.
+- **Gate R2: not passed (user, 2026-11-10).** The registrations of P04 and P12 are not accepted yet; the user's specific concerns are pending. R3 is not started.
+
+### 2026-11-10: R2 not passed: left-right shift; registration check built
+
+User: in both pilots the T1 white-matter boundary appears shifted to the left on the EPI. Left-right is this EPI's phase-encoding axis (no field map), so the cause is systematic: either the registration reference (mean of echo 1, TE 16 ms, the weakest grey / white contrast; boundary-based registration can settle off with weak contrast) or phase-encoding distortion that a rigid registration cannot fully absorb.
+- **Measurement** (`anatomy.shift_scan`, `mejoint anatomy-regcheck`): for the EPI in T1 space, the shift of the T1 white-matter boundary along each axis that maximizes the EPI's contrast across it (just outside minus just inside, over their average); 0 = aligned, sign and side in subject terms from the affine. Synthetic test: a 3-voxel left-right displacement is reported as 3 mm toward the right side, 0 on the other axes.
+- **Candidates** (`mejoint anatomy-refs`; `scripts/anatomy_regcheck.lsf`, `scripts/submit_anatomy_regcheck.sh`): epi_reg with the temporal mean of echo 1, 2 or 3 and with a T2*-weighted combination of the echo means, each measured; the current registration is measured too. The chosen reference goes into `regions.epi_ref`; `scripts/anatomy_run.lsf` then redoes epi_reg and everything downstream, and runs the check on the final registration.
+- If every reference leaves a similar left-right shift, the cause is distortion; options then (to decide with the user): a field-map-free distortion correction, or an EPI-to-T1 registration allowed to stretch along the phase-encoding axis only. A second R2 failure means stopping to ask (CLAUDE.md section 2).
+
+### 2026-11-10: registration check result; EPI reference changed to echo 3
+
+Residual left-right shift of the T1 white-matter boundary on the EPI (regcheck; only peaks inside +-8 mm count, curves rising to the edge of the range are not measurable and are now flagged as such):
+
+| EPI reference | P12 | P04 (left-right; anterior-posterior / superior-inferior) |
+|---|---|---|
+| echo 1 mean, first run ("current") | +6 mm | +3 mm; +6 / not measurable |
+| echo 1 mean (mu) | +2 mm | +3 mm; +7 / not measurable |
+| echo 2 mean | +1 mm | 0; +1 / 0 |
+| echo 3 mean | +1 mm | 0; +1 / 0 |
+| T2*-weighted combination | +1 mm | +1 mm; +1 / +1 |
+
+- The user's left-right shift is confirmed and came from the registration image: the echo-1 mean (TE 16 ms) has the weakest grey / white contrast, and epi_reg settled 2-6 mm off (and differently between two echo-1 inputs). Later echoes remove it (0-1 mm, under a third of an EPI voxel). Not a distortion problem at this scale; no distortion correction needed for now.
+- Echo 3 has the strongest contrast (the only reference with the expected sign: EPI white matter darker than the grey matter outside it) and the sharpest peaks in P04: **`regions.epi_ref: echo3`**. In P12 the superior-inferior curve has no peak for any reference (not measurable there).
+- Next: rerun `scripts/anatomy_run.lsf` for both pilots (it redoes epi_reg with echo 3 and everything downstream, keeping the T1 and MNI registrations, and runs the check on the final registration); the user then judges qc_epi_to_t1.png again for gate R2.
+
+### 2026-11-10: R2 not passed a second time (echo 3); T2* map as the registration image (user)
+
+- User: with echo 3 the registrations still look somewhat off, and signal dropout makes it hard to see how. This is the second R2 failure; the user chose the next step: register the static (average) T2* map (user's report: the tedana group has shown T2*-map registration can outperform EPI registration in some examples; not checked here).
+- Built: candidate `t2s` = the front end's T2* map (fit to the run's mean decay), clipped to 5-150 ms, zero outside the analysis mask; added to `scripts/anatomy_regcheck.lsf` (existing candidate registrations are kept, only t2s is new). QC slices moved away from the dropout zone: three axial slices in the upper brain and three coronal slices (front, middle, back) within the EPI's coverage, because a left-right shift shows in axial and coronal views; the comparison figure likewise.
+- The user picks the reference from regcheck.png / regcheck.md; then `regions.epi_ref` is set and `scripts/anatomy_run.lsf` reruns.
+
+### 2026-11-10: T2* map registration accepted; gate R2 passed (user)
+
+| reference | P04: left-right / anterior-posterior / superior-inferior, contrast | P12 |
+|---|---|---|
+| t2s (static T2* map) | +1 / 0 / 0 mm, 0.041 | 0 / +1 / 0 mm (the only reference with a measurable superior-inferior peak) |
+
+User: "the t2s alignment looks good". **`regions.epi_ref: t2s`**; `scripts/anatomy_run.lsf` reuses the checked registration (`reg_t2s/epi2t1.mat`) instead of recomputing it, then redoes the atlas resampling, grey matter, labels and QC. **Gate R2 passed** for P04 and P12 with the T2* map registration; the labels from that rerun are the ones route B uses. Next: R3 (injection validation of route B).
+
+### 2026-11-10: route B runner and the R3 injection built
+
+- **Route B runner** (`regions.analyze` / `regions.run_dir`, `mejoint route-b`, `scripts/route_b_run.lsf`): from a run's front end (maps, nuisance basis, echo paths in done.json) and its anatomy (labels, region table): region signals, split, region noise, shares with block-bootstrap intervals (20 s blocks), BOLD-like / S0-like / ordinary (OC-like) correlations, participation ratio with its circular-shift null (1,000 shifts, at least 30 s), eigenvalues above the null, segregation, global share (variance of the regions' mean time course, its noise removed, over their mean noise-corrected variance), thalamus / striatum coupling with each cortical network; full usable set and an optional common set; outputs route_b.md / .json, regions_route_b.tsv, corr_*.npy, region_timecourses.npz, route_b.png. Before the R3 gate it runs on injected data and on the uninjected baseline of the injected runs only (validation use).
+- **R3 injection** (`inject_regions.py`; `inject.make_dir` layout `regions`; `inject_run.lsf layout=regions condition=independent|shared`; `submit_inject.sh --layout regions --conditions ...`; `mejoint inject-regions-recover`, `inject-regions-summary`; config `inject.region_layout`): four networks of 8 usable cortical parcels of the participant's own labels (two dR2*-only, one dS0-only, one mixed), the signal in every voxel of each parcel, in the raw echoes; independent or shared time courses; route B on the injected run and on the same run without injection. Measured: recovered / injected amplitudes and the injected part's BOLD-like share per type; change in BOLD-like correlation within injected networks, between them, injected-to-other, and between regions that were not injected (should not change); participation ratio and eigenvalues above the null, before and after; amplitude error by region size.
+- **Dry run** (simulated run, stand-in for mbme_tedana): amplitudes 1.004 of the injected (dR2* and dS0), shares 1.0 and 0.0 against truth 1.0 and 0.0. Fixed on the way: segregation and global share with networks or regions lacking signal; global share redefined (the first version exceeded 1 when signals were near noise); coupling change when the uninjected run shows no detectable coupling (taken as 0).
+
+### 2026-11-10: first R3 results (independent networks, resting strength; P04, P12); dimensionality bug fixed
+
+| | P12 | P04 | truth |
+|---|---|---|---|
+| injected BOLD-like share: dR2* / dS0 / mixed networks | 0.998 / 0.001 / 0.593 | 0.998 / 0.025 / 0.603 | 1 / 0 / 0.62, 0.59 |
+| recovered / injected amplitude | 0.83-0.90 | 0.78-0.90 | 1 |
+| correlation change: within injected networks / between them / injected-to-other / pairs not injected (median abs) | +0.22 / -0.24 / -0.12 / 0.012 | +0.16 / -0.20 / -0.11 / 0.007 | rise / dilution / dilution / ~0 |
+| eigenvalues above the circular-shift null, before -> after | 0 -> 0 (bug) | 4 -> 5 | up to +4 |
+
+- **Shares pass** the pre-set tolerance (errors 0.001-0.035 against 0.1).
+- **Amplitudes are 10-22 % low, more in small regions** (dR2* error ~0.26-0.35 at 20-40 voxels, ~0.23 at 40-80, ~0.12 at 80-160): the injected signal sits only in the labelled ribbon voxels and motion and resampling spread part of it into unlabelled neighbours. Shares are unaffected because both parts shrink alike. Share error by region size is now reported (the outcomes use shares and correlations).
+- **Coupling behaves as expected**: rises within injected networks; uninjected pairs unchanged. The fall between independent networks and between injected and other regions is the expected dilution (added independent signal lowers a region's correlation with everything it does not share); the earlier text "independent: ~0" was wrong and is corrected.
+- **Bug (fixed): dimensionality was undefined (P12: none, 0 eigenvalues)** whenever one region had no signal above its noise: its NaN row and column made every row hold a NaN, and the code dropped every such row, emptying the matrix. Now only the regions without signal are dropped (and counted: `n_regions_with_signal`). P04 had signal in every region and was unaffected. Test added.
+- P04 shows +1 pattern above the null (independent, weak): not yet interpretable before the strong level and the shared condition are seen. `scripts/inject_regions_rerun.lsf` reruns route B (original and injected) and the recovery for every region-level injection folder, then the pooled summary.
+
+### 2026-11-10: R3 results, all 8 runs (P04, P12; resting and 2.5x strength; independent and shared networks)
+
+- **Shares (pre-set tolerance 0.1): pass.** Injected BOLD-like share within 0.06 of truth everywhere (largest: P12 shared weak, mixed 0.678 vs 0.619, dS0 0.030 vs 0). Share error by region size (median over runs): 0.003 (20-40 voxels), 0.005 (40-80), 0.007 (80-160), 0.000 (>160): **minimum region size stays 20 voxels.**
+- **Coupling: pass.** Within injected networks +0.16 to +0.23 (resting), +0.32 to +0.34 (strong); between injected networks negative with independent time courses (-0.20 to -0.42, dilution) and positive with a shared one (+0.01 to +0.18; the median includes the dS0-only network, whose BOLD-like signal shares nothing); uninjected pairs median absolute change 0.007-0.012.
+- **Amplitudes** 0.78-0.93 of injected (edge loss of ribbon-confined injection; shares unaffected).
+- **Dimensionality: direction right, interpretation caveat.** Participation ratio: P12 4.32 -> independent 4.89 (weak) / 5.21 (strong), shared 4.52 / 4.47; P04 4.59 -> independent 5.20 / 5.52, shared 5.06 / 5.30. Independent > shared in all four comparisons; shared adds exactly one eigenvalue above the circular-shift null in all four runs; independent adds 0-1 (resting) and 1-3 (strong): the count is insensitive at resting strength. **Caveat:** the participation ratio also rose with one shared network (+0.15 to +0.71), because the real BOLD-like correlations are dominated by one brain-wide pattern; any added structure that is not brain-wide spreads the variance. The measure therefore partly reflects how strongly the brain-wide pattern dominates, not only how many independent networks there are. The dS0-only network adds nothing to the BOLD-like time courses, so S0-like artefacts cannot inflate it.
+- Proposed (for the user's decision, it changes how the primary outcome is defined): also report the participation ratio with the brain-wide (first) pattern removed, (n - lambda_1)^2 / (||C||_F^2 - lambda_1^2), computed from the full matrix, which separates more independent networks from less global dominance; the global share is reported alongside.
+
+### 2026-11-10: gate R3 passed; secondary measure added (user decision)
+
+- **Gate R3: passed** (user, 2026-11-10) on the 8-run results above.
+- **Outcome definition (user choice (a)):** the participation ratio stays the primary outcome. Added as a secondary measure, always reported next to the global share: the **participation ratio without the first (brain-wide) pattern**, (sum lambda - lambda_1)^2 / (sum lambda^2 - lambda_1^2), from the eigenvalues of the full noise-corrected BOLD-like correlation matrix (negative eigenvalues set to 0, as for the primary), with its own circular-shift null (same shifts). `regions.participation_ratio_residual`; `route_b.json` fields `pr_without_first`, its null median, 5-95 % interval and percentile; also in the R3 recovery and pooled summary (with the global share before and after).
+- Simulation check (test added): with four networks, raising a brain-wide signal lowered the ordinary ratio from 6.1 to 1.5 while the new one stayed at 5.1-5.2; adding four networks on top of a dominant brain-wide signal raised the ordinary ratio (1.7 -> 3.0, the R3 caveat) and lowered the new one (14.9 -> 5.1), because the structure beyond the brain-wide pattern becomes more organized. Reading: the ordinary ratio mixes how many patterns there are with how strongly one dominates; the new ratio and the global share separate the two.
+- Next: rerun `scripts/inject_regions_rerun.lsf` to add the measure to the R3 tables (no change expected to anything already reported), then R4.
+
+### 2026-11-10: R4 first outputs (P04, P12; 200 / 7); three reporting fixes
+
+| | P12 | P04 |
+|---|---|---|
+| cortical regions | 196 | 190 |
+| participation ratio (circular-shift null median) | 4.32 (37.9) | 4.59 (43.1) |
+| PR without first pattern (null median) | 17.26 (38.6) | 18.56 (43.8) |
+| eigenvalues above null / global share / edges beyond null | 4 / 0.43 / 0.84 | 4 / 0.42 / 0.87 |
+| cortical BOLD-like share, network medians (Limbic excluded) | 0.93-0.99 | 0.92-0.96 |
+| Limbic (usable parcels) BOLD-like share | 0.62 (9) | 0.78 (4) |
+| leftover share, cortex / striatum / thalamus | <0.01 / 0.08 / 0.15 | <0.01 / 0.12 / 0.04 |
+
+Fixed (reporting only; no measure redefined):
+- **Segregation null was undefined.** The circular-shift null gives within-network means near 0, so the ratio explodes (null 95 % 3.5 and 4.6 against observed 0.20). Now: network labels permuted over the regions (the matrix kept), with the within and between means and their difference reported; liberal, because neighbouring parcels share networks.
+- **Shares outside 0-1.** P12 thalamus showed a BOLD-like share of 1.19 (S0-like -0.20): the S0-like energy fell below its noise estimate. Shares are now clipped to 0-1 (raw value kept), and regions with an energy below its noise estimate are listed. Likely cause to check: deep regions carry fast signal in the leftover channels (leftover share 0.15), which inflates the frame-difference noise estimate.
+- **Thalamus and striatum coupling was not noise-corrected** (plain correlations, attenuated by the larger noise of deep regions), unlike the cortical matrix. Now noise-corrected the same way (simulation: plain 0.76, corrected 0.91, truth 0.94); plain values kept in the JSON. Each secondary region is now listed separately.
+
+Observations for the user's review: right striatum coupling is lowest in both participants (0.08-0.21 and about 0); the circular-shift null of the participation ratio differs between participants (37.9 vs 43.1: different temporal autocorrelation and region counts); every eigenvalue past the fourth lies below the null in both, which partly reflects the trace taken by the first eigenvalue (~100 of ~190).
+
+### 2026-11-10: R3 rerun with the new secondary measure; R4 rerun after the fixes; noise diagnostics added
+
+**R3, participation ratio without the first pattern (before -> after injection):**
+
+| | independent, resting | independent, strong | shared, resting | shared, strong |
+|---|---|---|---|---|
+| P12 | 17.26 -> 18.91 (+1.65) | -> 18.14 (+0.88) | -> 17.13 (-0.13) | -> 14.06 (-3.20) |
+| P04 | 18.56 -> 20.22 (+1.66) | -> 19.69 (+1.13) | -> 17.80 (-0.76) | -> 14.64 (-3.92) |
+
+- The new measure separates the conditions in all 8 runs: up with independent networks, down with a shared one; the ordinary ratio rose in all 8. The global share fell in all 8 (dilution).
+- Not monotone in strength for independent networks (resting +1.65, strong +0.9 to +1.1): two opposing effects, dilution of existing correlations (raises it) and four new internally coherent networks (lower it, more so when strong). It reads the organization beyond the brain-wide pattern, not "independence" as such.
+
+**R4 rerun (fixes of the previous entry):**
+- Segregation now has a usable null: observed 0.20 (within 0.59 / 0.57, between 0.47 / 0.46) against a permutation 95 % of 0.015.
+- 26 (P12) and 13 (P04) cortical regions had S0-like energy below its noise estimate (SomMot and dorsal attention mostly): expected where the true S0-like energy is near 0 (estimates scatter around 0).
+- **P12 thalamus: noise over-corrected.** Noise-corrected coupling above 1 (L thalamus with SomMot 1.06, Limbic 1.04; R thalamus with Limbic 1.02), both thalami with bootstrap share intervals [0, 1], L thalamus leftover share 0.22. Reading: the region's noise estimate (frame differences of the leftover channels) is inflated by fast structured signal that is not thermal noise, so too much is subtracted. P04 thalami: leftover 0.02-0.07, coupling 0.04-0.37, tight intervals.
+- Striatum: S0-like share 0.25-0.67 and leftover 0.04-0.17 in both participants; right striatum coupling the lowest in both (0.14-0.37 and about 0). Suspected: CSF partial volume (caudate borders the lateral ventricles; thalamus and striatum labels have no tissue threshold, unlike cortex), and placement.
+
+**Diagnostics added (no measure redefined):**
+- `regions.leftover_noise_spectral`: median periodogram of the leftover channels above 0.1 Hz (robust to narrow-band structure such as cardiac aliases and respiration); its ratio to the frame-difference estimate per region (`noise_var_spectral_ratio`, ~1 for white noise). Test: equal on white noise; with a 0.45 Hz alias the frame-difference estimate rises from 2.0 to >3, the spectral one stays at 2.0.
+- Region noise ratio (`noise_var`: region noise over the thermal noise of independent voxels) reported for the deep regions and the cortex median.
+- Mean grey-matter and CSF probability per region (`csf_epi.nii.gz`, new in `anatomy_run.lsf`).
+- `qc_subcortical.png`: thalamus and striatum outlines on the EPI reference and the CSF probability, with the screen side taken from the header.
+- Couplings above 1 flagged; count of cortical correlations above 1 after noise correction.
+
+### 2026-11-10: noise diagnostics on the R4 pilots; reliability added
+
+- **The frame-difference noise estimate is not inflated by narrow-band structure:** the robust median-spectrum estimate agrees within 6 % in every region (spectral / difference 0.99-1.07; cortex medians 1.016 and 1.009). The hypothesis of the previous entry (fast narrow-band signal inflating the noise) is rejected.
+- Region noise relative to independent-voxel thermal noise: cortex median 1.31 / 1.37 (expected above 1: motion-correction resampling correlates neighbouring voxels' noise); deep regions 1.3-1.7, except P12 R thalamus 2.66.
+- **Reading of the P12 thalamus:** its BOLD-like time course is noise-dominated. From the plain against the noise-corrected coupling (0.49-0.58 against 0.89-1.06), noise is roughly 70 % of its slow-band variance; dividing by the square root of a small, uncertain signal variance amplifies small errors and gives values above 1. P04 thalamus about 50 %. A possible contributor (unverified): P12 was scanned with the head elements only (no neck elements).
+- Cortical correlations above 1 after correction: 19 (P12) and 26 (P04) of about 18,000.
+- **Added (reporting only):** per-region reliability of the BOLD-like time course (signal share of its slow-band variance), reported for the deep regions and the cortex (median, 5th percentile, and the median of the regions involved in correlations above 1); block-bootstrap 95 % intervals (20 s blocks) for the noise-corrected thalamus and striatum couplings.
+- The anatomy rerun did not take effect before route B (no CSF column, no qc_subcortical.png); to be repeated.
+
+### 2026-11-10: R4 with CSF fractions and reliability; deep-region CSF check added
+
+| | P12 L / R thalamus | P12 L / R striatum | P04 L / R thalamus | P04 L / R striatum | cortex median (P12 / P04) |
+|---|---|---|---|---|---|
+| reliability of the BOLD-like time course | 0.31 / 0.29 | 0.56 / 0.32 | 0.46 / 0.69 | 0.51 / 0.41 | 0.90 / 0.90 (5th percentile 0.56 / 0.57) |
+| mean CSF probability | 0.05 / 0.06 | 0.04 / 0.04 | 0.08 / 0.08 | 0.03 / 0.06 | 0.12 / 0.16 |
+
+- **Reliability is the main limit in the deep regions:** 0.29-0.69 against 0.90 in cortex. Where it is low, the noise-corrected coupling is unstable: P12 thalamus intervals reach 1.2-1.7; the right striatum intervals span 0 in both participants (P04: -0.3 to +0.27), so its weak coupling is "not measurable", not "uncoupled".
+- Cortical correlations above 1 involve less reliable regions (median 0.69 against 0.90 in P12; 0.85 against 0.90 in P04).
+- **Mean CSF probability is low in the deep labels** (0.03-0.08, below cortex at 0.12-0.16), so CSF partial volume by voxel count is small. Not yet excluded: CSF voxels are bright at the late echoes and weigh more in the inverse-noise average. QC (qc_subcortical.png): placement and sides correct; caudate and thalamus outlines touch the lateral and third ventricles, most visibly P12 right caudate.
+- **Added `deep_csf_check`** (diagnostic, labels unchanged): per deep region, the share of the averaging weight in voxels with CSF probability > 0.5, per echo, and shares, reliability and coupling recomputed without voxels above CSF 0.5 and 0.3.
+- Pending user decisions: deep-region definition (A FIRST + CSF exclusion, B atlas + CSF exclusion, C unchanged + CSF reported), to be taken with the CSF check; a reliability floor for reporting.
+
+### 2026-11-10: CSF check results; user decisions on deep regions, reliability, cortex CSF and the eigenvalue count
+
+**CSF check (pilots):** CSF-dominated voxels (probability > 0.5) are 1-4 % of the deep labels but carry up to 12 % of the echo-4 averaging weight (bright, long T2*). Removing them changed the right striatum the most: coupling with the networks 0.14-0.37 -> 0.39-0.64 (CSF > 0.5 removed) -> 0.50-0.75 (CSF > 0.3) in P12; -0.09-0.06 -> 0.15-0.31 -> 0.21-0.43 in P04; BOLD-like share 0.33 -> 0.52 and 0.57 -> 0.68. Left striatum and right thalamus changed little; the P12 thalamus stays above 1 (its limit is reliability, 0.27-0.31).
+
+**User decisions (2026-11-10):**
+1. **Deep regions:** atlas labels without voxels of CSF probability > 0.3 (`regions.secondary_csf_max: 0.3`, applied in `anatomy.build_labels`; voxel counts before the exclusion kept in the region table).
+2. **Reliability floor 0.5** (`regions.reliability_min`): deep-region coupling below it is reported as not measurable with its interval; cortex: all regions in the primary, a sensitivity set without regions below the floor; each participant's reliability reported.
+3. **Cortex CSF as a sensitivity analysis** (`regions.cortex_csf_sensitivity: [0.3]`): integration measures recomputed with cortical voxels of CSF probability > 0.3 removed; the primary is unchanged.
+4. **Deflated eigenvalue count as a candidate** (`regions.count_above_null_deflated`): lambda_i / sum_{j>=i} lambda_j against the same quantity of the null's i-th eigenvalue. Simulation: 4 networks on a strong common signal, plain count 1, deflated 4 (truth 4); independent regions 0-1. Reported next to the plain count in route B and in the R3 recovery; adopted only if it passes the R3 injections (expected: +1 shared, up to +4 independent).
+
+### 2026-11-11: R4 with the new deep labels and cortical sensitivities; deflated count fails R3; shared-noise check added
+
+**Deflated eigenvalue count: fails, dropped** (pre-agreed rule: adopted only if it passes R3). It returned 30 (its cap) in every run, before and after injection: real BOLD-like spectra decay smoothly, so every eigenvalue's share of what is left exceeds that of a structureless null. Kept in the JSON for the record, removed from the reports. The plain count stays a conservative secondary measure. The rest of the R3 rerun reproduced the earlier numbers exactly (cortex labels unchanged).
+
+**Deep regions without CSF > 0.3** (no CSF-dominated voxels left): reliability 0.27 / 0.27 (P12 thalamus), 0.63 / 0.39 (P12 striatum), 0.39 / 0.73 (P04 thalamus), 0.52 / 0.46 (P04 striatum). 5 of 8 regions below the floor (coupling not measurable); measurable: P12 L striatum (0.52-0.77), P04 R thalamus (0.05-0.30), P04 L striatum (0.22-0.32). The P12 thalamus leftover share stays high (0.33 L) without CSF voxels: its non-model signal is not FAST CSF.
+
+**Cortical sensitivities:**
+
+| | PR | PR without first | global share | correlations > 1 |
+|---|---|---|---|---|
+| P12 all regions | 4.32 | 17.26 | 0.433 | 19 |
+| P12 reliability >= 0.5 (188 of 196) | 4.08 | 16.60 | 0.436 | 10 |
+| P12 without voxels CSF > 0.3 (14 % removed) | 4.82 | 18.68 | 0.406 | 103 |
+| P04 all regions | 4.59 | 18.56 | 0.425 | 26 |
+| P04 reliability >= 0.5 (184 of 190) | 4.36 | 17.83 | 0.426 | 0 |
+| P04 without voxels CSF > 0.3 (19 % removed) | 5.00 | 19.76 | 0.398 | 28 |
+
+- Dropping low-reliability regions changes the measures by about 5 %.
+- **Removing CSF-rich cortical voxels raises the participation ratio by 9-12 % and lowers the global share by 0.03 in both:** sulcal-CSF voxels carry part of the brain-wide pattern. The size is comparable to the R3 injection effects (independent networks: +0.3 to +0.9), and cortical CSF fraction is likely to differ between patients and controls (atrophy, ventricular size), so this handling choice could bias the group comparison. Correlations above 1 rose to 103 in P12 without the low-reliability regions being responsible (median reliability of those regions 0.84): candidate explanation, noise shared between neighbouring (now thinner) parcels, which the noise correction ignores.
+- **Added `shared_noise_check`** (diagnostic): the leftover channels' frame-difference correlation between regions (noise only), by adjacency (shared voxel face), and the integration measures with that shared noise also removed from the off-diagonal. Test: finds simulated neighbour-shared noise for adjacent pairs only; removing it restores the dimensionality of independent regions.
+
+### 2026-11-11: shared noise ruled out; cortical CSF exclusion becomes the primary (user decision)
+
+- **Shared noise between neighbouring parcels is negligible:** leftover-channel noise correlation, adjacent pairs median 0.010 / 0.011 (90th percentile 0.055 / 0.080), non-adjacent 0.001 (sampling SE 0.025); removing it changes the participation ratio by under 1 % (4.32 -> 4.34, 4.59 -> 4.63) and the version without the first pattern by under 2 %. The noise correction's independence assumption holds. The 103 correlations above 1 in P12 without CSF voxels (0.6 % of pairs) are most likely neighbouring parcels whose true correlation is near 1 once CSF no longer dilutes them, pushed over 1 by sampling error.
+- **User decision (2026-11-11): the primary uses cortex without voxels of CSF probability > 0.3** (`regions.cortex_csf_max: 0.3`, applied in `anatomy.build_labels`, same cut as the deep regions). All-voxel cortex (`labels_<atlas>_allvox`) is a sensitivity analysis; each participant's cortical CSF fraction (mean CSF probability over all cortical voxels, voxels removed) is reported in the anatomy and route B outputs and enters the group model as a covariate. Reason: sulcal-CSF voxels carried part of the brain-wide pattern (participation ratio +9-12 % and global share -0.03 when removed, comparable to the R3 injection effects), and CSF is likely to differ between patients and controls. R3 is revalidated on the new labels by rerunning route B on the existing injected runs (the injected signal fills every labelled voxel, so the subset still holds it).
+
+### 2026-11-11: R3 revalidated on the CSF-excluded cortex; pilot numbers with the new primary; R4 figures added
+
+**R3 on the new labels (route B rerun on the existing injected runs): passes.** Shares within 0.04 of truth everywhere (largest P12 shared weak mixed 0.643 vs 0.604; dS0 networks <= 0.027); amplitudes 0.82-0.97 (were 0.78-0.93); share error by region size <= 0.007, amplitude error 0.10-0.17; coupling within injected networks +0.18 to +0.36, between networks negative with independent time courses, positive with a shared one except P04 shared strong (-0.045: the between-network median includes the dS0-only network, which shares no BOLD-like signal); uninjected pairs 0.008-0.014. Participation ratio: independent +0.6 to +1.1 in every run; shared +0.16 to +0.81 except P12 shared strong (-0.16, the direction expected for added integration). **PR without the first pattern separates the conditions in all 8 runs** (independent +0.5 to +1.6, shared -0.9 to -4.2).
+
+**Pilots with the primary (CSF > 0.3 removed):** participation ratio 4.82 (P12) / 5.00 (P04), without first pattern 18.68 / 19.76, global share 0.406 / 0.398, segregation 0.204 / 0.201, 4 eigenvalues above null; cortical CSF fraction 0.123 / 0.159; reliability >= 0.5 set 4.44 / 4.79; all voxels 4.32 / 4.59. Regions with S0-like energy below noise rose (26 -> 37, 13 -> 25) and network S0-like shares fell (e.g. SomMot 0.018 -> 0.007 in P12): the removed CSF-rich voxels carried S0-like signal. Shared noise again negligible (PR +1 %).
+
+**Figures added for the R4 review:** `route_b_surface.png` (BOLD-like, S0-like, leftover shares and reliability per parcel on nilearn's bundled fsaverage5 surface; display only) and `route_b_matrices.png` (BOLD-like, S0-like, ordinary, BOLD-like minus ordinary, and BOLD-like edges beyond the circular-shift null).
+
+### 2026-11-11: gate R4 passed; S0-like connectivity dropped (user decisions)
+
+- **Gate R4: passed** (user) on the pilot review: registration overlays, region quality, surface share maps, paired matrices, spectra and integration measures for P04 and P12 with the CSF-excluded cortex primary and R3 revalidated on those labels.
+- Review notes: BOLD-like share > 0.9 over most of cortex; lower, with higher S0-like and leftover shares, in orbitofrontal cortex, temporal poles and ventral medial temporal cortex (susceptibility and skull-base zones) and along the medial surface near large veins and the sagittal sinus; leftover highest at the temporal poles. BOLD-like correlations slightly below ordinary (OC-like) ones for most pairs, consistent with shared S0-like fluctuation removed by the split.
+- **S0-like connectivity dropped from the outcomes** (user): S0-like shares are 1-10 % of cortical slow variance, so region S0-like time courses are mostly noise; the noise-corrected S0-like matrix had blank rows (no signal above noise) and values saturated at +-1. S0-like shares stay; `corr_a.npy` stays on disk, not reported.
+
+### 2026-11-11: R5 plan approved; batch tooling
+
+- **R5 plan approved** (`docs/R5_PLAN.md`; user accepted every recommendation): R5-1 coupling and integration on the first 751 frames of each run's longest gap-free stretch, shares on all frames, runs whose stretch is shorter (P10 if its gap leaves < 751) reported separately and left out of the primary; R5-2 common region set = cortical parcels usable in every participant, with the user deciding on any participant that alone removes many parcels; R5-3 two resting-strength injections per participant (independent, shared); R5-4 deep coupling per participant with the measurable flag plus a pooled Fisher-z estimate over measurable participants; R5-5 built-in sensitivity analyses in R5, front-end reruns after the review gate.
+- **Tooling:** `regions.select_frames` (route B records the frames used in `timeline`; the region time courses saved for injection recovery stay full length); `src/mejoint/route_b_batch.py` with `mejoint r5-preflight` (inputs table), `mejoint common-regions` (ids file and per-participant removals), `mejoint route-b-summary` (participant, region, deep-region and pooled tables; cohort checks: participation ratio against mean filtered FD, CSF fraction, region count, reliability and coil; QC-FC on the common parcels with its distance dependence); `scripts/submit_route_b.sh` (all runs, common set if present, optional wait for anatomy); `acquisition.coil_head_only`. Tests on synthetic folders.
+
+### 2026-11-11: R5 preflight; common volumes 797; four T1s missing
+
+- Preflight (15 runs): echo files reachable for all; frames 800 except P12 (797), P14 (798; `volumes_used.tsv` has 799 lines including the header), P10 (777, gap-free stretches 531 and 246) and P05 (797). **The Phase 0 record "797, 751, 777, 797" was wrong for one run: no run keeps 751.** Corrected in CLAUDE.md section 4.
+- **User decision: common number of volumes 797** (replacing 751, which rested on the wrong record); `regions.n_volumes_common: 797`. P10 is analysed on its 531-frame stretch and left out of the primary.
+- **No T1 currently available for P01, P16, P06, P17** (user; recovery possible through data management). R5 proceeds with the 11 participants with a T1 (10 in the primary); the four are added if their T1s are recovered.
+- Fixed: the three R5 commands lacked `--config` (crash); a test now checks every command.
+
+### 2026-11-12: R5 registration gate passed (9 new participants)
+
+- Anatomy (T2* reference) for P14, P15, P10, P03, P13, P09, P11, P05, P07. **User: all QC images reasonable; gate passed.**
+- regcheck summaries seen for 5: residual shifts 0 to 1 mm (at most a third of a voxel) in every direction (P13 0 / 0 / 0; P11, P05, P03, P09 1 mm toward the right, P11 also 1 mm anterior). The boundary contrast was near zero (P03, -0.002) or inverted (P11, -0.025) in two, so the automatic check is not informative there and the visual check stands alone.
+
+### 2026-11-12: R5 first results (11 participants, 10 in the primary): the primary tracks the brain-wide pattern
+
+- Common region set: 166 parcels usable in all 11 (P11 alone removes 10, all others 0-2).
+- **Primary participation ratio ranges 2.07-9.99 across the 10 primary participants and is almost a re-expression of the global share** (Spearman -0.98 across participants). It also tracks reliability (-0.81, p = 0.005), which itself tracks the global share (+0.76): a large brain-wide signal raises every region's slow variance (higher reliability) and concentrates the spectrum (lower PR). The two highest-motion participants (P11 FD 0.32 mm, P14 0.26) have the largest global shares (0.64, 0.53) and the lowest PR (2.1, 3.0).
+- **QC-FC is strong:** with 10 participants, edges against mean FD give median |r| 0.58 and 38 % of edges p < 0.05 (5 % expected without a motion effect); no distance dependence (0.07), i.e. a brain-wide, not local, motion-related effect.
+- **PR without the first pattern** varies less (15.1-25.7) and is not clearly tied to reliability (-0.54, p = 0.11), FD (-0.22) or CSF fraction (+0.50, p = 0.14).
+- **Injection sensitivity:** the shared network lowered PR without the first pattern in all 10 primary participants (-0.77 to -3.85). Independent networks raised it in 7 of 10 but lowered it in P03 (-2.6), P09 (-0.5), P07 (-0.3): where baseline dimensionality is already high (PR 9-10), adding four internally coherent networks concentrates the spectrum. The ordinary PR fell with independent networks in P03 (-0.9). Shares recovered within 0.1 everywhere (largest P07 mixed, 0.09); amplitudes 0.82-1.14.
+- Deep regions, pooled over measurable participants: left striatum 9/11 (0.40-0.68 by network), right striatum 6/11 (0.43-0.66), left thalamus 2/11, right thalamus 3/11 (0.22-0.41). Measurable participants are those with high reliability, which goes with a large global share, so the pooled couplings may be inflated by the brain-wide signal.
+- **Stop and ask (CLAUDE.md section 2: a choice that changes the scientific claim):** as defined, the primary mostly measures the size of the brain-wide BOLD-like pattern, which motion, breathing and CO2 move. Added to the summary: each measure against FD, CSF, region count, reliability and global share; QC-FC on the matrices with the first pattern removed. Header fixed (it said 751 frames; the runs use 797).
+
+### 2026-11-12: QC-FC without the brain-wide pattern; primary redefined; gate R5 passed (user decisions)
+
+- **QC-FC with each participant's first pattern removed: 3.4 % of edges at p < 0.05** (chance about 5 %), median r +0.015, median |r| 0.21 (about the chance level for 10 participants), no distance dependence (-0.05). With the full matrices: 42 %, median r +0.58. The motion-related effect lives entirely in the brain-wide pattern. (A first run showed 0 edges: a region without signal blanked the matrix in `_without_first`; fixed with a test.)
+- **User decision: the primary is the participation ratio without the first pattern** (option A), always reported with the global share and the injection-measured sensitivity; the ordinary participation ratio becomes secondary and is not interpreted alone. Limitation recorded in CLAUDE.md section 11 (added coherent networks lower it where baseline dimensionality is already high).
+- **Gate R5: passed** (user).
+
+### 2026-11-12: second-pass sensitivity analyses built (user: go ahead; GSR at region level)
+
+Seven variants, each a short override of the default config in `configs/sensitivity/` (`extends: ../default.yaml`, new in `io.load_config`):
+
+| variant | change | what reruns |
+|---|---|---|
+| band_008 | band 0.01-0.08 Hz | route B |
+| gsr | mean cortical BOLD-like time course (and mean c0) regressed out of every region (`regions.global_regression`) | route B |
+| censor | frames with filtered FD > 0.2 mm interpolated before filtering and left out of every covariance (`regions.censor_fd_mm`) | route B |
+| atlas_400_17 | Schaefer 400 / 17 | route B (needs common_ids_400_17.txt) |
+| gm05 | cortical grey-matter threshold 0.5 | anatomy relabel into a separate folder (`anatomy --out-dir`), route B |
+| equal_weighting | equal echo weights | front end (mc, no MP-PCA check), route B |
+| motion_lowpass6 | 6 motion parameters low-passed below 0.10 Hz instead of the 24-term expansion | front end, route B |
+
+`scripts/sensitivity_run.lsf <subject> <variant>`, `scripts/submit_sensitivity.sh`, `mejoint sensitivity-summary` (per variant, across participants in the primary: Spearman of the primary with the main analysis and the median change; same for the global share and the ordinary PR; censored fractions). Tests: GSR lowers the global share and raises dimensionality on simulated data; censoring brings a spiked run back toward the clean one; variant labels do not touch the primary labels; every variant config extends the default.
+
+### 2026-11-12: exploratory comparison with post-surgical neurologic outcome; participant data kept out of git
+
+- The user supplied a table of post-surgical neurologic outcome per participant (kept on the research storage; not in the repository). An exploratory look over the 10 primary participants (28 tests, no correction, very small groups) found no difference in the primary measure; the only nominal differences were in the motion-linked measures (global share, ordinary PR, segregation) for one outcome group that also moved most, and they disappeared after adjusting for mean FD. Not a result; recovering the four missing T1s would most enlarge the smallest group. No per-participant labels or values are recorded here.
+- **User decision: all participant data stay out of the repository.** Added `mejoint clinical-compare` (`src/mejoint/clinical.py`): reads a clinical table (.xlsx, .csv, .tsv) from outside the repository, merges it with `participants.tsv` (and the sensitivity table if present), reports medians by label and exact Mann-Whitney tests per contrast, also after adjusting for mean FD, and writes only under `outputs/`; it refuses a table or an output folder inside the repository. `.gitignore` now blocks spreadsheet, delimited-text and array files.
+
+### 2026-11-13: first sensitivity results (3 of 7 variants); script fix; bootstrap intervals for the primary
+
+- **Bug:** the four route-B-only variants (band_008, gsr, censor, atlas_400_17) failed: `sensitivity_run.lsf` sent route B's log into the variant folder before anything had created it (the front-end and grey-matter variants created it in an earlier step). Fixed (`mkdir -p`); those four are to be resubmitted.
+- **Results so far (10 participants in the primary; aggregate only, per the no-participant-data rule):**
+
+| variant | primary: Spearman with main / median change | global share: Spearman / median change |
+|---|---|---|
+| equal echo weighting | 0.78 / +1.39 | 0.98 / -0.03 |
+| grey-matter threshold 0.5 | 0.83 / -0.40 | 0.98 / -0.00 |
+| 6 low-passed motion parameters | 0.52 / -0.24 | 0.99 / -0.02 |
+
+- The global share is very stable across variants; the primary is less so. Equal weighting raised the primary most in the participants with the lowest reliability (consistent with equal weights breaking the whitening that the noise correction assumes). Lighter motion handling lowered the primary strongly in the two highest-motion participants: the primary is not tied to the global share, but it still depends on how motion is removed where motion is large. One low-reliability participant moved by +2 to +10 across all variants.
+- **Added:** block-bootstrap 95 % intervals (20 s blocks, 200 resamples) for the primary, the ordinary participation ratio and the global share in every route B run (`regions.integration_ci`), shown in `route_b.md` and in the R5 participant table, so imprecise participants are visible. Test: the interval contains the estimate and widens with more noise.
+
+### 2026-11-13: participant identifiers removed from the repository and its history (user decision)
+
+- **User decision:** subject numbers, scan dates and acquisition times are replaced everywhere in the repository and in the history of every branch by pseudonyms P01-P17 (assigned at random) and placeholders. The key (`outputs/pseudonyms.tsv`) and the site file with the subject exclusions and the head-only coil set (`outputs/site.yaml`, merged into the config through `site_config`) are kept on the research storage only. `configs/default.yaml` holds no identifiers; tests and scripts use made-up numbers (90001-90009) and no default subjects.
+- **Bootstrap intervals corrected:** the percentile intervals added earlier today fell below the estimate in most participants. Resampling repeats blocks of frames, which lowers the effective number of independent frames; eigenvalues of a correlation matrix spread out as that number falls, so every participation ratio drops in the resamples (a bias of several units here). Now reported: bootstrap SD, bootstrap bias, and the interval estimate +- 1.96 SD. The size of the bias shows that the primary depends strongly on the effective number of frames (about 2 x 0.09 Hz x 598 s, roughly 110 independent values per region, fewer than the number of regions), so frame count and band must be identical across participants (they are in the primary).
+- **Sensitivity results, all 7 variants (aggregate, 10 participants in the primary):**
+
+| variant | primary: Spearman with main / median change |
+|---|---|
+| Schaefer 400 / 17 | 0.64 / +6.7 |
+| band 0.01-0.08 Hz | 0.60 / -1.3 |
+| censoring FD > 0.2 mm (median 7 %, max 53 % of frames removed) | 0.62 / +2.0 |
+| equal echo weighting | 0.78 / +1.4 |
+| grey-matter threshold 0.5 | 0.83 / -0.4 |
+| region-level global signal regression | 0.15 / +2.6 |
+| 6 low-passed motion parameters | 0.52 / -0.2 |
+
+- The ranking of participants on the primary holds only moderately across defensible choices (Spearman 0.5-0.8), and the level shifts with the number of regions (400 parcels: +6.7) and the band (fewer independent values: -1.3), as expected for a measure limited by the number of independent frames. Global signal regression changes what the measure describes (the mean is removed before, and the first remaining pattern after, so two patterns go), so its low agreement is not a robustness failure of the primary as defined; the comparable check is the ordinary participation ratio after global signal regression against the primary (to be added to the summary).

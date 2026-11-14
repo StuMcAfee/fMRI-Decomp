@@ -6,6 +6,19 @@ build/
 dist/
 # outputs and data never go into git
 outputs/
+outputs
 *.nii
 *.nii.gz
 logs/
+# bundled atlases (small, MIT-licensed; atlases/schaefer2018/README.md)
+!atlases/**/*.nii.gz
+# participant data (clinical tables, extracted values) never go into git (user, 2026-11-12)
+*.xlsx
+*.xls
+*.csv
+*.tsv
+*.npy
+*.npz
+*.mat
+*.sav
+*.dta

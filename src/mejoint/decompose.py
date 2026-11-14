@@ -355,6 +355,14 @@ def run_sweep(frontend_dir, cfg: dict, out_root, rank_dir=None, ks=None, n_jobs:
         s = run_dir(frontend_dir, cfg, out_root / f"k{k}", k, n_jobs=n_jobs, tissue_dir=tissue_dir)
         rows.append({"k": k, **s["label_counts"], "stability": s["stability_median_of_components"],
                      "explained": s["explained_variance"]})
+    # keep the rows of k values run earlier into the same folder (a later single-k run adds its row)
+    old = out_root / "sweep.json"
+    if old.exists():
+        try:
+            prev = [r for r in json.loads(old.read_text()).get("rows", []) if r.get("k") not in set(ks)]
+        except ValueError:
+            prev = []
+        rows = sorted(prev + rows, key=lambda r: r["k"])
     io.write_json(out_root / "sweep.json", {"rows": rows, **io.provenance(cfg, {})})
     L = ["# Joint ICA across the fixed k sweep (no gated k; Phase 3 outcome)", "",
          "| k | R2*-dominant | S0-dominant | mixed | not above null | Median stability | Variance in k dims |", "|---|---|---|---|---|---|---|"]

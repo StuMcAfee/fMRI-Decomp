@@ -1,0 +1,5 @@
+# Sensitivity: Schaefer 400 parcels / 17 networks (labels made by anatomy_run.lsf). Route B only; needs
+# outputs/route_b/common_ids_400_17.txt (mejoint common-regions --atlas 400_17).
+extends: ../default.yaml
+regions:
+  atlas: "400_17"
