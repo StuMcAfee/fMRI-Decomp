@@ -131,6 +131,18 @@ def bandpass(x, tr, band):
     return filtfilt(b, a, x, axis=-1)
 
 
+def label_points(ax, xs, ys, labels):
+    """Pseudonym labels beside points; a label that would sit on an earlier one moves down a line."""
+    placed = []
+    span = np.ptp(ys) or 1.0
+    for x, y, lab in sorted(zip(xs, ys, labels), key=lambda v: -v[1]):
+        dy = 3
+        while any(abs(x - px) < 0.06 * (np.ptp(xs) or 1) and abs((y - py) / span) < 0.05 and pdy == dy for px, py, pdy in placed):
+            dy -= 9
+        placed.append((x, y, dy))
+        ax.annotate(lab, (x, y), xytext=(4, dy), textcoords="offset points", fontsize=7, color=INK2)
+
+
 # ---------------------------------------------------------------- figures
 def fig_frontend_maps(runs, outputs, ex, out, made, nums):
     """The front end in one participant: mean signal, T2*, thermal noise, usable echoes, S0 sensitivity, residual."""
@@ -194,7 +206,7 @@ def fig_timecourses(runs, cfg, ex, out, made, nums):
     t = np.arange(n) * tr
     fig, axes = plt.subplots(2, 1, figsize=(7.2, 4.2), sharex=True)
     for k, r in enumerate(pick):
-        b = bandpass(tc["b"][r["id"] - 1], tr, band)[:n] * 1000.0        # 1/ms -> 1/s
+        b = bandpass(tc["b"][r["id"] - 1], tr, band)[:n]                 # already 1/s (regions.split)
         a = bandpass(tc["a"][r["id"] - 1], tr, band)[:n] * 100.0         # ln S0 -> %
         lab = f"{NET_LABEL[r['network']]} region (reliability {r['b_reliability']:.2f})"
         axes[0].plot(t, b + 0.0 * k, color=NET_COLOR[r["network"]], lw=1.4, label=lab)
@@ -202,14 +214,14 @@ def fig_timecourses(runs, cfg, ex, out, made, nums):
     axes[0].set_ylabel("ΔR2* (1/s)")
     axes[1].set_ylabel("ΔS0/S0 (%)")
     axes[1].set_xlabel("time (s)")
-    axes[0].set_title("BOLD-like (R2*-like) part, band-passed", pad=22)
+    axes[0].set_title("BOLD-like (R2*-like) part, band-passed")
     axes[1].set_title("S0-like part, band-passed (same regions)")
-    axes[0].legend(loc="lower left", bbox_to_anchor=(0, 1.12), fontsize=7, ncol=3)
+    fig.legend(*axes[0].get_legend_handles_labels(), loc="lower center", bbox_to_anchor=(0.5, -0.06), fontsize=7, ncol=3)
     fig.suptitle(f"Region signals in one participant ({ex}): first 4 minutes", x=0.02, ha="left", fontsize=10, fontweight="bold")
     fig.tight_layout()
     save(fig, out, "fig_timecourses", made)
     sd = lambda key, scale: [round(float(np.std(bandpass(tc[key][r["id"] - 1], tr, band)) * scale), 3) for r in pick]
-    nums["timecourse_example"] = {"pid": ex, "regions": [r["network"] for r in pick], "sd_dR2s_per_s": sd("b", 1000.0),
+    nums["timecourse_example"] = {"pid": ex, "regions": [r["network"] for r in pick], "sd_dR2s_per_s": sd("b", 1.0),
                                   "sd_dS0_percent": sd("a", 100.0)}
 
 
@@ -234,6 +246,12 @@ def fig_shares(runs, out, made, nums):
         ax.set_title(lab)
         if lim:
             ax.set_xlim(*lim)
+        else:
+            allv = np.array([r[k] for d in runs.values() for r in cortex_rows(d) if r.get(k) is not None], float)
+            lo_, hi_ = np.percentile(allv, [1, 99])
+            ax.set_xlim(lo_ - 0.02, hi_ + 0.02)
+            n_out = int(np.sum((allv < lo_ - 0.02) | (allv > hi_ + 0.02)))
+            ax.set_title(f"{lab}\n({n_out} values off axis)" if n_out else lab)
         if k == "b_reliability":
             ax.axvline(0.5, color=INK2, lw=1, ls="--")
     axes[0].set_yticks(range(len(NETS)))
@@ -396,11 +414,16 @@ def fig_primary(runs, out, made, nums):
     P = [t for t in T if t["in_primary"] and t["pr1"] is not None]
     hw = [(t["pr1_ci"][1] - t["pr1_ci"][0]) / 2 for t in P if t.get("pr1_ci")]
     above = [t["pr1"] > t["pr1_null"][1] for t in P if t.get("pr1_null")]
+    below = [t["pr1"] < t["pr1_null"][0] for t in P if t.get("pr1_null")]
+    below_pr = [t["pr"] < t["pr_null"][0] for t in P if t.get("pr_null")]
+    nmed = [t["pr1_null_med"] for t in P if t.get("pr1_null_med") is not None]
     nums["primary"] = {"n": len(P), "median": round(float(np.median([t["pr1"] for t in P])), 2),
                        "range": [round(min(t["pr1"] for t in P), 2), round(max(t["pr1"] for t in P), 2)],
                        "ci_halfwidth_median": round(float(np.median(hw)), 2) if hw else None,
                        "ci_halfwidth_range": [round(min(hw), 2), round(max(hw), 2)] if hw else None,
-                       "n_above_null_q95": int(sum(above)), "n_with_null": len(above),
+                       "n_above_null_q95": int(sum(above)), "n_below_null_q05": int(sum(below)), "n_with_null": len(above),
+                       "n_pr_below_null_q05": int(sum(below_pr)),
+                       "null_median_range": [round(min(nmed), 1), round(max(nmed), 1)] if nmed else None,
                        "boot_bias_median": round(float(np.median([t["bias"] for t in P if t.get("bias") is not None])), 2) if any(t.get("bias") is not None for t in P) else None,
                        "global_share_range": [round(min(t["gs"] for t in P), 3), round(max(t["gs"] for t in P), 3)],
                        "pr_range": [round(min(t["pr"] for t in P), 2), round(max(t["pr"] for t in P), 2)]}
@@ -417,8 +440,7 @@ def fig_global(runs, out, made, nums):
         v = np.array([t[k] for t in T])
         rho = spearmanr(gs, v)[0]
         ax.scatter(gs, v, s=40, color=col, edgecolors=SURF, linewidths=1.5, zorder=3)
-        for t, x_, y_ in zip(T, gs, v):
-            ax.annotate(t["pid"], (x_, y_), xytext=(4, 3), textcoords="offset points", fontsize=7, color=INK2)
+        label_points(ax, gs, v, [t["pid"] for t in T])
         ax.set_xlabel("global BOLD-like share")
         ax.set_ylabel(lab)
         ax.set_title(f"{lab}\nSpearman ρ = {rho:.2f}, n = {len(T)}", fontsize=9)
@@ -530,7 +552,7 @@ def fig_sensitivity(outputs, key, out, made, nums):
     axes[1].set_xlim(0, 1)
     axes[1].set_xlabel("Spearman with the main analysis")
     axes[1].set_title("Does the ranking of participants hold?", fontsize=9)
-    axes[1].legend(fontsize=7, loc="lower right")
+    axes[1].legend(fontsize=7, loc="upper center", bbox_to_anchor=(0.5, -0.16), ncol=3)
     fig.tight_layout()
     save(fig, out, "fig_sensitivity", made)
     nums["sensitivity"] = {r["variant"]: {k: r.get(k) for k in ("n", "primary_spearman_with_main", "primary_median_change",
@@ -671,8 +693,7 @@ def fig_bootstrap_bias(runs, out, made, nums):
         raise RuntimeError("no bootstrap bias in route_b.json (rerun route B with the current code)")
     fig, ax = plt.subplots(figsize=(5, 3))
     ax.scatter([t["pr1"] for t in T], [t["bias"] for t in T], s=40, color=SERIES[0], edgecolors=SURF, linewidths=1.5)
-    for t in T:
-        ax.annotate(t["pid"], (t["pr1"], t["bias"]), xytext=(4, 2), textcoords="offset points", fontsize=7, color=INK2)
+    label_points(ax, np.array([t["pr1"] for t in T]), np.array([t["bias"] for t in T]), [t["pid"] for t in T])
     ax.axhline(0, color=INK2, lw=1)
     ax.set_xlabel("PR without first pattern")
     ax.set_ylabel("bootstrap bias (resamples - estimate)")
