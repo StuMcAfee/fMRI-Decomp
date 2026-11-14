@@ -22,3 +22,8 @@ logs/
 *.mat
 *.sav
 *.dta
+
+# white paper build products (contain participant figures)
+docs/whitepaper/figs/
+docs/whitepaper/whitepaper.html
+docs/whitepaper/whitepaper.pdf

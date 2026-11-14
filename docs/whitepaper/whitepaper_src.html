@@ -1,0 +1,394 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Route B White Paper</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;0,8..60,700;1,8..60,400&family=Inter:wght@400;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  color-scheme: light;
+  --surface: #fcfcfb; --surface-2: #f3f2ef; --ink: #0b0b0b; --ink-2: #52514e; --ink-3: #8a8984; --rule: #dcdbd6;
+  --accent: #2a78d6; --accent-2: #eb6834; --accent-3: #1baf7a; --pending: #fff7e6; --pending-rule: #eda100;
+}
+* { box-sizing: border-box; }
+html { background: var(--surface); }
+body { margin: 0; background: var(--surface); color: var(--ink); font: 400 16.5px/1.6 "Source Serif 4", Georgia, "Times New Roman", serif; }
+main { max-width: 820px; margin: 0 auto; padding: 48px 16px 80px; }
+h1 { font-size: 30px; line-height: 1.2; margin: 0 0 10px; font-weight: 700; letter-spacing: -0.01em; }
+.subtitle { font-size: 18px; color: var(--ink-2); margin: 0 0 18px; font-style: italic; }
+.byline { font: 400 13.5px/1.5 Inter, system-ui, sans-serif; color: var(--ink-2); border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); padding: 10px 0; margin-bottom: 28px; }
+.byline b { color: var(--ink); font-weight: 600; }
+h2 { font-size: 22px; margin: 44px 0 10px; font-weight: 700; border-bottom: 1px solid var(--rule); padding-bottom: 4px; }
+h3 { font-size: 17.5px; margin: 28px 0 6px; font-weight: 600; }
+p { margin: 0 0 13px; }
+.abstract { background: var(--surface-2); border-left: 3px solid var(--accent); padding: 16px 20px; margin: 0 0 24px; font-size: 15.5px; }
+.abstract p { margin-bottom: 8px; }
+.abstract b { font-family: Inter, system-ui, sans-serif; font-size: 12.5px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--ink-2); margin-right: 6px; }
+.keywords { font: 13px/1.5 Inter, system-ui, sans-serif; color: var(--ink-2); margin-bottom: 8px; }
+figure { margin: 26px 0 30px; break-inside: avoid; }
+figure img { width: 100%; height: auto; display: block; border: 1px solid var(--rule); background: #fff; }
+figure.wide img { width: 100%; }
+figcaption { font: 13.5px/1.5 Inter, system-ui, sans-serif; color: var(--ink-2); margin-top: 8px; }
+figcaption b { color: var(--ink); }
+.pending-fig { border: 1.5px dashed var(--pending-rule); background: var(--pending); padding: 26px 20px; font: 13.5px/1.5 Inter, system-ui, sans-serif; color: var(--ink-2); border-radius: 6px; }
+.pending-fig code { font-size: 12.5px; }
+.eq { font-size: 16px; margin: 14px 0 16px; padding: 10px 14px; background: var(--surface-2); border-radius: 4px; overflow-x: auto; white-space: nowrap; }
+.eq .n { float: right; color: var(--ink-3); font-family: Inter, system-ui, sans-serif; font-size: 12.5px; }
+.frac { display: inline-flex; flex-direction: column; vertical-align: middle; text-align: center; margin: 0 3px; }
+.frac > span:first-child { border-bottom: 1px solid var(--ink); padding: 0 3px; }
+.frac > span:last-child { padding: 0 3px; }
+table { border-collapse: collapse; width: 100%; margin: 14px 0 22px; font: 13px/1.45 Inter, system-ui, sans-serif; break-inside: avoid; }
+caption { caption-side: top; text-align: left; font: 13.5px/1.5 Inter, system-ui, sans-serif; color: var(--ink-2); padding-bottom: 6px; }
+caption b { color: var(--ink); }
+th, td { text-align: left; vertical-align: top; padding: 6px 8px; border-bottom: 1px solid var(--rule); }
+th { font-weight: 600; background: var(--surface-2); }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.box { border: 1px solid var(--rule); border-radius: 6px; padding: 14px 18px; margin: 20px 0; background: #fff; break-inside: avoid; }
+.box h4 { margin: 0 0 6px; font: 600 13px/1.4 Inter, system-ui, sans-serif; text-transform: uppercase; letter-spacing: 0.05em; color: var(--ink-2); }
+.box p, .box li { font-size: 15px; }
+ul, ol { margin: 0 0 14px; padding-left: 24px; }
+li { margin-bottom: 4px; }
+.refs { font-size: 14px; }
+.refs li { margin-bottom: 6px; }
+.tag { font: 600 11px/1 Inter, system-ui, sans-serif; color: var(--ink-2); background: var(--surface-2); border: 1px solid var(--rule); border-radius: 3px; padding: 2px 4px; margin-left: 4px; white-space: nowrap; }
+.diagram { width: 100%; height: auto; display: block; }
+.small { font-size: 14px; color: var(--ink-2); }
+.toc { font: 14px/1.7 Inter, system-ui, sans-serif; columns: 2; column-gap: 30px; margin: 0 0 20px; padding-left: 18px; }
+a { color: var(--accent); }
+@media (max-width: 640px) { body { font-size: 15.5px; } h1 { font-size: 24px; } .toc { columns: 1; } .eq { font-size: 14px; } }
+@media print { main { max-width: none; padding: 0; } h2 { break-after: avoid; } h3 { break-after: avoid; } figure, table, .box { break-inside: avoid; } a { color: var(--ink); text-decoration: none; } }
+@page { size: Letter; margin: 18mm 16mm; }
+</style>
+</head>
+<body>
+<main>
+
+<h1>Physics-based separation of BOLD-like and S0-like signal in multi-echo fMRI, region by region</h1>
+<p class="subtitle">Rationale, development, validation and first application of a pipeline for measuring cortical integration after childhood cerebellar injury</p>
+<div class="byline"><b>Stu McAfee, PhD</b>, Department of Diagnostic Imaging, St. Jude Children's Research Hospital · White paper, working draft of 14 November 2026 · Analysis code: <code>mejoint</code> (repository fMRI-Decomp, branch <code>claude/decomposition</code>), developed with Claude Code</div>
+
+<div class="abstract">
+<p><b>Background</b> Multi-echo fMRI records each volume at several echo times, which makes it possible to tell signal changes that scale with echo time (changes in R2*, the BOLD effect) from changes that do not (changes in the net signal S0, such as inflow, motion and some vascular effects). The standard tool, tedana, uses this information only after a physics-blind decomposition, by classifying components. We needed a measure of cortical BOLD-like integration in survivors of childhood medulloblastoma, where the cortical vasculature may be altered by treatment and where the classification approach failed in a third of the scans.</p>
+<p><b>Approach</b> We derived a noise-whitened two-channel representation of the echoes in which one channel carries only ΔS0. Because separating ΔS0 from ΔR2* voxel by voxel inflates ΔR2* noise 2.2 to 2.6 fold, the separation is done after pooling. The main analysis (route B) averages the four echoes within each anatomically defined cortical region in the participant's own EPI space, splits each region's signal into an S0-like and an R2*-like (BOLD-like) part, estimates the region's thermal noise from the two leftover echo channels, and reports noise-corrected shares, connectivity and integration measures with circular-shift nulls and bootstrap precision.</p>
+<p><b>Validation</b> Closed-form calculations and simulations confirm exact separation and whitening. Known signals injected into the raw echoes and carried through the full pipeline were recovered at resting strength, with BOLD-like shares within the pre-set tolerance of 0.1. The same injections showed that whole-brain spatial ICA, ours and tedana's, isolates only large, strong sources, which is why a decomposition is not the main analysis.</p>
+<p><b>First application</b> In 11 participants (10 in the primary analysis), the ordinary participation ratio of the BOLD-like correlations mirrored the size of the brain-wide pattern (Spearman ρ = −0.98 with the global share), and 42 % of connections depended on head motion across participants. With the first, brain-wide pattern removed, the participation ratio was unrelated to the global share (ρ = −0.39) and only 3.4 % of connections depended on motion. This measure is now the primary outcome.</p>
+<p><b>Interpretation</b> Route B gives each participant a physically interpretable, noise-accounted description of cortical BOLD-like activity with a measured sensitivity. Its main limits are the number of independent frames in a 10-minute scan, the absence of physiological recordings, and the small pilot sample.</p>
+</div>
+<p class="keywords"><b>Keywords</b> multi-echo fMRI · ΔS0 · ΔR2* · noise whitening · region-level analysis · participation ratio · medulloblastoma · cerebellum</p>
+
+<ol class="toc">
+<li><a href="#s1">Introduction</a></li>
+<li><a href="#s2">Theory</a></li>
+<li><a href="#s3">Development process</a></li>
+<li><a href="#s4">Route B: methods</a></li>
+<li><a href="#s5">Validation</a></li>
+<li><a href="#s6">First application</a></li>
+<li><a href="#s7">Information value</a></li>
+<li><a href="#s8">Strengths and limitations</a></li>
+<li><a href="#s9">Downstream uses</a></li>
+<li><a href="#s10">Conclusions</a></li>
+</ol>
+
+<!-- ===================================================================== 1 -->
+<h2 id="s1">1. Introduction</h2>
+
+<h3>1.1 Scientific question</h3>
+<p>The participants of this study are survivors of childhood medulloblastoma, adolescents and adults scanned at least five years after diagnosis, surgery and treatment. The working hypothesis is that early cerebellar injury leaves intrinsic BOLD activity in the cerebral cortex less integrated. The cerebellum itself is deliberately not an outcome region: its anatomy, damage and radiation exposure vary too much between patients to interpret BOLD there. Those factors are measured separately and enter the group analysis as independent variables for their remote effects on the cortex. Healthy age- and sex-matched controls will be added. Two features of the clinical setting shape the method. First, craniospinal irradiation can affect the cortical vasculature, so a measure that treats all signal fluctuation as neural would be ambiguous: changes in blood volume or inflow are not the same as changes in neural coupling. Second, network detection must come from the physics of each acquisition, not from clinical variables or reference anatomy that may not fit an injured brain.</p>
+
+<h3>1.2 What multi-echo data add</h3>
+<p>A gradient-echo signal decays with echo time TE as S(TE) = S0 · exp(−R2*·TE). The BOLD effect changes R2*, so its signal change grows in proportion to TE. Inflow, motion, some blood-volume effects and many artefacts change S0, so their signal change is the same at every TE. With four echoes per volume (here 16.2, 31.2, 46.2 and 61.3 ms), the two kinds of change are, in principle, separable in every volume. This matters for the present cohort because a treatment effect on the vasculature could appear as a shift between the S0-like and BOLD-like parts of the signal rather than as a change in connectivity.</p>
+
+<h3>1.3 Gaps in current practice</h3>
+<p>The established multi-echo pipeline, tedana (ME-ICA), first combines the echoes into one optimally weighted time series, decomposes it by principal and independent component analysis, and only then asks of each component whether its echo dependence looks like R2* (kappa) or like S0 (rho), accepting or rejecting it by a decision tree <span class="tag">[1]</span>. The physics thus enters after a decomposition that did not use it. Three practical problems follow. The number of components is unstable across estimators and seeds <span class="tag">[1, 2]</span>; short-TR multiband data often yield few or no BOLD-like components <span class="tag">[3]</span>; and a component that carries both kinds of change receives a single label. In the present data, 5 of the 16 completed tedana runs fell back to "no provisional accept" and reported zero "Likely BOLD" components. Voxel-by-voxel fitting of S0 and T2* time series avoids classification but pays a large noise cost <span class="tag">[4–6]</span>. The deconvolution approaches ME-SPFM and MvME-SPFM model the same intercept-plus-slope relation but estimate the ΔR2* part only <span class="tag">[7, 8]</span>. We did not find a published method that estimates separate ΔS0 and ΔR2* parts of shared signals during the analysis rather than by classification afterwards; one relevant abstract <span class="tag">[9]</span> could not be read in full, so no claim of novelty is made here.</p>
+
+<h3>1.4 Contributions of this work</h3>
+<ul>
+<li>A per-voxel, noise-whitened projection of the echoes into two physical channels (one of which carries only ΔS0) and two leftover channels that carry thermal noise and model violations, with per-echo noise weights measured in this protocol.</li>
+<li>A thermal-noise estimator that does not use the temporal variance of the data and is insensitive to slow model violations.</li>
+<li>Route B, a region-level analysis in each participant's native EPI space that separates S0-like and BOLD-like signal after pooling, removes thermal noise explicitly, and reports shares, connectivity and integration measures against circular-shift nulls with bootstrap precision.</li>
+<li>Validation by injection of known signals into the raw echoes, which also measures each participant's sensitivity, and a demonstration of the detection limit of whole-brain spatial ICA on the same data.</li>
+<li>A primary outcome, the participation ratio without the brain-wide pattern, chosen after the batch review because the ordinary participation ratio mostly measured the size of the global signal.</li>
+</ul>
+
+<!-- ===================================================================== 2 -->
+<h2 id="s2">2. Theory</h2>
+
+<h3>2.1 Signal model</h3>
+<p>For voxel or region v, echo e and volume t, let μ<sub>e</sub> be the temporal mean signal. The log-ratio signal is</p>
+<div class="eq">y<sub>e</sub>(t) = ln(S<sub>e</sub>(t) / μ<sub>e</sub>) ≈ a(t) − TE<sub>e</sub> · b(t) + ε<sub>e</sub>(t),&nbsp;&nbsp; a = Δln S0, &nbsp;b = ΔR2*,&nbsp;&nbsp; Var(ε<sub>e</sub>) ≈ σ<sub>e</sub><sup>2</sup> / μ<sub>e</sub><sup>2</sup><span class="n">(1)</span></div>
+<p>The log-ratio form is exactly linear in a and b. The more common linear form, ΔS/S, errs by 3.0 % at the last echo for a ΔR2* of 1 s⁻¹ and by 9.7 % for a 20 % S0 spike at any echo (Figure 1B). The two physical sources differ only in how they depend on TE (Figure 1A): a ΔS0 change is flat across echoes, a ΔR2* change grows linearly, and a mixture is a straight line with both an intercept and a slope.</p>
+<figure data-src="fig_sim_echo_dependence.png"><figcaption><b>Figure 1. The signal model.</b> (A) Log-ratio signal change across echo time for a pure ΔR2* change of 1 s⁻¹ (the BOLD scale reported at 3 T), a pure 1 % ΔS0 change, and both together; dots mark the four acquired echoes. (B) Error of the linear ΔS/S approximation relative to the exact log-ratio, for the ΔR2* change at each echo and for a 20 % S0 spike.</figcaption></figure>
+
+<h3>2.2 The cost of separating ΔS0 from ΔR2* voxel by voxel</h3>
+<p>Estimating both a and b in each voxel and volume by weighted least squares, with weights μ<sub>e</sub><sup>2</sup>/σ<sub>e</sub><sup>2</sup>, inflates the noise standard deviation of the ΔR2* estimate 2.2 to 2.6 fold relative to assuming ΔS0 = 0, over T2* of 20 to 70 ms; that is a loss of 79 to 85 % of the information. The two estimates are correlated at |r| = 0.89 to 0.92. Without the 61 ms echo the inflation rises to 2.8 to 3.2 fold (Figure 2A, B). These figures hold for the measured per-echo noise ratios as well as for equal noise. They lead to three rules that run through the whole design: never decompose raw voxelwise a and b maps; never analyse a voxelwise ΔR2* map as if its noise were independent of the ΔS0 map; and keep all four echoes. Children's longer T2* (about 58 ms) places more BOLD weight on the late echoes <span class="tag">[10]</span>.</p>
+<p>The cost is a constant factor in noise variance, so pooling independent voxels recovers it. Figure 2C shows the reliability of a region's BOLD-like time course (its signal share in the analysis band) as a function of the number of voxels averaged: at an echo-1 thermal SNR of 20, a reliability of 0.9 needs about 46 voxels when ΔS0 is estimated and about 8 when it is assumed absent. Regions of tens to hundreds of voxels, such as cortical parcels, absorb the cost.</p>
+<figure data-src="fig_sim_separation_cost.png"><figcaption><b>Figure 2. Separation belongs after pooling.</b> (A) Inflation of the ΔR2* noise SD when ΔS0 is estimated as well, relative to the four-echo estimate with ΔS0 fixed at zero, for equal echo noise, the measured noise ratios [1, 0.72, 0.63, 0.56], and three echoes. (B) Correlation between the voxelwise ΔS0 and ΔR2* estimates. (C) Reliability of a region's BOLD-like time course against the number of voxels averaged (thermal noise only; T2* 45 ms; resting ΔR2* SD 0.3 s⁻¹ in the 0.01 to 0.1 Hz band, an illustrative value), with ΔS0 estimated (solid) or assumed absent (dashed). Closed-form calculation.</figcaption></figure>
+
+<h3>2.3 A noise-whitened channel representation</h3>
+<p>In each voxel, the echo design D = [−TE, 1, TE², (−1)<sup>e</sup>] is weighted by the noise-scaled mean μ<sub>e</sub>/(σ·r<sub>e</sub>), where σ is the voxel's echo-1 thermal noise and r = [1, 0.721, 0.631, 0.560] is the study-wide ratio of each echo's noise to echo 1's (echo 1 was the noisiest in 14 of 15 runs). A QR decomposition of the weighted design gives an orthonormal basis Q and a triangular R. Projecting the equally weighted data onto Q yields four channels:</p>
+<ul>
+<li><b>c0</b>, proportional with negative sign to the optimally combined signal (it is exactly tedana's OC deviation under equal echo noise and a monoexponential mean);</li>
+<li><b>c1</b>, which depends only on ΔS0: a pure ΔR2* change gives c1 = 0;</li>
+<li><b>r0, r1</b>, leftover channels that see only structure outside span{1, TE}: thermal noise, curvature (for example from a noise floor or through-slice dephasing) and echo-alternating artefacts.</li>
+</ul>
+<p>The physical quantities follow by back-substitution, s = m1/R<sub>11</sub> (ΔS0/S0) and q = (m0 − R<sub>01</sub>·s)/R<sub>00</sub> (ΔR2*), exactly for pure, mixed and opposite-sign sources (Figure 3). A sign convention keeps the diagonal of R positive in every voxel, so that spatial maps are not sign-scrambled.</p>
+<figure data-src="fig_sim_channels.png"><figcaption><b>Figure 3. The four channels.</b> (A) Weight of each whitened echo in each channel at T2* = 45 ms with the measured noise ratios. (B) Channel responses to a unit ΔR2* and a unit ΔS0 change: ΔR2* reaches only c0; ΔS0 reaches c0 and c1. (C) Back-substitution recovers both physical quantities exactly from (c0, c1) for 300 random mixed sources of either sign (maximum error below 10⁻¹⁶).</figcaption></figure>
+<p>When the weights match the true per-echo noise, the four channels have unit, uncorrelated thermal noise. Under the measured noise ratios, equal weights would miss the identity by up to 0.57 (Figure 4). Equal weights are kept as a sensitivity analysis and for the equivalence test against tedana.</p>
+<figure data-src="fig_sim_whitening.png"><figcaption><b>Figure 4. Whitening needs the per-echo noise ratios.</b> Thermal noise covariance of the four channels when the echo noise ratios are [1, 0.72, 0.63, 0.56] and the weights use them (left) or assume equal noise (right). Numbers: covariance; colour: deviation from the identity. Exact calculation, T2* = 45 ms.</figcaption></figure>
+
+<h3>2.4 Thermal noise without circularity</h3>
+<p>The thermal noise σ must not be estimated from the temporal variance of the data, because physiological noise scales with signal and echo time. It is instead estimated from the leftover channels, built from the noise-scaled mean only so that they do not depend on σ, using frame-to-frame differences: for one leftover channel, σ² = median(Δr²)/(2 · 0.4549). Differencing cancels slow model violations, which inflated the non-differenced estimate by about 8 % in a pilot participant; fast, respiration-paced violations do not cancel (Figure 5). A smooth σ map is used where a voxel has too few usable echoes. As an independent check, dipy's MP-PCA estimate on the raw, non-motion-corrected echoes agreed with the model's echo ratios within 10 % (shape); its overall level differed by a factor of 1.204 against a pre-set limit of 1.20, a narrow miss accepted as a limitation and reported as an uncertainty of about 20 % between two independent estimators.</p>
+<figure data-src="fig_sim_sigma_estimator.png"><figcaption><b>Figure 5. Thermal noise from one leftover channel.</b> Ratio of estimated to true σ over 4,000 simulated voxels of 800 frames, as a model violation of increasing amplitude is added to white thermal noise: a slow drift (left) or a respiration-paced oscillation at 0.3 Hz (right). Frame differencing (blue) removes the slow violation; neither estimator removes the fast one.</figcaption></figure>
+
+<!-- ===================================================================== 3 -->
+<h2 id="s3">3. Development process</h2>
+<p>The project was built in phases, each closed by a gate that the principal investigator reviewed before the next phase started; every gate result and decision is recorded with its date in the project's decision log. Figure 6 summarizes the path. Two turning points shaped the final design.</p>
+
+<figure>
+<svg class="diagram" viewBox="0 0 820 330" role="img" aria-label="Development timeline from Phase 0 to R5">
+  <style>
+    .t { font: 600 11.5px Inter, system-ui, sans-serif; fill: #0b0b0b; }
+    .s { font: 400 10px Inter, system-ui, sans-serif; fill: #52514e; }
+    .lane { font: 600 10.5px Inter, system-ui, sans-serif; fill: #52514e; letter-spacing: .04em; }
+  </style>
+  <text x="10" y="22" class="lane">DECOMPOSITION PATH (2026-11-02 to 11-08)</text>
+  <line x1="40" y1="70" x2="790" y2="70" stroke="#dcdbd6" stroke-width="2"/>
+  <g>
+    <circle cx="60" cy="70" r="9" fill="#2a78d6"/><text x="60" y="48" text-anchor="middle" class="t">Phase 0</text><text x="60" y="96" text-anchor="middle" class="s">audit</text><text x="60" y="108" text-anchor="middle" class="s">17 runs</text>
+    <circle cx="160" cy="70" r="9" fill="#2a78d6"/><text x="160" y="48" text-anchor="middle" class="t">Phase 1</text><text x="160" y="96" text-anchor="middle" class="s">simulator,</text><text x="160" y="108" text-anchor="middle" class="s">test harness</text>
+    <circle cx="260" cy="70" r="9" fill="#2a78d6"/><text x="260" y="48" text-anchor="middle" class="t">Phase 2</text><text x="260" y="96" text-anchor="middle" class="s">front end,</text><text x="260" y="108" text-anchor="middle" class="s">per-echo noise</text>
+    <circle cx="360" cy="70" r="9" fill="#2a78d6"/><text x="360" y="48" text-anchor="middle" class="t">Phase 2b</text><text x="360" y="96" text-anchor="middle" class="s">one nuisance</text><text x="360" y="108" text-anchor="middle" class="s">projector</text>
+    <circle cx="460" cy="70" r="9" fill="#eda100"/><text x="460" y="48" text-anchor="middle" class="t">Phase 3</text><text x="460" y="96" text-anchor="middle" class="s">rank: no</text><text x="460" y="108" text-anchor="middle" class="s">defensible k</text>
+    <circle cx="560" cy="70" r="9" fill="#2a78d6"/><text x="560" y="48" text-anchor="middle" class="t">Phase 4</text><text x="560" y="96" text-anchor="middle" class="s">joint ICA,</text><text x="560" y="108" text-anchor="middle" class="s">eta metric</text>
+    <circle cx="680" cy="70" r="9" fill="#e34948"/><text x="680" y="48" text-anchor="middle" class="t">Phase 5</text><text x="680" y="96" text-anchor="middle" class="s">injection pilot:</text><text x="680" y="108" text-anchor="middle" class="s">ICA detection limit;</text><text x="680" y="120" text-anchor="middle" class="s">eta reads background</text>
+  </g>
+  <path d="M680 132 C 680 170, 120 160, 90 205" fill="none" stroke="#e34948" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#arr)"/>
+  <defs><marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#e34948"/></marker></defs>
+  <text x="112" y="150" class="s" style="fill:#e34948">pivot (2026-11-09): pool over anatomical regions first</text>
+  <text x="112" y="200" class="lane">ROUTE B (2026-11-09 to 11-14)</text>
+  <line x1="40" y1="245" x2="790" y2="245" stroke="#dcdbd6" stroke-width="2"/>
+  <g>
+    <circle cx="90" cy="245" r="9" fill="#1baf7a"/><text x="90" y="225" text-anchor="middle" class="t">R1</text><text x="90" y="270" text-anchor="middle" class="s">simulation</text><text x="90" y="282" text-anchor="middle" class="s">tests</text>
+    <circle cx="230" cy="245" r="9" fill="#1baf7a"/><text x="230" y="225" text-anchor="middle" class="t">R2</text><text x="230" y="270" text-anchor="middle" class="s">anatomy in EPI space,</text><text x="230" y="282" text-anchor="middle" class="s">registration checks</text>
+    <circle cx="380" cy="245" r="9" fill="#1baf7a"/><text x="380" y="225" text-anchor="middle" class="t">R3</text><text x="380" y="270" text-anchor="middle" class="s">injection validation,</text><text x="380" y="282" text-anchor="middle" class="s">shares within 0.1</text>
+    <circle cx="530" cy="245" r="9" fill="#1baf7a"/><text x="530" y="225" text-anchor="middle" class="t">R4</text><text x="530" y="270" text-anchor="middle" class="s">two-participant pilot,</text><text x="530" y="282" text-anchor="middle" class="s">CSF-rich voxels dropped</text>
+    <circle cx="690" cy="245" r="9" fill="#1baf7a"/><text x="690" y="225" text-anchor="middle" class="t">R5</text><text x="690" y="270" text-anchor="middle" class="s">11 participants; primary</text><text x="690" y="282" text-anchor="middle" class="s">redefined; 7 sensitivity</text><text x="690" y="294" text-anchor="middle" class="s">analyses</text>
+  </g>
+  <text x="10" y="322" class="s">Colour: blue, gate passed; amber, gate replaced by a reported sweep; red, finding that changed the design; green, route B gates passed.</text>
+</svg>
+<figcaption><b>Figure 6. Development path.</b> Each phase closed with a gate reviewed by the principal investigator. The injection pilot of Phase 5 showed that a whole-brain decomposition could not serve as the main analysis, and route B replaced it.</figcaption>
+</figure>
+
+<h3>3.1 The decomposition path</h3>
+<p>The original design was a joint spatial ICA on stacked c0 and c1 channels, so that every component would carry both a ΔS0 map and a ΔR2* map, estimated during the decomposition rather than classified afterwards. It was built and tested (Phases 0 to 4), together with a noise-debiased measure η of each component's S0 energy fraction. Several decisions along the way are worth recording because they generalize:</p>
+<ul>
+<li><b>Measure, do not assume, the echo noise.</b> An initial equal-noise model failed the MP-PCA cross-check by up to 70 %; per-echo noise ratios fixed the weighting, and frame differencing then fixed the level.</li>
+<li><b>No data-driven dimensionality was defensible.</b> Estimators against phase-randomized nulls either under-counted or ran to their limit, because real noise is coloured and nonstationary at the precision of tens of thousands of voxels. Results were therefore reported across a fixed sweep of k.</li>
+<li><b>Selection biases component metrics.</b> ICA time courses are chosen from the same noise they are evaluated on, so η was cross-fitted between voxel halves and tested against a family-wise null built through the same selection.</li>
+</ul>
+
+<h3>3.2 Why the decomposition is descriptive only</h3>
+<p>Phase 5 injected known focal and network-sized sources, pure ΔR2*, pure ΔS0 and mixed, at resting and at stronger amplitude, into the raw echoes of real scans and carried them through the full pipeline. The front end measured their ΔS0 and ΔR2* content correctly when the time course was known (amplitude within about 10 %). But whole-brain spatial ICA, ours and tedana's alike, isolated no focal source at any tested dimension and isolated network-sized sources only when they were strong and k was about 150 (Section 5.3). In addition, every native component's η sat near 0.42 in every participant: η was measuring a background that any slow time course picks up from tens of thousands of voxels, with an S0 fraction of about 0.25 to 0.45. A background-corrected η now exists, but the larger lesson was that a whole-brain decomposition describes only the dominant large-scale components. The study question concerns cortical integration at resting signal strength, so the main analysis moved to anatomically defined regions, where pooling is fixed in advance and there is no detection threshold.</p>
+
+<!-- ===================================================================== 4 -->
+<h2 id="s4">4. Route B: methods</h2>
+
+<h3>4.1 Data</h3>
+<p>Resting-state multiband multi-echo gradient-echo EPI was acquired on a 3 T Siemens MAGNETOM Prisma (CMRR multiband EPI, multiband factor 6, GRAPPA 2, partial Fourier 7/8): four echoes at 16.20, 31.22, 46.24 and 61.26 ms, TR ≈ 0.75 s, 3.281 × 3.281 × 3.3 mm voxels, about 800 volumes (10 minutes), phase encoding left-right, sum-of-squares coil combination. Phase images, noise frames and physiological recordings were not available. Seventeen runs were audited; two subjects were excluded (failed volume pairing; an artefact over one hemisphere), and four lack a T1-weighted image at present, so route B ran in 11 participants. One participant's longest gap-free stretch (531 frames) was shorter than the common length and is reported separately, leaving 10 in the primary analysis. Participants are identified in figures by pseudonym only.</p>
+
+<h3>4.2 Pipeline</h3>
+<figure>
+<svg class="diagram" viewBox="0 0 820 300" role="img" aria-label="Route B pipeline">
+  <style>
+    .bx { fill: #ffffff; stroke: #8a8984; stroke-width: 1.2; }
+    .bxa { fill: #eaf2fc; stroke: #2a78d6; stroke-width: 1.4; }
+    .bt { font: 600 11.5px Inter, system-ui, sans-serif; fill: #0b0b0b; }
+    .bs { font: 400 10px Inter, system-ui, sans-serif; fill: #52514e; }
+  </style>
+  <defs><marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#52514e"/></marker></defs>
+  <rect x="10" y="20" width="150" height="70" rx="6" class="bx"/><text x="85" y="45" text-anchor="middle" class="bt">4 echoes</text><text x="85" y="62" text-anchor="middle" class="bs">volume pairing, one motion</text><text x="85" y="75" text-anchor="middle" class="bs">resampling (mbme_tedana)</text>
+  <rect x="190" y="20" width="160" height="70" rx="6" class="bxa"/><text x="270" y="45" text-anchor="middle" class="bt">Front end</text><text x="270" y="62" text-anchor="middle" class="bs">μ, T2*, σ from leftover</text><text x="270" y="75" text-anchor="middle" class="bs">channels; usable echoes</text>
+  <rect x="10" y="130" width="150" height="70" rx="6" class="bx"/><text x="85" y="155" text-anchor="middle" class="bt">T1 anatomy</text><text x="85" y="172" text-anchor="middle" class="bs">FAST tissue classes; Schaefer</text><text x="85" y="185" text-anchor="middle" class="bs">200 / 7 into native EPI</text>
+  <rect x="190" y="130" width="160" height="70" rx="6" class="bx"/><text x="270" y="155" text-anchor="middle" class="bt">Region labels</text><text x="270" y="172" text-anchor="middle" class="bs">cortex, thalamus, striatum;</text><text x="270" y="185" text-anchor="middle" class="bs">voxels with CSF p &gt; 0.3 dropped</text>
+  <rect x="390" y="75" width="170" height="70" rx="6" class="bxa"/><text x="475" y="100" text-anchor="middle" class="bt">Region averaging</text><text x="475" y="117" text-anchor="middle" class="bs">noise-weighted mean of each</text><text x="475" y="130" text-anchor="middle" class="bs">echo's log-ratio, per region</text>
+  <rect x="600" y="20" width="210" height="70" rx="6" class="bxa"/><text x="705" y="45" text-anchor="middle" class="bt">Split + region noise</text><text x="705" y="62" text-anchor="middle" class="bs">S0-like a(t), BOLD-like b(t);</text><text x="705" y="75" text-anchor="middle" class="bs">noise from the 2 leftover channels</text>
+  <rect x="600" y="130" width="210" height="70" rx="6" class="bxa"/><text x="705" y="155" text-anchor="middle" class="bt">Region measures</text><text x="705" y="172" text-anchor="middle" class="bs">BOLD-like / S0-like / leftover shares,</text><text x="705" y="185" text-anchor="middle" class="bs">reliability, bootstrap intervals</text>
+  <rect x="390" y="215" width="420" height="76" rx="6" class="bxa"/><text x="600" y="238" text-anchor="middle" class="bt">Connectivity and integration (797 frames, 0.01 to 0.1 Hz)</text><text x="600" y="254" text-anchor="middle" class="bs">noise-corrected BOLD-like correlations; participation ratio</text><text x="600" y="267" text-anchor="middle" class="bs">with and without the first pattern; global share; segregation;</text><text x="600" y="280" text-anchor="middle" class="bs">circular-shift nulls; block bootstrap</text>
+  <line x1="160" y1="55" x2="186" y2="55" stroke="#52514e" stroke-width="1.3" marker-end="url(#a2)"/>
+  <line x1="160" y1="165" x2="186" y2="165" stroke="#52514e" stroke-width="1.3" marker-end="url(#a2)"/>
+  <path d="M350 55 C 370 55, 370 100, 386 104" fill="none" stroke="#52514e" stroke-width="1.3" marker-end="url(#a2)"/>
+  <path d="M350 165 C 370 165, 370 120, 386 116" fill="none" stroke="#52514e" stroke-width="1.3" marker-end="url(#a2)"/>
+  <path d="M560 105 C 580 105, 580 60, 596 56" fill="none" stroke="#52514e" stroke-width="1.3" marker-end="url(#a2)"/>
+  <line x1="705" y1="90" x2="705" y2="126" stroke="#52514e" stroke-width="1.3" marker-end="url(#a2)"/>
+  <line x1="705" y1="200" x2="705" y2="211" stroke="#52514e" stroke-width="1.3" marker-end="url(#a2)"/>
+</svg>
+<figcaption><b>Figure 7. Route B.</b> The functional data are resampled once (motion correction) and never moved to a template; the anatomy is brought to each participant's EPI space instead. Blue boxes are computed by route B; grey boxes are inputs.</figcaption>
+</figure>
+<p>For each region, the log-ratio of each echo is averaged over the region's voxels with the front-end weights (μ<sub>e</sub>/(σ·r<sub>e</sub>))². Averaging keeps the model of Eq. 1 exactly linear, so the same QR projection applied to the region means yields a region-level c0, c1 and two leftover channels whose thermal noise is that of the averaged voxels. The leftover channels give each region's noise variance (frame-differenced, scaled for the nuisance regressors removed), which is subtracted in every energy, share and correlation below. Whole parcels are pooled in native space; no signal is blurred across region borders and the functional data are never resampled to a template, so this is not spatial smoothing.</p>
+<p>Anatomy comes from each participant's T1-weighted image (FSL brain extraction, FAST tissue segmentation, boundary-based registration of the T2* map to the T1, nonlinear registration to MNI space), with the Schaefer 2018 parcellation (200 parcels, 7 networks; 400/17 as a sensitivity analysis) <span class="tag">[11]</span> and Harvard-Oxford thalamus and striatum brought into EPI space. Every registration was checked visually. Cortical, thalamic and striatal voxels with CSF probability above 0.3 are dropped, because a few ventricle-edge and sulcal voxels carried a large share of the late-echo weight and part of the brain-wide pattern; each participant's cortical CSF fraction is reported as a covariate.</p>
+
+<h3>4.3 Measures</h3>
+<p><b>Shares.</b> In the analysis band (0.01 to 0.1 Hz), the region's S0 and R2* energies are computed from the band-passed channels with the expected noise energy subtracted (Eq. 2); the BOLD-like share is E<sub>R2</sub>/(E<sub>S0</sub> + E<sub>R2</sub>), the S0-like share its complement, and the leftover share the leftover energy above noise over all three.</p>
+<div class="eq">E<sub>S0</sub> = w<sub>s</sub> (Σ<sub>t</sub> c1<sup>2</sup> − N), &nbsp; E<sub>R2</sub> = Σ<sub>t</sub> (c0 − (R<sub>01</sub>/R<sub>11</sub>) c1)<sup>2</sup> − w<sub>r</sub> N, &nbsp; w<sub>s</sub> = (R<sub>01</sub><sup>2</sup> + R<sub>11</sub><sup>2</sup>)/R<sub>11</sub><sup>2</sup>, &nbsp; w<sub>r</sub> = 1 + R<sub>01</sub><sup>2</sup>/R<sub>11</sub><sup>2</sup><span class="n">(2)</span></div>
+<p>where N is the region's noise variance times the band's share of white-noise variance times the number of frames. <b>Reliability</b> is the signal share of a region's slow BOLD-like variance, 1 − noise/total; 0.5 is the floor below which deep-region coupling is reported as not measurable.</p>
+<p><b>Connectivity.</b> Pairwise covariances of the band-passed BOLD-like time courses, with each region's band noise removed from the diagonal before normalization, give noise-corrected correlations. Ordinary connectivity from the OC-like channel is computed the same way for comparison.</p>
+<p><b>Integration.</b> With eigenvalues λ<sub>1</sub> ≥ λ<sub>2</sub> ≥ … of the noise-corrected correlation matrix (negative values set to zero):</p>
+<div class="eq">PR = <span class="frac"><span>(Σλ)<sup>2</sup></span><span>Σλ<sup>2</sup></span></span>, &nbsp;&nbsp; PR<sub>−1</sub> = <span class="frac"><span>(Σλ − λ<sub>1</sub>)<sup>2</sup></span><span>Σλ<sup>2</sup> − λ<sub>1</sub><sup>2</sup></span></span>, &nbsp;&nbsp; global share = <span class="frac"><span>Var(mean BOLD-like time course) − its noise</span><span>mean noise-corrected variance</span></span><span class="n">(3)</span></div>
+<p>PR is the ordinary participation ratio, the effective number of independent patterns; PR<sub>−1</sub>, the primary outcome, is the same quantity after the first (brain-wide) pattern is set aside. Each is compared with a null of 1,000 surrogates, each built by circularly shifting every region's time course by its own random lag of at least 30 s, which keeps each region's spectrum and destroys their alignment. System segregation (mean within-network minus between-network correlation, over within-network) is tested against network-label permutations. Precision comes from a circular block bootstrap of frames (20 s blocks, 200 resamples): the reported interval is the estimate ± 1.96 bootstrap SD, and the bootstrap bias is reported separately (Section 6.5). All integration measures use the same 797 frames (the first 797 of each run's longest gap-free stretch), because they depend on the number of independent frames.</p>
+<p><b>Motion handling.</b> One projector built from 24 motion regressors (the six realignment parameters after a notch filter at each participant's breathing frequency, their frame-to-frame changes, and the squares of both) is removed from all echoes before the split and identically from the leftover channels, as a single model rather than sequential steps <span class="tag">[14]</span>; the temporal degrees of freedom for noise are reduced accordingly. Framewise displacement is computed from the same filtered parameters.</p>
+
+<!-- ===================================================================== 5 -->
+<h2 id="s5">5. Validation</h2>
+
+<h3>5.1 Simulation: shares, time courses and noise</h3>
+<p>The package's own route B functions were applied to synthetic magnitude data for 60 regions of 10 to 160 voxels, with independent band-limited ΔS0 and ΔR2* time courses mixed in random proportions at resting amplitudes, per-voxel T2* of 35 to 65 ms, the measured echo noise ratios and an echo-1 thermal SNR near 50. Estimated BOLD-like shares were within 0.1 of the truth in every region (median error 0.006; 0.034 at 10 voxels and 0.001 to 0.009 at 20 voxels or more), ΔR2* time courses correlated with the truth at a median r of 0.97, and region noise estimated from the leftover channels matched the noise actually present (median ratio 1.00; Figure 8). ΔS0 time courses were noisier (median r 0.67), which anticipates the decision, on real data, not to analyse S0-like connectivity.</p>
+<figure data-src="fig_sim_route_b_recovery.png"><figcaption><b>Figure 8. Route B on synthetic regions with known truth.</b> (A) Estimated against true BOLD-like share by region size; grey band, the pre-set tolerance of ±0.1. (B) Correlation of the recovered ΔR2* and ΔS0 time courses with the truth. (C) Region noise variance estimated from the leftover channels against the noise variance in the region channels.</figcaption></figure>
+
+<h3>5.2 Injection into the raw echoes</h3>
+<p>Simulations cannot reproduce real motion, resampling, coil and physiological structure, so known signals were also added to the raw echoes of real scans and carried through the whole pipeline (motion correction, front end, anatomy, route B). For route B, region-wide signals were injected at resting strength into networks of parcels: pure ΔR2*, pure ΔS0 and mixed, as independent networks or as one shared network. The pre-set tolerance for share recovery was 0.1. In the validation runs (R3, two participants, resting and 2.5-fold strength), injected shares were recovered within 0.06 everywhere; coupling rose within injected networks (+0.16 to +0.23 at resting strength) and pairs not injected changed by a median absolute 0.007 to 0.012. Recovered amplitudes were 0.78 to 0.93 of the injected ones, because a signal confined to the labelled cortical ribbon is partly spread into unlabelled neighbours by motion correction; shares are unaffected because both parts shrink alike. Share error was small down to the smallest admitted region (20 voxels). The same two injections were then run in every participant to measure individual sensitivity (Figure 9).</p>
+<figure data-src="fig_injection_regions.png" data-pending="Real data: route B injection results across participants (share recovery by injected type, change in the primary with independent and shared networks, where coupling changed). Produced by scripts/whitepaper_figures.py."><figcaption><b>Figure 9. Injection validation of route B.</b> (A) Recovered against true BOLD-like share of the injected signal, by injected type; grey band, tolerance ±0.1. (B) Change in the primary outcome after adding independent networks or one shared network at resting strength, per participant. (C) Median change in BOLD-like correlation within and between injected networks, from injected to other regions, and between pairs not injected.</figcaption></figure>
+
+<h3>5.3 The detection limit of whole-brain spatial ICA</h3>
+<p>The Phase 5 injections give a direct comparison. Focal sources were never isolated by whole-brain spatial ICA at k = 50, 90 or 150; network-sized sources were isolated only at the stronger amplitude and k ≈ 150 (Figure 10). The limitation is not specific to our decomposition: tedana's decomposition was limited in the same way. Route B has no such threshold, because its pooling is defined by anatomy before the data are seen; its limit is instead the precision of each region's signal, which the reliability measure reports.</p>
+<figure data-src="fig_injection_ica.png" data-pending="Real data: fraction of injected sources recovered by whole-brain spatial ICA and median best-match correlation, by layout (focal, network), type, strength and k. Produced by scripts/whitepaper_figures.py."><figcaption><b>Figure 10. Whole-brain spatial ICA isolates only large, strong sources.</b> Left: fraction of injected sources recovered (best component |r| ≥ 0.9). Right: median best-match correlation. Rows: layout, type (ΔR2*, ΔS0, mixed) and strength; columns: ICA dimension.</figcaption></figure>
+
+<!-- ===================================================================== 6 -->
+<h2 id="s6">6. First application</h2>
+
+<h3>6.1 The front end in one participant</h3>
+<p>Figure 11 shows the front-end maps in one participant from the most inferior slices, through the posterior fossa, to the vertex. T2*, the echo-1 thermal noise, the number of usable echoes (echoes with mean signal at least five times their thermal noise), the S0 sensitivity R<sub>11</sub> and the residual energy relative to the thermal expectation identify where the model is trustworthy. Late echoes drop out first near air-bone interfaces; residual energy rises where through-slice dephasing bends the decay.</p>
+<figure data-src="fig_frontend_maps.png" data-pending="Real data: front-end maps (mean signal, T2*, thermal noise, usable echoes, S0 sensitivity, residual energy) in one participant, inferior to superior. Produced by scripts/whitepaper_figures.py."><figcaption><b>Figure 11. Front-end maps in one participant.</b> Six axial slices from inferior (left) to superior (right). Rows: mean echo-1 signal, T2*, thermal noise SD of echo 1, number of usable echoes, S0 sensitivity R<sub>11</sub>, residual energy over its thermal expectation.</figcaption></figure>
+
+<h3>6.2 Region signals and shares</h3>
+<p>Cortical regions carried mostly BOLD-like signal in the analysis band, with a consistent S0-like remainder and a small leftover share (Figure 12, Figure 13). Each participant used 178 to 197 cortical parcels (166 in every participant); median regional reliability per participant ranged from 0.54 to 0.92. The S0-like part of each region's time course was close to noise in most regions, so S0-like connectivity was not analysed; the S0-like share remains a region-level descriptor that may be relevant to treatment effects on the vasculature.</p>
+<figure data-src="fig_timecourses.png" data-pending="Real data: band-passed BOLD-like and S0-like time courses of three regions in one participant (first 4 minutes). Produced by scripts/whitepaper_figures.py."><figcaption><b>Figure 12. Region signals in one participant.</b> Band-passed BOLD-like (ΔR2*, top) and S0-like (ΔS0/S0, bottom) time courses of the most reliable visual, somatomotor and default-network regions, first four minutes.</figcaption></figure>
+<figure data-src="fig_shares_by_network.png" data-pending="Real data: BOLD-like, S0-like and leftover shares and reliability by network, all participants. Produced by scripts/whitepaper_figures.py."><figcaption><b>Figure 13. Shares and reliability by network.</b> Each dot is one cortical region of one participant; black, median and interquartile range. Dashed line in the reliability panel: the 0.5 floor.</figcaption></figure>
+<figure data-src="fig_surface_group_median.png" data-pending="Real data: group-median shares and reliability per parcel on the cortical surface. Produced by scripts/whitepaper_figures.py."><figcaption><b>Figure 14. Group-median maps.</b> BOLD-like, S0-like and leftover shares and reliability per parcel, on an inflated surface (display only; parcels used in fewer than half the participants are grey).</figcaption></figure>
+
+<h3>6.3 Connectivity</h3>
+<p>Group-mean BOLD-like correlations were strongly and uniformly positive, with network structure visible above a large common level; the difference from ordinary (OC-like) connectivity and the matrix after removing each participant's first pattern show what the brain-wide pattern hides (Figure 15). Eigenvalue spectra rose above the circular-shift null in their first few eigenvalues in every participant (Figure 16).</p>
+<figure data-src="fig_matrices.png" data-pending="Real data: group-mean BOLD-like, ordinary, difference, and first-pattern-removed correlation matrices on the common parcels. Produced by scripts/whitepaper_figures.py."><figcaption><b>Figure 15. Group-mean connectivity on the common parcels.</b> Noise-corrected correlations averaged in Fisher z over the participants of the primary analysis, ordered by network: BOLD-like, ordinary (OC-like channel), their difference, and BOLD-like after removing each participant's first pattern.</figcaption></figure>
+<figure data-src="fig_spectra.png" data-pending="Real data: eigenvalue spectra per participant with the circular-shift null. Produced by scripts/whitepaper_figures.py."><figcaption><b>Figure 16. Eigenvalue spectra.</b> First 30 eigenvalues of each participant's BOLD-like correlation matrix (blue) and the 95th percentile of the circular-shift null (dashed).</figcaption></figure>
+
+<h3>6.4 Why the primary outcome leaves out the brain-wide pattern</h3>
+<p>The ordinary participation ratio was planned as the primary outcome. Across the 10 participants of the primary analysis it ranged from 2.1 to 10.0 and was almost exactly the inverse of the global BOLD-like share, which ranged from 0.28 to 0.64 (Spearman ρ = −0.98). In other words, it measured mostly how large one pattern was. Simulation shows why (Figure 17A): with fixed network structure, increasing a brain-wide signal drives the ordinary ratio from tens to a few, while the ratio without the first pattern does not move (Figure 17B). For a fixed amount of signal outside the global pattern, the ratio without the first pattern counts how many independent patterns share it (Figure 17C). In the data, the ratio without the first pattern ranged from 17.2 to 25.7 (median 19.3) and was not related to the global share (ρ = −0.39, p = 0.26), mean framewise displacement (ρ = −0.22), cortical CSF fraction (ρ = 0.50) or the number of regions (ρ = 0.37) (Figure 18, Figure 19). It became the primary outcome after the batch review (user decision, 12 November 2026), always reported with the global share and each participant's injection-measured sensitivity.</p>
+<figure data-src="fig_sim_pr_global.png"><figcaption><b>Figure 17. What the two participation ratios measure (simulation).</b> 7 networks of 24 regions with a brain-wide component whose loading differs between regions. (A) The ordinary ratio falls steeply as the first pattern's share of variance grows. (B) The ratio without the first pattern is nearly unaffected. (C) With the same regions and the same global pattern, the ratio without the first pattern grows with the number of independent networks.</figcaption></figure>
+<figure data-src="fig_global_share.png" data-pending="Real data: ordinary PR and PR without the first pattern against the global share, and the global share against motion, per participant. Produced by scripts/whitepaper_figures.py."><figcaption><b>Figure 18. The two participation ratios in the data.</b> Ordinary ratio (left) and ratio without the first pattern (middle) against the global BOLD-like share; global share against mean framewise displacement (right). One dot per participant of the primary analysis.</figcaption></figure>
+<figure data-src="fig_primary.png" data-pending="Real data: per-participant primary with 95 % bootstrap interval and circular-shift null, ordinary PR with null, global share with interval. Produced by scripts/whitepaper_figures.py."><figcaption><b>Figure 19. Integration measures per participant.</b> Dot, estimate; blue line, 95 % bootstrap interval (estimate ± 1.96 SD); grey band, circular-shift null 5 to 95 % with its median (tick). Hollow: the participant whose gap-free stretch was too short for the primary.</figcaption></figure>
+
+<h3>6.5 Motion</h3>
+<p>Mean framewise displacement after respiratory filtering was low in most participants (Figure 20). Across participants, the strength of 42 % of BOLD-like connections correlated with mean displacement at p &lt; 0.05 (median edge correlation 0.58, uniformly positive), the signature of a global motion-linked signal, as described for R2*-weighted multi-echo data <span class="tag">[13]</span>. After removing each participant's first pattern, 3.4 % of connections did, close to the 5 % expected by chance, with a median correlation of 0.02 and no distance dependence (Figure 21). The global share itself correlated with motion at ρ = 0.38 (p = 0.28), so it should always be read with motion.</p>
+<figure data-src="fig_motion.png" data-pending="Real data: filtered framewise displacement in one participant and mean FD per participant. Produced by scripts/whitepaper_figures.py."><figcaption><b>Figure 20. Head motion.</b> Framewise displacement after respiratory filtering in one participant (dashed: 0.2 mm), and mean displacement per participant.</figcaption></figure>
+<figure data-src="fig_qcfc.png" data-pending="Real data: QC-FC histograms and distance dependence, before and after removing the first pattern. Produced by scripts/whitepaper_figures.py."><figcaption><b>Figure 21. Motion dependence of connectivity across participants (QC-FC).</b> Left: distribution over connections of the correlation between connection strength and mean displacement, for BOLD-like correlations and after removing each participant's first pattern. Right: the same against the distance between parcel centroids.</figcaption></figure>
+
+<h3>6.6 Precision and robustness</h3>
+<p>Per-participant 95 % intervals of the primary had a median half-width of 2.6 (range 1.9 to 5.1) on estimates of 17 to 26, so most participants' intervals overlap; group comparisons will rest on the number of participants rather than on individual precision. The bootstrap resamples were biased low by several units, because resampling blocks reduces the number of independent frames and eigenvalues of a correlation matrix spread as that number falls. Simulation reproduces the effect (Figure 22): with about 110 independent values per region in 797 frames at 0.01 to 0.1 Hz, fewer than the number of regions, the measure sits well below its population value. This is why the number of frames and the band must be identical across participants, and why intervals are built from the bootstrap SD rather than its percentiles.</p>
+<figure data-src="fig_sim_frames.png"><figcaption><b>Figure 22. The primary depends on the number of independent frames (simulation).</b> Ratio without the first pattern for 168 regions with fixed network structure, estimated from different numbers of independent frames (mean ± SD of 30 draws); dashed, the population value; dotted, the approximate number of independent values per region in the study's 797 frames.</figcaption></figure>
+<p>Seven second-pass sensitivity analyses changed one choice each (Table 1, Figure 23). The global share was very stable (Spearman with the main analysis 0.95 to 0.99, except 0.63 under global signal regression, which removes it by design). The ranking of participants on the primary held moderately (0.52 to 0.83). Its level shifted with the number of regions (+6.7 with 400 parcels) and the band (−1.3 with an upper limit of 0.08 Hz), as expected for a measure limited by independent frames. Global signal regression changes what the measure describes (the mean is removed before, and the first remaining pattern after, so two patterns go), and the ordinary ratio after global signal regression did not reproduce the primary either (ρ = 0.20).</p>
+<table>
+<caption><b>Table 1. Second-pass sensitivity analyses</b> (10 participants of the primary analysis). Spearman correlation of each participant's value with the main analysis, and median change.</caption>
+<thead><tr><th>Variant</th><th class="num">Primary: ρ</th><th class="num">Primary: median change</th><th class="num">Global share: ρ</th><th class="num">Ordinary PR: ρ</th></tr></thead>
+<tbody>
+<tr><td>Schaefer 400 parcels / 17 networks</td><td class="num">0.64</td><td class="num">+6.66</td><td class="num">0.96</td><td class="num">0.95</td></tr>
+<tr><td>Band 0.01 to 0.08 Hz</td><td class="num">0.60</td><td class="num">−1.31</td><td class="num">0.96</td><td class="num">0.94</td></tr>
+<tr><td>Censoring at filtered FD &gt; 0.2 mm (median 7 %, max 53 % of frames)</td><td class="num">0.62</td><td class="num">+2.04</td><td class="num">0.95</td><td class="num">0.94</td></tr>
+<tr><td>Equal echo weights</td><td class="num">0.78</td><td class="num">+1.39</td><td class="num">0.98</td><td class="num">0.89</td></tr>
+<tr><td>Grey-matter threshold 0.5</td><td class="num">0.83</td><td class="num">−0.40</td><td class="num">0.98</td><td class="num">0.94</td></tr>
+<tr><td>Region-level global signal regression</td><td class="num">0.15</td><td class="num">+2.56</td><td class="num">0.63</td><td class="num">0.06</td></tr>
+<tr><td>Six low-passed motion parameters</td><td class="num">0.52</td><td class="num">−0.24</td><td class="num">0.99</td><td class="num">0.96</td></tr>
+</tbody>
+</table>
+<figure data-src="fig_sensitivity.png" data-pending="Real data: per-participant primary across analysis choices and Spearman with the main analysis. Produced by scripts/whitepaper_figures.py."><figcaption><b>Figure 23. Sensitivity analyses.</b> Left: each participant's primary in the main analysis and under each variant. Right: Spearman correlation with the main analysis for the primary, the global share and the ordinary ratio.</figcaption></figure>
+<figure data-src="fig_bootstrap_bias.png" data-pending="Real data: bootstrap bias of the primary per participant. Produced by scripts/whitepaper_figures.py."><figcaption><b>Figure 24. Bootstrap bias per participant.</b> Mean of the bootstrap resamples minus the estimate, against the estimate.</figcaption></figure>
+
+<h3>6.7 Thalamus and striatum</h3>
+<p>Deep regions were measurable less often: left striatum in 9 of 11 participants, right striatum in 6, right thalamus in 3 and left thalamus in 2 (reliability below 0.5 otherwise). Pooled over measurable participants, striatal BOLD-like coupling with the cortical networks ranged from about 0.39 (limbic) to 0.67 (salience / ventral attention) (Figure 25). Thalamic estimates rest on two or three participants and are reported for completeness only.</p>
+<figure data-src="fig_deep_coupling.png" data-pending="Real data: pooled thalamus and striatum coupling with each cortical network. Produced by scripts/whitepaper_figures.py."><figcaption><b>Figure 25. Thalamus and striatum.</b> Pooled BOLD-like coupling with each cortical network over the participants in whom it was measurable (inverse-variance weighted Fisher z), with 95 % intervals.</figcaption></figure>
+
+<!-- ===================================================================== 7 -->
+<h2 id="s7">7. Information value</h2>
+<p>What does route B tell us that a standard multi-echo analysis does not? Table 2 compares the two on the properties that matter for the study question.</p>
+<table>
+<caption><b>Table 2. Route B compared with the standard multi-echo approach</b></caption>
+<thead><tr><th>Property</th><th>OC data, tedana classification</th><th>Route B</th></tr></thead>
+<tbody>
+<tr><td>Where the physics enters</td><td>After decomposition, as a label per component</td><td>In every region and frame, as two estimated parts</td></tr>
+<tr><td>Mixed signals</td><td>One label for the whole component</td><td>Measured as a share; neither part discarded</td></tr>
+<tr><td>Thermal noise</td><td>Implicit</td><td>Estimated per region from leftover channels and removed from every energy and correlation</td></tr>
+<tr><td>Detection threshold</td><td>Components must be large and strong to be isolated</td><td>None; precision reported as reliability</td></tr>
+<tr><td>Failure mode in these data</td><td>0 "Likely BOLD" components in 5 of 16 runs</td><td>Low-reliability regions flagged; deep regions reported as not measurable</td></tr>
+<tr><td>Sensitivity</td><td>Not measured per participant</td><td>Measured per participant by injection into the raw echoes</td></tr>
+<tr><td>Model violations</td><td>Not separated</td><td>Leftover share and residual maps</td></tr>
+<tr><td>Space</td><td>Usually template space after resampling</td><td>Native EPI space, one resampling</td></tr>
+</tbody>
+</table>
+<p>Three kinds of information are new. First, the <b>share</b> of each region's slow signal that behaves like BOLD, which is directly relevant when vascular effects of treatment are a competing explanation. Second, <b>noise-accounted coupling</b>: because each region's thermal noise is estimated and removed, correlations are not attenuated by differences in SNR between regions, coils or participants. Third, a <b>measured sensitivity</b> for every participant, so that a low value can be read against what that scan could have detected.</p>
+
+<!-- ===================================================================== 8 -->
+<h2 id="s8">8. Strengths and limitations</h2>
+<div class="box"><h4>Strengths</h4>
+<ul>
+<li>Every step follows from an explicit signal model with closed-form properties that were checked numerically, and every gate is recorded.</li>
+<li>No decomposition and no dimensionality choice in the main analysis; pooling is fixed by anatomy before the data are seen.</li>
+<li>Thermal noise is estimated without circularity and removed explicitly; the weights come from thermal noise only, never from tSNR.</li>
+<li>Validation on real scans by injection into the raw echoes, with tolerances set in advance, and a per-participant sensitivity.</li>
+<li>The primary outcome is unrelated to the global share and to motion in the pilot data, and motion dependence of connectivity falls to chance level once the brain-wide pattern is set aside.</li>
+<li>Reproducible: done markers with input and configuration hashes, seeded resampling, a synthetic test suite, and participant data kept outside the repository.</li>
+</ul></div>
+<div class="box"><h4>Limitations</h4>
+<ul>
+<li><b>Sample.</b> Ten participants in the primary analysis, no controls yet, four participants waiting for a T1. Nothing here is a group result.</li>
+<li><b>Independent frames.</b> About 110 independent values per region in 10 minutes is fewer than the number of regions; the primary is biased low by finite sampling, depends on band and frame count, and has wide individual intervals.</li>
+<li><b>BOLD-like is not neural.</b> Breathing-related CO2 and field changes are partly TE-dependent and global; without physiological recordings they cannot be modelled directly, and they contribute to the brain-wide pattern the primary sets aside.</li>
+<li><b>Moderate robustness of the ranking</b> across defensible analysis choices (Spearman 0.5 to 0.8).</li>
+<li><b>The primary's direction is not unique.</b> Adding internally coherent networks raised it in most participants but lowered it where baseline dimensionality was already high.</li>
+<li><b>Thermal-noise level</b> uncertain within about 20 % between two estimators; MB-6 and GRAPPA noise may be spatially correlated, and motion-correction interpolation makes unit-variance claims approximate.</li>
+<li><b>Amplitudes</b> are underestimated by 10 to 22 % for ribbon-confined signals (shares are not).</li>
+<li><b>Deep regions</b> are measurable in a minority of participants for the thalamus.</li>
+<li><b>Lesions</b>: cavity and peri-cavity masks are not yet built; cortical regions are assumed intact.</li>
+<li><b>Dependence on the existing pipeline</b> for volume pairing and motion correction.</li>
+</ul></div>
+
+<!-- ===================================================================== 9 -->
+<h2 id="s9">9. Downstream uses</h2>
+<ul>
+<li><b>The planned group analysis.</b> Participant-level tables (primary, global share, shares by network, reliability, motion, coil set, cortical CSF fraction, injection sensitivity) are ready for joint analysis with the separately estimated cerebellar damage and radiation variables and, later, with matched controls.</li>
+<li><b>Vascular effects of treatment.</b> Regional S0-like and leftover shares, and the global share, can be related to radiation dose maps and vascular imaging as descriptors of non-neural signal.</li>
+<li><b>Other populations with altered physiology.</b> Any setting where a change in connectivity could instead be a change in blood volume, inflow or noise: vascular disease, anaesthesia or sedation, development.</li>
+<li><b>Quality control of multi-echo protocols.</b> The front end's noise ratios, usable-echo maps, residual maps and region reliabilities describe what a protocol can measure, before any group study.</li>
+<li><b>Per-participant sensitivity reporting.</b> Injection into the raw echoes is general and could accompany any connectivity measure.</li>
+<li><b>Methods comparison.</b> The equivalence of c0 with tedana's optimally combined signal allows controlled comparisons, and a decomposition-independent referee such as pBOLD (a preprint metric) <span class="tag">[12]</span> could be added.</li>
+<li><b>Extensions.</b> More frames (longer or repeated scans) would tighten the primary most directly; physiological recordings and saved phase would allow respiratory modelling and complex-valued denoising; lesion-aware region definitions would extend the analysis to perilesional cortex.</li>
+</ul>
+
+<!-- ===================================================================== 10 -->
+<h2 id="s10">10. Conclusions</h2>
+<p>Multi-echo data can separate BOLD-like from S0-like signal reliably, but not voxel by voxel and not after a decomposition that cannot isolate resting-strength signals. Pooling over anatomically defined regions first, then splitting with a noise-whitened two-channel model and removing each region's thermal noise explicitly, gives physically interpretable, noise-accounted measures with a known sensitivity in every participant. In the first eleven participants, the ordinary measure of cortical dimensionality turned out to measure the size of a single brain-wide pattern; the measure without that pattern is independent of it and of motion, and is the primary outcome for the comparison with controls.</p>
+
+<h2>Data and code availability</h2>
+<p class="small">Participant data are not shared; participants appear in this document by pseudonym only, and no clinical values are used. The analysis code (Python package <code>mejoint</code>), its tests, the configuration and the decision log are in the project repository. Figures from participant data were made by <code>scripts/whitepaper_figures.py</code> from existing outputs; simulation figures by <code>scripts/whitepaper_sim_figures.py</code>.</p>
+
+<h2>References</h2>
+<p class="small">Verification status from the project's literature review is given in brackets; preprints are marked.</p>
+<ol class="refs">
+<li>tedana documentation: approach, FAQ and decision trees, version 26.0.3. https://tedana.readthedocs.io (fetched; source code checked for kappa, rho and defaults).</li>
+<li>Robust-tedana. bioRxiv 2025, doi 10.1101/2025.06.16.660050 (fetched; preprint).</li>
+<li>Olafsson V, Kundu P, Liu TT. ISMRM 2015, abstract 2053 (fetched).</li>
+<li>Speck O, Hennig J. Magnetic Resonance in Medicine 1998;40(2):243–248 (fetched record; DOI suffix unresolved).</li>
+<li>Heunis S, et al. 2021 (abstract fetched).</li>
+<li>Michálek J, Mikl M. Frontiers in Neuroscience 2025, doi 10.3389/fnins.2025.1544748 (fetched).</li>
+<li>Caballero-Gaudes C, et al. Multi-echo sparse paradigm free mapping (ME-SPFM). NeuroImage 2019;202:116081 (fetched).</li>
+<li>Uruñuela E, et al. Multivariate multi-echo SPFM (MvME-SPFM). bioRxiv 2022.09.30.510299 (fetched; preprint; final venue unverified).</li>
+<li>Uruñuela E, Veganzones MA, Caballero-Gaudes C. Exploring tensor decomposition as an alternative to ICA for denoising multi-echo fMRI data. ISMRM 2023, abstract 2668 (title verified; full text not read).</li>
+<li>Moser et al. Imaging Neuroscience, doi 10.1162/imag_a_00426, on multi-echo acquisition and thermal denoising (fetched; 7 participants).</li>
+<li>Schaefer A, Kong R, Gordon EM, Laumann TO, Zuo XN, Holmes AJ, Eickhoff SB, Yeo BTT. Local-global parcellation of the human cerebral cortex from intrinsic functional connectivity MRI. Cerebral Cortex 2018;28:3095–3114.</li>
+<li>Gonzalez-Castillo J, et al. pBOLD. PubMed 41929219 (abstract fetched; preprint).</li>
+<li>Power JD, et al. 2018, on motion-related signals in multi-echo data. PubMed Central PMC5834724 (fetched).</li>
+<li>Lindquist MA, et al. 2019, on sequential nuisance regression. PubMed 30666750 (title verified).</li>
+</ol>
+
+</main>
+</body>
+</html>
