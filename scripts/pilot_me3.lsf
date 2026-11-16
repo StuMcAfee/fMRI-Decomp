@@ -1,0 +1,101 @@
+#!/bin/bash
+# 3-echo pilot (healthy volunteer, separate protocol) through the whole pipeline, one job:
+#   1. mbme_tedana.py (pairing, motion correction, tedana baseline) with the pilot's echo times;
+#   2. front end on the RAW echoes with MP-PCA, then the per-echo noise ratios from the MP-PCA maps
+#      (with 3 echoes the residual estimator cannot identify them; frontend.mppca_echo_ratios);
+#   3. front end on the motion-corrected echoes with those ratios (outputs/phase2/<name>/mc);
+#   4. anatomy from the session's T1 (scripts/anatomy_run.lsf; the registration must be checked before reading
+#      any result);
+#   5. route B with the pilot config (TR 1.5 s, all 400 frames).
+# Submit from inside the repository, on the login node:
+#   bsub -q standard -n 8 -R "rusage[mem=4000] span[hosts=1]" -env "all" -J pilot_me3 -o logs/pilot_me3_%J.log \
+#        "bash scripts/pilot_me3.lsf <echo-1 NIfTI> <T1 NIfTI> [name]"
+# Outputs: outputs/pilot/<name>/ (mbme_tedana OUT, raw front end, ratios, pass-2 config, route B) and
+#   outputs/phase2/<name>/mc, outputs/anatomy/<name> (names that do not start with sub-, so no patient batch picks them up).
+set -uo pipefail
+E1="${1:-}"; T1="${2:-}"; NAME="${3:-pilot_me3}"
+MBME="${MBME_PY_SCRIPT:-/research_jude/rgs01_jude/dept/DI/tir/vision_lab/stu/CSIMemphis/Analysis/Monitoring Visit/mbme_tedana.py}"
+TPY="${TEDANA_PY:-$HOME/miniconda3_new/envs/tedana/bin/python}"
+PY="${MEJOINT_PY:-$HOME/miniconda3_new/envs/mejoint/bin/python}"
+fail() { echo "PREFLIGHT FAILED: $*" >&2; exit 2; }
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}" PYTHONUNBUFFERED=1
+[ -f "$E1" ] || fail "echo-1 NIfTI not found: $E1"
+[ -f "$T1" ] || fail "T1 NIfTI not found: $T1"
+[ -f "$MBME" ] || fail "mbme_tedana.py not found: $MBME"
+[ -x "$PY" ] && [ -x "$TPY" ] || fail "python environments not found ($PY, $TPY)"
+CFG="$PWD/configs/pilot_me3.yaml"
+P="outputs/pilot/$NAME"; FE_RAW="$P/frontend_raw"; FE="outputs/phase2/$NAME/mc"; A="outputs/anatomy/$NAME"
+mkdir -p "$P"
+NT="${LSB_DJOB_NUMPROC:-8}"; export OMP_NUM_THREADS="$NT" MKL_NUM_THREADS="$NT" OPENBLAS_NUM_THREADS="$NT"
+TES="$("$PY" -c "import sys; from mejoint import io; print(' '.join(str(t) for t in io.load_config(sys.argv[1])['acquisition']['te_ms']))" "$CFG")"
+echo "== pilot | $NAME | TEs $TES | $(date) | host $(hostname) | job ${LSB_JOBID:-interactive} | git $(git rev-parse --short HEAD 2>/dev/null || echo '?')"
+
+# --- 1. preprocessing with the existing pipeline (FSL 6; bsub shells do not define `module`)
+for init in /usr/share/Modules/init/bash /etc/profile.d/modules.sh /cm/local/apps/environment-modules/*/init/bash; do
+    [ -f "$init" ] && { source "$init"; break; }
+done
+if command -v module >/dev/null 2>&1; then module load fsl/6 || echo "warning: module load fsl/6 failed"; fi
+export FSLOUTPUTTYPE=NIFTI_GZ
+find_run() { "$PY" - "$P/OUT" "$E1" <<'PYEOF'
+import json, sys
+from pathlib import Path
+out, e1 = Path(sys.argv[1]), Path(sys.argv[2]).resolve()
+for f in sorted(out.glob("*/result.json")):
+    try:
+        r = json.loads(f.read_text())
+    except ValueError:
+        continue
+    if r.get("input_echo1") and Path(r["input_echo1"]).resolve() == e1:
+        print(f.parent)
+        break
+PYEOF
+}
+RUN="$(find_run)"
+if [ -z "$RUN" ] || [ ! -f "$RUN/work/echo-1_desc-mc_bold.nii.gz" ]; then
+    printf '%s\n' "$E1" > "$P/list.txt"
+    echo; echo "== [mbme_tedana] start $(date)"
+    # shellcheck disable=SC2086
+    "$TPY" "$MBME" run --list "$P/list.txt" --index 1 --out "$PWD/$P/OUT" --keep-intermediates \
+        --echo-times $TES --interp spline --ica-method robustica --n-robust-runs 30 --tedpca aic --tree tedana_orig --seed 42
+    echo "== [mbme_tedana] exit $? $(date)"
+    RUN="$(find_run)"
+fi
+[ -n "$RUN" ] || fail "no mbme_tedana run folder in $P/OUT for $E1 (see the output above)"
+[ -f "$RUN/work/echo-1_desc-mc_bold.nii.gz" ] || fail "$RUN has no motion-corrected echoes (work/)"
+echo "run folder: $RUN"
+
+# --- 2. raw echoes with MP-PCA: per-echo noise ratios
+if [ ! -f "$FE_RAW/echo_ratios_mppca.json" ]; then
+    echo; echo "== [front end, raw + MP-PCA] start $(date)"
+    "$PY" -m mejoint.cli frontend --config "$CFG" --run-dir "$RUN" --source raw --out "$FE_RAW" || fail "raw front end failed"
+    "$PY" -m mejoint.cli echo-ratios-mppca --config "$CFG" --frontend-dir "$FE_RAW" || fail "echo-ratios-mppca failed"
+fi
+CFG2="$PWD/$P/config_pass2.yaml"
+"$PY" - "$FE_RAW/echo_ratios_mppca.json" "$CFG" "$CFG2" <<'PYEOF'
+import json, sys
+r = json.load(open(sys.argv[1]))["ratio"]
+open(sys.argv[3], "w").write(f"# written by scripts/pilot_me3.lsf: measured per-echo noise ratios (MP-PCA, raw echoes)\n"
+                             f"extends: {sys.argv[2]}\nfrontend:\n  echo_noise_ratios: {r}\n")
+print("pass-2 config:", sys.argv[3], "ratios", r)
+PYEOF
+
+# --- 3. motion-corrected echoes with the measured ratios
+if [ ! -f "$FE/c0.npy" ]; then
+    echo; echo "== [front end, motion-corrected] start $(date)"
+    "$PY" -m mejoint.cli frontend --config "$CFG2" --run-dir "$RUN" --source mc --no-mppca --out "$FE" || fail "front end failed"
+fi
+
+# --- 4. anatomy (registrations need a visual check: qc_epi_to_t1.png, qc_200_7.png, qc_subcortical.png)
+if [ ! -f "$A/labels_200_7.nii.gz" ]; then
+    echo; echo "== [anatomy] start $(date)"
+    bash scripts/anatomy_run.lsf "$NAME" "$T1" || fail "anatomy failed"
+fi
+
+# --- 5. route B with the pilot config
+echo; echo "== [route B] start $(date)"
+"$PY" -m mejoint.cli route-b --config "$CFG2" --frontend-dir "$FE" --anat-dir "$A" --out "$P/route_b/200_7" --atlas 200_7 \
+    || fail "route B failed"
+echo; echo "== done $(date)"
+echo "check first: $PWD/$A/qc_epi_to_t1.png, qc_200_7.png, qc_subcortical.png"
+echo "then: $PWD/$P/route_b/200_7/route_b.md and route_b.png; noise ratios: $PWD/$FE_RAW/echo_ratios_mppca.json"

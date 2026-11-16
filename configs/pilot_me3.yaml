@@ -1,0 +1,10 @@
+# 3-echo pilot (healthy volunteer, separate protocol): cmrr_mbep2d_bold ME3 MB2, 42 slices, TR 1.5 s, 400 volumes.
+# Not a study participant; outputs under outputs/pilot/ and outputs/{phase2,anatomy}/pilot_*, outside every batch (sub-*).
+extends: default.yaml
+acquisition:
+  te_ms: [13.0, 29.12, 45.24]       # from the three JSON sidecars (EchoTime)
+  tr_s: 1.5
+frontend:
+  echo_noise_ratios: [1.0, 1.0, 1.0]  # placeholder for the first (raw, MP-PCA) pass only; the pass-2 config uses the measured MP-PCA ratios
+regions:
+  n_volumes_common: null            # 400 frames x 1.5 s = 600 s, the same duration as the patients' 797 x 0.75 s; all frames used

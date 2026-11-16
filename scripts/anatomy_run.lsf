@@ -5,7 +5,7 @@
 #   T1_2_MNI152_2mm); the inverse warps bring the Schaefer atlases (atlases/schaefer2018) and FSL's Harvard-Oxford
 #   subcortical atlas into EPI space (nearest neighbour) and the grey-matter probability (trilinear). The functional
 #   data are not resampled. Then `mejoint anatomy` builds the region labels and the QC figures.
-# Arguments: <subject number or run folder name> [T1 list file]   (T1 search: list file, else regions.t1_root)
+# Arguments: <subject number or run folder name> [T1 list file or T1 .nii/.nii.gz file]   (T1 search: list file, else regions.t1_root)
 # Outputs: outputs/anatomy/<run>/ (labels_200_7.nii.gz, regions_200_7.tsv/.json, qc_epi_to_t1.png, qc_t1_to_mni.png, qc_200_7.png,
 #   qc_subcortical.png, csf_epi.nii.gz)
 # Rerunning skips the registrations that already exist (bet/fast, epi_reg, fnirt, invwarp) and redoes the rest.
@@ -18,11 +18,13 @@ fail() { echo "PREFLIGHT FAILED: $*" >&2; exit 2; }
 if [ -d "outputs/phase2/$RUNARG" ]; then NAME="$RUNARG"; else NAME="$(ls -d outputs/phase2/sub-"$RUNARG"_* 2>/dev/null | head -n 1)"; NAME="${NAME:+$(basename "$NAME")}"; fi
 FE="outputs/phase2/$NAME/mc"; TIS="outputs/tissue/$NAME/mc"
 [ -n "$NAME" ] && [ -f "$FE/analysis_mask.nii.gz" ] && [ -f "$FE/mean_echo1_unmasked.nii.gz" ] || fail "no front end for '$RUNARG' (outputs/phase2/<run>/mc)"
+if [[ "$T1LIST" == *.nii || "$T1LIST" == *.nii.gz ]] && [ -f "$T1LIST" ]; then T1="$T1LIST"; else   # a T1 file given directly (pilot runs)
 T1="$("$PY" -c "
 import sys
 from mejoint import anatomy, io
 c = io.load_config().get('regions', {})
 print(anatomy.find_t1(sys.argv[1], sys.argv[2] or c.get('t1_list'), c.get('t1_root')) or '')" "$NAME" "$T1LIST")"
+fi
 [ -n "$T1" ] && [ -f "$T1" ] || fail "no T1 found for $NAME (give a T1 list file as the second argument)"
 BETF="$("$PY" -c "from mejoint import io; print(io.load_config().get('regions', {}).get('bet_f', 0.4))")"
 for init in /usr/share/Modules/init/bash /etc/profile.d/modules.sh /cm/local/apps/environment-modules/*/init/bash; do
