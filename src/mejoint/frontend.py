@@ -804,9 +804,11 @@ def run_subject(run_dir, cfg: dict, out_dir, source: str = "raw", mppca: bool | 
         summ["nuisance"]["energy_kept"] = {k: (None if v is None else round(v, 4)) for k, v in fe["nuisance_energy_kept"].items()}
         if fe["nuisance_energy_kept_surrogates"]:
             sv = fe["nuisance_energy_kept_surrogates"]
-            summ["nuisance"]["energy_kept_surrogates"] = {
-                k: {"mean": round(float(np.mean([d[k] for d in sv])), 4), "min": round(float(np.min([d[k] for d in sv])), 4),
-                    "max": round(float(np.max([d[k] for d in sv])), 4)} for k in ("c0", "c1", "r0", "r1")}
+            def _stats(k):                                             # r1 does not exist with 3 echoes (None)
+                v = [d[k] for d in sv if d.get(k) is not None]
+                return {"mean": round(float(np.mean(v)), 4), "min": round(float(np.min(v)), 4),
+                        "max": round(float(np.max(v)), 4)} if v else None
+            summ["nuisance"]["energy_kept_surrogates"] = {k: _stats(k) for k in ("c0", "c1", "r0", "r1")}
             summ["nuisance"]["n_surrogates"] = len(sv)
         fen = fe["frame_energy_noreg"]
         summ["nuisance"]["residual_energy_median_no_regression"] = round(float(np.nanmedian(fen)), 4)
@@ -999,7 +1001,7 @@ def render_summary(s: dict) -> str:
                     es = n["energy_kept_surrogates"]
                     L.append(f"- Energy kept with {n['n_surrogates']} phase-randomized surrogate regressor sets (same spectrum, "
                              "scrambled timing; chance overlap), mean [min-max]: "
-                             + ", ".join(f"{k} {es[k]['mean']} [{es[k]['min']}-{es[k]['max']}]" for k in ("c0", "c1", "r0", "r1")))
+                             + ", ".join(f"{k} {es[k]['mean']} [{es[k]['min']}-{es[k]['max']}]" for k in ("c0", "c1", "r0", "r1") if es.get(k)))
                 L.append(f"- Frame-wise residual energy, median: {n.get('residual_energy_median_no_regression')} without regression, "
                          f"{n.get('residual_energy_median')} with")
             if "frame_energy_vs_drift_spearman_no_regression" in n:

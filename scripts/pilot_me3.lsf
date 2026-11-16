@@ -73,7 +73,11 @@ echo "run folder: $RUN"
 # --- 2. raw echoes with MP-PCA: per-echo noise ratios
 if [ ! -f "$FE_RAW/echo_ratios_mppca.json" ]; then
     echo; echo "== [front end, raw + MP-PCA] start $(date)"
-    "$PY" -m mejoint.cli frontend --config "$CFG" --run-dir "$RUN" --source raw --out "$FE_RAW" || fail "raw front end failed"
+    "$PY" -m mejoint.cli frontend --config "$CFG" --run-dir "$RUN" --source raw --out "$FE_RAW"
+    rc=$?
+    # exit 3 = MP-PCA check says STOP: expected here, this pass uses placeholder equal ratios only to make the MP-PCA maps
+    [ "$rc" = 0 ] || [ "$rc" = 3 ] || fail "raw front end failed (exit $rc)"
+    [ -f "$FE_RAW/mppca_sigma.nii.gz" ] || fail "raw front end wrote no MP-PCA maps ($FE_RAW/mppca_sigma.nii.gz)"
     "$PY" -m mejoint.cli echo-ratios-mppca --config "$CFG" --frontend-dir "$FE_RAW" || fail "echo-ratios-mppca failed"
 fi
 CFG2="$PWD/$P/config_pass2.yaml"
