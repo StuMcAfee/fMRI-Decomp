@@ -204,16 +204,21 @@ def main():
     b_t = 0.35e-3 * z[0] + 0.15e-3 * z[1]                           # ΔR2* (1/ms)
     ax = fig.add_axes([0.30, 0.10, 0.14, 0.31])
     greys = ["#b9b7b2", "#8f8d88", "#5e5c58", "#232220"]
+    rel_mean = np.exp(-(TE - TE[0]) / T2)                         # mean signal of each echo relative to echo 1
     for e in range(4):
-        y = (a_t - TE[e] * b_t + 0.0012 * RATIOS[e] * rng.standard_normal(T)) * 100
-        ax.plot(t, y - e * 3.2, color=greys[e], lw=0.7)
-        ax.text(-6, -e * 3.2, f"{TE[e]:.0f} ms", fontsize=5, color=INK2, va="center", ha="right")
+        # percent noise = thermal noise / mean signal: it grows at later echoes as the mean decays
+        y = (a_t - TE[e] * b_t + 0.0012 * RATIOS[e] / rel_mean[e] * rng.standard_normal(T)) * 100
+        ax.plot(t, y - e * 4.4, color=greys[e], lw=0.7)
+        ax.text(-6, -e * 4.4 + 0.45, f"{TE[e]:.0f} ms", fontsize=5, color=INK2, va="center", ha="right")
+        ax.text(-6, -e * 4.4 - 0.85, f"mean {100 * rel_mean[e]:.0f}", fontsize=4.2, color=INK2, va="center", ha="right")
+    ax.text(0.5, 1.0, "% change from each echo's own mean", transform=ax.transAxes, fontsize=4.8, color=INK2,
+            ha="center", va="bottom")
     ax.set_yticks([]); ax.spines["left"].set_visible(False)
     ax.set_xlabel("time (s)")
     ax.set_xlim(0, t[-1])
-    ax.set_title("2  Average each echo\n    over the region", loc="left", x=-0.3)
-    ax.plot([t[-1] + 6] * 2, [-11.2, -9.2], color=INK, lw=0.8, clip_on=False)
-    ax.text(t[-1] + 9, -10.2, "2 %", fontsize=5, rotation=90, va="center", ha="left")
+    ax.set_title("2  Average each echo\n    over the region", loc="left", x=-0.3, pad=9)
+    ax.plot([t[-1] + 6] * 2, [-15.2, -13.2], color=INK, lw=0.8, clip_on=False)
+    ax.text(t[-1] + 9, -14.2, "2 %", fontsize=5, rotation=90, va="center", ha="left")
 
     # ---------------------------------------------------------------- f: split into S0-like, BOLD-like, leftover
     letter(fig, 0.49, 0.465, "f")
