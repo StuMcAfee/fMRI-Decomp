@@ -53,10 +53,15 @@ PYEOF
 }
 RUN="$(find_run)"
 if [ -z "$RUN" ] || [ ! -f "$RUN/work/echo-1_desc-mc_bold.nii.gz" ]; then
+    [ -n "$RUN" ] && { echo "removing the failed run folder $RUN"; rm -rf "$RUN"; }
     printf '%s\n' "$E1" > "$P/list.txt"
-    echo; echo "== [mbme_tedana] start $(date)"
+    NE="$(echo $TES | wc -w)"
+    # mbme_tedana.py expects 4 echoes unless told otherwise (args.n_echoes); take the option's spelling from its own help
+    NEOPT="$("$TPY" "$MBME" run --help 2>/dev/null | grep -o -E -- '--n[-_]echoes' | head -n 1)"
+    [ -n "$NEOPT" ] || fail "mbme_tedana.py run --help lists no --n-echoes / --n_echoes option; cannot run a $NE-echo series"
+    echo; echo "== [mbme_tedana] start $(date) ($NEOPT $NE)"
     # shellcheck disable=SC2086
-    "$TPY" "$MBME" run --list "$P/list.txt" --index 1 --out "$PWD/$P/OUT" --keep-intermediates \
+    "$TPY" "$MBME" run --list "$P/list.txt" --index 1 --out "$PWD/$P/OUT" --keep-intermediates "$NEOPT" "$NE" \
         --echo-times $TES --interp spline --ica-method robustica --n-robust-runs 30 --tedpca aic --tree tedana_orig --seed 42
     echo "== [mbme_tedana] exit $? $(date)"
     RUN="$(find_run)"
