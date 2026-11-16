@@ -391,16 +391,23 @@ def static_shape(mu: np.ndarray, te_ms, use: np.ndarray):
     alternating: component along the odd/even-echo pattern after removing 1, TE and TE^2 (an
     echo-specific readout artifact). Both in log units (unit-norm basis vectors)."""
     te = np.asarray(te_ms, float)
+    E = te.size
+    full = use.all(axis=1)
+    nan = np.full(mu.shape[0], np.nan)
+    if E < 3:                                                         # no direction outside span{1, TE}
+        return nan, nan.copy()
     Q, _ = np.linalg.qr(design(te))                                   # [1-TE.., 1, TE^2, alt] spans
-    q_curv, q_alt = Q[:, 2], Q[:, 3]
+    q_curv = Q[:, 2]
     if q_curv[0] + q_curv[-1] < 0:                                    # convex = positive at both ends
         q_curv = -q_curv
-    if q_alt[0] < 0:                                                  # alternating: + on echo 1
-        q_alt = -q_alt
-    full = use.all(axis=1)
     with np.errstate(divide="ignore", invalid="ignore"):
         lm = np.log(mu)
     curv = np.where(full, lm @ q_curv, np.nan)
+    if E < 4:                                                         # 3 echoes: curvature only, no alternating direction
+        return curv, nan
+    q_alt = Q[:, 3]
+    if q_alt[0] < 0:                                                  # alternating: + on echo 1
+        q_alt = -q_alt
     alt = np.where(full, lm @ q_alt, np.nan)
     return curv, alt
 
@@ -414,13 +421,19 @@ def per_echo_noise(S: np.ndarray, mu: np.ndarray, te_ms, form: str = "log", n_it
     is g_v * sum_e tau_e q_ve q_ve^T, a known mixture of the per-echo variances tau_e (g_v = spatial
     noise scale, e.g. g-factor). Pooling voxels with different T2* (different q) identifies tau up to
     scale. Robust covariances (median-based) resist spikes. Use voxels with all 4 echoes at high SNR.
+    Needs 4 echoes: with 3 there is one leftover variance per voxel, which its own noise scale g_v absorbs, so the
+    ratios are not identifiable (returned as NaN with a note); use `mppca_echo_ratios` instead.
     Simulation: recovers ratios within ~3 % with and without a g-factor map and with all sources on."""
     te = np.asarray(te_ms, float)
     D = design(te)
+    if te.size < 4:
+        nan = np.full(te.size, np.nan)
+        return {"ratio": nan, "ratio_half_a": nan, "ratio_half_b": nan, "condition": float("nan"), "n_voxels": int(S.shape[0]),
+                "note": "not identifiable with fewer than 4 echoes (one leftover variance per voxel); use mppca_echo_ratios"}
 
     def solve(Sx, mx):
         Q, _ = np.linalg.qr(mx[:, :, None] * D[None])
-        qp = Q[:, :, 2:4]
+        qp = Q[:, :, 2:4]                                             # 2 leftover directions (4 echoes) or 1 (3 echoes)
         y = signal_form(Sx, mx, form)
         u = np.einsum("vek,vet->vkt", qp, mx[:, :, None] * y)
         u -= u.mean(2, keepdims=True)
@@ -498,6 +511,24 @@ def mppca_sigma(data4d: np.ndarray, mask3d: np.ndarray, cfg: dict, start: int = 
         warnings.simplefilter("ignore")
         _, sg = mppca(d, mask=centres, patch_radius=int(M["patch_radius"]), return_sigma=True)
     return np.where(centres, sg, np.nan)
+
+
+def mppca_echo_ratios(mppca_map: np.ndarray, mask: np.ndarray, usable: np.ndarray | None = None) -> dict:
+    """Per-echo thermal noise ratios (echo 1 = 1) from the per-echo MP-PCA noise maps of raw echoes: median over
+    sampled brain voxels of sigma_e / sigma_1 (voxels where every echo is usable). For protocols with 3 echoes, where
+    the residual estimator cannot identify the ratios. mppca_map: (V, E) noise SD; mask: (V,) voxels to use."""
+    M = np.asarray(mppca_map, float)
+    ok = np.asarray(mask, bool) & np.all(np.isfinite(M), axis=1) & (M[:, 0] > 0)
+    if usable is not None:
+        ok &= np.asarray(usable, bool).all(1)
+    if ok.sum() < 50:
+        raise ValueError(f"only {int(ok.sum())} voxels with MP-PCA estimates in every echo")
+    R = M[ok] / M[ok, :1]
+    half = np.arange(R.shape[0]) % 2 == 0
+    med = lambda X: [round(float(v), 4) for v in np.median(X, axis=0)]
+    return {"ratio": med(R), "ratio_half_a": med(R[half]), "ratio_half_b": med(R[~half]),
+            "iqr": [[round(float(a), 4), round(float(b), 4)] for a, b in zip(*np.percentile(R, [25, 75], axis=0))],
+            "n_voxels": int(ok.sum())}
 
 
 # ======================================================================= one real subject

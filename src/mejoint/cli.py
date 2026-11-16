@@ -1,6 +1,6 @@
 """Command-line entry point: `mejoint <command> ...`.
 
-Commands: inventory, inventory-all, inventory-summary, frontend, frontend-all, mppca-recheck, nuisance-compare,
+Commands: inventory, inventory-all, inventory-summary, frontend, frontend-all, echo-ratios-mppca, mppca-recheck, nuisance-compare,
 rank, tissue, decompose (optionally --waves), waves, mask-qc. `mejoint <command> --help` lists the options.
 """
 from __future__ import annotations
@@ -57,6 +57,9 @@ def main(argv=None) -> int:
     fa.add_argument("--force", action="store_true", help="rerun runs already done with the same config (after a code change)")
     fa.add_argument("--config", help="config YAML (default: configs/default.yaml)")
 
+    er = sub.add_parser("echo-ratios-mppca", help="per-echo noise ratios from a front end's MP-PCA maps (3-echo protocols)")
+    er.add_argument("--frontend-dir", required=True, help="front-end folder with mppca_sigma.nii.gz (run with MP-PCA on raw echoes)")
+    er.add_argument("--config", help="config YAML (default: configs/default.yaml)")
     rc = sub.add_parser("mppca-recheck", help="re-evaluate the MP-PCA verdict of existing front-end outputs (level/shape rule)")
     rc.add_argument("summaries", nargs="+", help="summary.json file(s) of front-end runs on raw echoes")
     rc.add_argument("--config", help="config YAML (default: configs/default.yaml)")
@@ -270,6 +273,22 @@ def main(argv=None) -> int:
                                force=args.force)
         print(f"Survey: {args.out}/noise_survey.md")
         return 1 if any("error" in r for r in rows) else 0
+    elif args.cmd == "echo-ratios-mppca":
+        from pathlib import Path
+
+        import nibabel as nib
+        import numpy as np
+
+        from . import frontend
+        d = Path(args.frontend_dir)
+        m3 = np.asarray(nib.load(str(d / "analysis_mask.nii.gz")).dataobj) > 0
+        mp = np.asarray(nib.load(str(d / "mppca_sigma.nii.gz")).dataobj, float)[m3]
+        us = np.asarray(nib.load(str(d / "usable.nii.gz")).dataobj, float)[m3] > 0.5 if (d / "usable.nii.gz").exists() else None
+        res = frontend.mppca_echo_ratios(mp, np.ones(mp.shape[0], bool), us)
+        io.write_json(d / "echo_ratios_mppca.json", res)
+        print(f"per-echo noise ratios (MP-PCA, {res['n_voxels']} voxels): {res['ratio']}")
+        print(f"  split halves: {res['ratio_half_a']} / {res['ratio_half_b']}")
+        print(f"for the config:  frontend: {{echo_noise_ratios: {res['ratio']}}}")
     elif args.cmd == "mppca-recheck":
         from . import frontend
         status = 0

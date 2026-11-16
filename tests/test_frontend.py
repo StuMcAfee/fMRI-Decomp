@@ -554,3 +554,28 @@ def test_mppca_verdict_level_and_shape(cfg, corr, verdict):
         assert abs(out["implied_c0_c1_noise_correlation"]) < 1e-9
     if corr[-1] == 1.15 and corr[0] == 1.0:
         assert "shape" in out["verdict"] and "level" not in out["verdict"]
+
+
+def test_three_echo_protocol_runs_end_to_end():
+    """A 3-echo protocol (one leftover channel): the front end runs, the residual estimator of the echo noise
+    ratios says it cannot identify them (instead of returning a silent guess), the MP-PCA-based ratios are
+    recovered from per-echo noise maps, and route B runs on the result."""
+    from mejoint import regions
+    te3, r3 = [13.0, 31.0, 49.0], [1.0, 0.8, 0.7]
+    c = io.load_config()
+    c = io.merge(c, {"acquisition": {"te_ms": te3, "tr_s": 1.5}, "frontend": {"echo_noise_ratios": r3},
+                     "simulate": {"echo_sigma_scale": r3}})
+    sim = simulate.simulate(c, seed=SEED + 303, overrides=io.merge(G, {"n_volumes": 300}))
+    S = sim.data[sim.mask]
+    fe = frontend.run(S, np.array(te3), c, sim.mask)
+    assert np.isfinite(fe["sigma"]).all() and fe["n_use"].max() == 3
+    pe = frontend.per_echo_noise(S, fe["mu"], te3)
+    assert np.isnan(pe["ratio"]).all() and "not identifiable" in pe["note"]
+    noise_maps = sim.sigma[sim.mask][:, None] * np.asarray(r3)[None, :] * (1 + 0.02 * np.random.default_rng(1).standard_normal((S.shape[0], 3)))
+    er = frontend.mppca_echo_ratios(noise_maps, np.ones(S.shape[0], bool))
+    assert np.allclose(er["ratio"], r3, atol=0.02)
+    lab = (np.arange(S.shape[0]) % 8) + 1
+    table = [{"id": i, "name": f"r{i}", "kind": "cortex", "hemisphere": "LH", "network": ["Vis", "Default"][i % 2],
+              "n_voxels": int((lab == i).sum()), "usable": True} for i in range(1, 9)]
+    res = regions.analyze(S, lab, fe["mu"], fe["sigma"], r3, fe["use"], te3, table, c, None, np.random.default_rng(0))
+    assert all(r["used"] for r in res["regions"]) and np.isfinite(res["integration"][0]["participation_ratio"])
