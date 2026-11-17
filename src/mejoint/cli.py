@@ -57,6 +57,23 @@ def main(argv=None) -> int:
     fa.add_argument("--force", action="store_true", help="rerun runs already done with the same config (after a code change)")
     fa.add_argument("--config", help="config YAML (default: configs/default.yaml)")
 
+    sp_ = sub.add_parser("surface-prep", help="surface pipeline: fs_LR 32k label files (Schaefer 200/7, Icosahedron1002) and the icosahedral region table")
+    sp_.add_argument("--resources", default="outputs/atlases_fs32k", help="files from scripts/fetch_fs32k_resources.sh")
+    sp_.add_argument("--out", required=True)
+    sp_.add_argument("--config", help="config YAML (default: configs/default.yaml)")
+    sc_ = sub.add_parser("surface-combine", help="surface pipeline: combine the hemispheres' ribbon-mapped label volumes")
+    sc_.add_argument("--left", required=True)
+    sc_.add_argument("--right", required=True)
+    sc_.add_argument("--out", required=True)
+    sc_.add_argument("--compare", help="volumetric labels on the same grid: report per-region Dice")
+    sc_.add_argument("--config", help="config YAML (default: configs/default.yaml)")
+    ex_ = sub.add_parser("export-parcels", help="BOLD-like / S0-like parcel time courses in a connectivity model's parcel order (CIFTI ptseries)")
+    ex_.add_argument("--frontend-dir", required=True)
+    ex_.add_argument("--anat-dir", required=True, help="anatomy folder with labels_<atlas>.nii.gz (outputs/anatomy_surf/<run>)")
+    ex_.add_argument("--pdconn", required=True, help="connectivity model (.pdconn.nii): its parcel definitions are used")
+    ex_.add_argument("--atlas", default="ico1002_7")
+    ex_.add_argument("--out", required=True)
+    ex_.add_argument("--config", help="config YAML (default: configs/default.yaml)")
     er = sub.add_parser("echo-ratios-mppca", help="per-echo noise ratios from a front end's MP-PCA maps (3-echo protocols)")
     er.add_argument("--frontend-dir", required=True, help="front-end folder with mppca_sigma.nii.gz (run with MP-PCA on raw echoes)")
     er.add_argument("--config", help="config YAML (default: configs/default.yaml)")
@@ -273,6 +290,27 @@ def main(argv=None) -> int:
                                force=args.force)
         print(f"Survey: {args.out}/noise_survey.md")
         return 1 if any("error" in r for r in rows) else 0
+    elif args.cmd == "surface-prep":
+        from . import surface
+        r = surface.prepare(args.resources, args.out)
+        print(f"Schaefer parcels {r['n_schaefer']}, icosahedral parcels {r['n_ico']} ({r['ico_without_network']} without a Yeo network); by network {r['ico_by_network']}")
+    elif args.cmd == "surface-combine":
+        import nibabel as nib
+        import numpy as np
+
+        from . import surface
+        r = surface.combine_hemis(args.left, args.right, args.out)
+        print(f"labels {r['n_labels']}; voxels left {r['voxels_left']}, right {r['voxels_right']}, both (dropped) {r['voxels_both_dropped']}")
+        if args.compare:
+            a = np.rint(np.asarray(nib.load(args.compare).dataobj)).astype(int)
+            b = np.rint(np.asarray(nib.load(args.out).dataobj)).astype(int)
+            ids = sorted(set(np.unique(b[b > 0])) & set(np.unique(a[a > 0])))
+            print("overlap with the volumetric labels:", surface.label_overlap(a, b, ids))
+    elif args.cmd == "export-parcels":
+        from . import surface
+        r = surface.export_for_models(args.frontend_dir, args.anat_dir, cfg, args.pdconn, args.out, atlas=args.atlas)
+        print(f"{r['n_with_voxels']} of {r['n_parcels']} parcels with voxels (median {r['voxels_per_parcel_median']}), "
+              f"{r['frames']} frames -> {args.out}/bold.ptseries.nii, s0.ptseries.nii")
     elif args.cmd == "echo-ratios-mppca":
         from pathlib import Path
 

@@ -21,6 +21,8 @@ Deliverables:
 6. The joint decomposition with background-corrected η (descriptive) and the comparison with tedana.
 7. An LSF batch interface; participant- and region-level tables for the joint analysis with the cerebellar factors and, later, the controls.
 
+8. Surface-based cortical regions (FreeSurfer, fs_LR 32k: Schaefer 200/7 and the 1876-parcel icosahedral tessellation) and BOLD-like parcel time courses in the cortico-cerebellar connectivity models' format; a lesion-network analysis (design A, user 2026-11-17): the cortical territories connected to each patient's damaged cerebellum, from the healthy connectivity model, related to cortical measures. No cerebellar BOLD is measured. Plan and definitions: `docs/SURFACE_PLAN.md`.
+
 Stretch goal: a structured factorization with group-sparse channel maps.
 
 ## 2. The user and how to work with them
@@ -445,7 +447,8 @@ Cerebral regions only (section 1): Schaefer 200 parcels / 7 networks (400 / 17 a
 - system segregation of the BOLD-like correlations; the number of eigenvalues above the circular-shift null (conservative; a deflated count failed the R3 injections, 2026-11-11);
 - region BOLD-like, S0-like and leftover shares, by network;
 - BOLD-like versus ordinary connectivity; global BOLD-like share (S0-like connectivity dropped, user 2026-11-11: region S0-like time courses are mostly noise);
-- thalamic and striatal BOLD-like coupling with the cortical networks.
+- thalamic and striatal BOLD-like coupling with the cortical networks;
+- lesion-network analysis (design A, user 2026-11-17; definitions pending approval in `docs/SURFACE_PLAN.md`): cortical disconnection from each patient's cerebellar lesion / dose map through the healthy cortico-cerebellar connectivity model (Nettekoven et al. 2024), related to parcel- and network-level BOLD-like measures.
 
 **Descriptive:** joint-decomposition components across k with background-corrected eta; the comparison with tedana's components and "Likely BOLD" counts. Counts depend on the estimator, k, scan length and signal strength (interpolation and filtering alone change ME-ICA counts, Olafsson et al. 2015); they are not outcomes.
 

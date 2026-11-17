@@ -153,8 +153,13 @@ def run_dir(anat_dir, frontend_dir, cfg: dict, tissue_dir=None, atlas: str = "20
             classes3d = np.zeros(mask3d.shape, np.int8)
             classes3d[mask3d] = cl
     repo = Path(__file__).resolve().parents[2]
-    n_par, n_net = atlas.split("_")
-    table = schaefer_table(repo / "atlases" / "schaefer2018" / f"Schaefer2018_{n_par}Parcels_{n_net}Networks_order.txt")
+    tfile = A / f"atlas_table_{atlas}.json"
+    if tfile.exists():                                 # surface-based atlases (mejoint.surface): table next to the labels
+        import json
+        table = {int(k): v for k, v in json.loads(tfile.read_text()).items()}
+    else:
+        n_par, n_net = atlas.split("_")
+        table = schaefer_table(repo / "atlases" / "schaefer2018" / f"Schaefer2018_{n_par}Parcels_{n_net}Networks_order.txt")
     groups = None
     xml = A / "HarvardOxford-Subcortical.xml"
     if xml.exists():

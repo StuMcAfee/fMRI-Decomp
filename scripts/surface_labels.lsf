@@ -1,0 +1,93 @@
+#!/bin/bash
+# Surface pipeline S2-S4 for one participant (docs/SURFACE_PLAN.md), after recon-all (scripts/freesurfer_run.lsf) and
+# the volumetric anatomy (scripts/anatomy_run.lsf: t1, epi_mean, t12epi.mat, tissue maps):
+#   S2  FreeSurfer white / pial surfaces in scanner coordinates, resampled to fs_LR 32k through the subject's
+#       sphere.reg and the HCP "fs_LR deformed to fsaverage" sphere; midthickness; all moved into EPI space with the
+#       T1-to-EPI registration (wb_command -surface-apply-affine -flirt);
+#   S3  Schaefer 200/7 and Icosahedron1002 (fs_LR 32k labels) mapped onto the cortical ribbon of the EPI grid
+#       (wb_command -label-to-volume-mapping -ribbon-constrained), hemispheres combined; region labels built by the
+#       usual anatomy step (grey matter, CSF > 0.3 dropped, thalamus / striatum from the volumetric anatomy) in
+#       outputs/anatomy_surf/<run>/;
+#   S4  route B with the surface-based Schaefer parcels (sensitivity, outputs/route_b_surf/<run>/200_7) and the
+#       icosahedral parcel time courses in the connectivity model's parcel order (outputs/route_b_surf/<run>/ico1002_7:
+#       bold.ptseries.nii, s0.ptseries.nii, parcels.tsv).
+# Usage: bash scripts/surface_labels.lsf <run name> [config.yaml]
+#   (pilot: bash scripts/surface_labels.lsf pilot_me3 outputs/pilot/pilot_me3/config_pass2.yaml)
+set -uo pipefail
+NAME="${1:-}"; CFG="${2:-}"
+PY="${MEJOINT_PY:-$HOME/miniconda3_new/envs/mejoint/bin/python}"
+WB="${WB_COMMAND:-$HOME/miniconda3_new/envs/workbench/bin/wb_command}"
+FSMOD="${FS_MODULE:-freesurfer/7.4.1}"
+fail() { echo "PREFLIGHT FAILED: $*" >&2; exit 2; }
+run() { echo "+ $*"; "$@" || fail "command failed: $1 ${2:-}"; }
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}" PYTHONUNBUFFERED=1
+[ -n "$NAME" ] || fail "first argument: run name"
+CFGARG=(); if [ -n "$CFG" ]; then [ -f "$CFG" ] || fail "no config $CFG"; CFGARG=(--config "$CFG"); fi
+SD="outputs/freesurfer/$NAME"; A="outputs/anatomy/$NAME"; FE="outputs/phase2/$NAME/mc"; RES="outputs/atlases_fs32k"
+S="outputs/surface/$NAME"; AS="outputs/anatomy_surf/$NAME"; RB="outputs/route_b_surf/$NAME"
+[ -f "$SD/scripts/recon-all.done" ] || fail "recon-all not finished for $NAME ($SD)"
+for f in "$A/t1.nii.gz" "$A/epi_mean.nii.gz" "$A/t12epi.mat" "$A/gm_epi.nii.gz" "$A/csf_epi.nii.gz" "$FE/analysis_mask.nii.gz"; do
+    [ -f "$f" ] || fail "missing $f (run the volumetric anatomy / front end first)"
+done
+for f in fs_LR-deformed_to-fsaverage.L.sphere.32k_fs_LR.surf.gii fs_LR-deformed_to-fsaverage.R.sphere.32k_fs_LR.surf.gii \
+         Schaefer2018_200Parcels_7Networks_order.dlabel.nii Icosahedron1002.L.label.gii Icosahedron1002.R.label.gii Nettekoven_2024_Fusion_L2.pdconn.nii; do
+    [ -f "$RES/$f" ] || fail "missing $RES/$f (run scripts/fetch_fs32k_resources.sh on the login node)"
+done
+[ -x "$WB" ] || fail "wb_command not found at $WB (conda create -n workbench -c conda-forge connectome-workbench-cli, or set WB_COMMAND)"
+for init in /usr/share/Modules/init/bash /etc/profile.d/modules.sh /cm/local/apps/environment-modules/*/init/bash; do
+    [ -f "$init" ] && { source "$init"; break; }
+done
+command -v module >/dev/null 2>&1 && module load "$FSMOD"
+command -v mris_convert >/dev/null 2>&1 || fail "mris_convert not available (module load $FSMOD)"
+mris_convert --help 2>&1 | grep -q -- "--to-scanner" || fail "this mris_convert has no --to-scanner option (FreeSurfer 7 needed)"
+mkdir -p "$S" "$AS" "$RB"
+echo "== surface | $NAME | $(date) | host $(hostname) | job ${LSB_JOBID:-interactive} | git $(git rev-parse --short HEAD 2>/dev/null || echo '?') | $("$WB" -version 2>/dev/null | grep -i version | head -1)"
+
+# --- S2: surfaces on fs_LR 32k, in EPI space
+for H in L R; do
+    h=$([ "$H" = L ] && echo lh || echo rh); ST=$([ "$H" = L ] && echo CORTEX_LEFT || echo CORTEX_RIGHT)
+    run mris_convert --to-scanner "$SD/surf/$h.white" "$S/$H.white.native.surf.gii"
+    run mris_convert --to-scanner "$SD/surf/$h.pial" "$S/$H.pial.native.surf.gii"
+    run mris_convert "$SD/surf/$h.sphere.reg" "$S/$H.sphere.reg.native.surf.gii"
+    run "$WB" -set-structure "$S/$H.white.native.surf.gii" "$ST" -surface-type ANATOMICAL -surface-secondary-type GRAY_WHITE
+    run "$WB" -set-structure "$S/$H.pial.native.surf.gii" "$ST" -surface-type ANATOMICAL -surface-secondary-type PIAL
+    run "$WB" -set-structure "$S/$H.sphere.reg.native.surf.gii" "$ST" -surface-type SPHERICAL
+    for X in white pial; do
+        run "$WB" -surface-resample "$S/$H.$X.native.surf.gii" "$S/$H.sphere.reg.native.surf.gii" \
+            "$RES/fs_LR-deformed_to-fsaverage.$H.sphere.32k_fs_LR.surf.gii" BARYCENTRIC "$S/$H.$X.32k.surf.gii"
+    done
+    run "$WB" -surface-average "$S/$H.midthickness.32k.surf.gii" -surf "$S/$H.white.32k.surf.gii" -surf "$S/$H.pial.32k.surf.gii"
+    for X in white pial midthickness; do
+        run "$WB" -surface-apply-affine "$S/$H.$X.32k.surf.gii" "$A/t12epi.mat" "$S/$H.$X.32k_epi.surf.gii" \
+            -flirt "$A/t1.nii.gz" "$A/epi_mean.nii.gz"
+    done
+done
+
+# --- S3: parcels on the cortical ribbon of the EPI grid; region labels
+run "$PY" -m mejoint.cli surface-prep "${CFGARG[@]}" --resources "$RES" --out "$S"
+for at in schaefer200 ico1002; do
+    for H in L R; do
+        run "$WB" -label-to-volume-mapping "$S/$at.$H.label.gii" "$S/$H.midthickness.32k_epi.surf.gii" "$A/epi_mean.nii.gz" \
+            "$S/$at.$H.epi.nii.gz" -ribbon-constrained "$S/$H.white.32k_epi.surf.gii" "$S/$H.pial.32k_epi.surf.gii"
+    done
+done
+CMP=(); [ -f "$A/schaefer_200_7_epi.nii.gz" ] && CMP=(--compare "$A/schaefer_200_7_epi.nii.gz")
+run "$PY" -m mejoint.cli surface-combine --left "$S/schaefer200.L.epi.nii.gz" --right "$S/schaefer200.R.epi.nii.gz" \
+    --out "$AS/schaefer_200_7_epi.nii.gz" "${CMP[@]}"
+run "$PY" -m mejoint.cli surface-combine --left "$S/ico1002.L.epi.nii.gz" --right "$S/ico1002.R.epi.nii.gz" \
+    --out "$AS/schaefer_ico1002_7_epi.nii.gz"
+cp "$S/atlas_table_ico1002_7.json" "$AS/"
+for f in gm_epi.nii.gz csf_epi.nii.gz wm_epi.nii.gz ho_sub_epi.nii.gz HarvardOxford-Subcortical.xml epi_mean.nii.gz; do
+    [ -f "$A/$f" ] && cp "$A/$f" "$AS/$f"
+done
+TIS="outputs/tissue/$NAME/mc"; TISARG=(); [ -f "$TIS/classes.npy" ] && TISARG=(--tissue-dir "$TIS")
+for at in 200_7 ico1002_7; do
+    run "$PY" -m mejoint.cli anatomy "${CFGARG[@]}" --anat-dir "$AS" --frontend-dir "$FE" --atlas "$at" "${TISARG[@]}"
+done
+
+# --- S4: route B with surface-based Schaefer parcels; parcel time courses for the connectivity models
+run "$PY" -m mejoint.cli route-b "${CFGARG[@]}" --frontend-dir "$FE" --anat-dir "$AS" --out "$RB/200_7" --atlas 200_7
+run "$PY" -m mejoint.cli export-parcels "${CFGARG[@]}" --frontend-dir "$FE" --anat-dir "$AS" --atlas ico1002_7 \
+    --pdconn "$RES/Nettekoven_2024_Fusion_L2.pdconn.nii" --out "$RB/ico1002_7"
+echo "== done $(date): check $PWD/$AS/qc_200_7.png and qc_ico1002_7.png; route B: $PWD/$RB/200_7/route_b.md"
