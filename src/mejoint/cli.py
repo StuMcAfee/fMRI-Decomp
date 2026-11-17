@@ -74,6 +74,14 @@ def main(argv=None) -> int:
     ex_.add_argument("--atlas", default="ico1002_7")
     ex_.add_argument("--out", required=True)
     ex_.add_argument("--config", help="config YAML (default: configs/default.yaml)")
+    dc_ = sub.add_parser("disconnection", help="design A: cortical disconnection from a cerebellar lesion (or dose) map in SUIT space")
+    dc_.add_argument("--lesion", required=True, help="lesion (0-1) or dose map in SUIT space (NIfTI)")
+    dc_.add_argument("--out", required=True, help="output folder (under outputs/, e.g. outputs/design_a/<run>)")
+    dc_.add_argument("--pdconn", default="outputs/atlases_fs32k/Nettekoven_2024_Fusion_L2.pdconn.nii")
+    dc_.add_argument("--resources", default="outputs/atlases_fs32k")
+    dc_.add_argument("--scale", type=float, default=None, help="dose maps: divide by this (e.g. the prescribed dose) before clipping to 0-1")
+    dc_.add_argument("--label", default="lesion", help="file prefix, e.g. lesion or dose")
+    dc_.add_argument("--config", help="config YAML (default: configs/default.yaml)")
     er = sub.add_parser("echo-ratios-mppca", help="per-echo noise ratios from a front end's MP-PCA maps (3-echo protocols)")
     er.add_argument("--frontend-dir", required=True, help="front-end folder with mppca_sigma.nii.gz (run with MP-PCA on raw echoes)")
     er.add_argument("--config", help="config YAML (default: configs/default.yaml)")
@@ -311,6 +319,16 @@ def main(argv=None) -> int:
         r = surface.export_for_models(args.frontend_dir, args.anat_dir, cfg, args.pdconn, args.out, atlas=args.atlas)
         print(f"{r['n_with_voxels']} of {r['n_parcels']} parcels with voxels (median {r['voxels_per_parcel_median']}), "
               f"{r['frames']} frames -> {args.out}/bold.ptseries.nii, s0.ptseries.nii")
+    elif args.cmd == "disconnection":
+        from pathlib import Path
+
+        from . import disconnect
+        repo = Path(__file__).resolve().parents[2]
+        if repo in Path(args.out).resolve().parents and "outputs" not in Path(args.out).resolve().parts:
+            raise SystemExit("refusing to write participant maps inside the repository (use outputs/...)")
+        s = disconnect.run(args.lesion, args.pdconn, args.resources, args.out, scale=args.scale, label=args.label)
+        print(f"{s['label']}: {s['damaged_model_voxels']} model voxels damaged ({s['damaged_volume_ml_on_model_grid']} ml); "
+              f"mean cortical D {s['D_positive_cortex_mean']}; outputs in {args.out}")
     elif args.cmd == "echo-ratios-mppca":
         from pathlib import Path
 
