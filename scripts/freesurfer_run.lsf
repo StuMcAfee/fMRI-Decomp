@@ -1,0 +1,36 @@
+#!/bin/bash
+# FreeSurfer recon-all for one participant's T1 (surface pipeline step S1; docs/SURFACE_PLAN.md):
+#   bash scripts/freesurfer_run.lsf <run name> <T1 NIfTI>        (submitted by scripts/submit_freesurfer.sh)
+# Output: outputs/freesurfer/<run name>/ (SUBJECTS_DIR = outputs/freesurfer). Several hours per T1 (4 threads).
+# A finished subject (scripts/recon-all.done without an error file) is skipped; an unfinished one is resumed.
+set -uo pipefail
+NAME="${1:-}"; T1="${2:-}"
+FSMOD="${FS_MODULE:-freesurfer/7.4.1}"
+fail() { echo "PREFLIGHT FAILED: $*" >&2; exit 2; }
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+[ -n "$NAME" ] || fail "first argument: run name"
+for init in /usr/share/Modules/init/bash /etc/profile.d/modules.sh /cm/local/apps/environment-modules/*/init/bash; do
+    [ -f "$init" ] && { source "$init"; break; }
+done
+command -v module >/dev/null 2>&1 && module load "$FSMOD"
+command -v recon-all >/dev/null 2>&1 && [ -n "${FREESURFER_HOME:-}" ] || fail "FreeSurfer not available after 'module load $FSMOD'"
+if [ -z "${FS_LICENSE:-}" ] || [ ! -f "${FS_LICENSE:-}" ]; then
+    [ -f "$FREESURFER_HOME/license.txt" ] && export FS_LICENSE="$FREESURFER_HOME/license.txt" \
+        || fail "no FreeSurfer licence (set FS_LICENSE to your license.txt; free from the FreeSurfer website)"
+fi
+export SUBJECTS_DIR="$PWD/outputs/freesurfer"; mkdir -p "$SUBJECTS_DIR"
+S="$SUBJECTS_DIR/$NAME"
+NT="${LSB_DJOB_NUMPROC:-4}"
+echo "== recon-all | $NAME | T1 $T1 | $FSMOD | $(date) | host $(hostname) | job ${LSB_JOBID:-interactive} | threads $NT"
+if [ -f "$S/scripts/recon-all.done" ] && [ ! -f "$S/scripts/recon-all.error" ]; then
+    echo "already finished: $S"; exit 0
+fi
+if [ -d "$S/mri" ]; then
+    echo "resuming the unfinished subject $S"
+    rm -f "$S/scripts/IsRunning."*
+    recon-all -s "$NAME" -all -openmp "$NT" || fail "recon-all failed (see $S/scripts/recon-all.log)"
+else
+    [ -f "$T1" ] || fail "T1 not found: $T1"
+    recon-all -s "$NAME" -i "$T1" -all -openmp "$NT" || fail "recon-all failed (see $S/scripts/recon-all.log)"
+fi
+echo "== done $(date): $S"
