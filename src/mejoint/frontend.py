@@ -840,10 +840,13 @@ def run_subject(run_dir, cfg: dict, out_dir, source: str = "raw", mppca: bool | 
                               "axial_fill_fraction_of_mask": round(float(holes["holes_axial"].sum() / pipe_mask.sum()), 4)}
     if bg:
         b1 = bg[0]
+        ratio = lambda a, b: round(a / b, 4) if b > 0 else None       # zero-filled air (some reconstructions): no ratio
         summ["background_noise"] = [{"echo": k + 1, "median_mean": round(bg[k]["mean"], 3), "median_temporal_sd": round(bg[k]["sd"], 3),
-                                     "mean_ratio_to_echo1": round(bg[k]["mean"] / b1["mean"], 4),
-                                     "sd_ratio_to_echo1": round(bg[k]["sd"] / b1["sd"], 4), "n_voxels": bg[k]["n_voxels"]}
+                                     "mean_ratio_to_echo1": ratio(bg[k]["mean"], b1["mean"]),
+                                     "sd_ratio_to_echo1": ratio(bg[k]["sd"], b1["sd"]), "n_voxels": bg[k]["n_voxels"]}
                                     for k in sorted(bg)]
+        if b1["mean"] <= 0 or b1["sd"] <= 0:
+            summ["background_zero_filled"] = True
     if mp:
         exp = float(cfg["frontend"]["mppca_expected_ratio"])
         rows = []
@@ -1036,8 +1039,12 @@ def render_summary(s: dict) -> str:
     if "background_noise" in s:
         L += ["", "## Noise in air outside the head, per echo (pure noise: ratios track thermal sigma)", "",
               "| Echo | Median mean | Median temporal SD | Mean / echo 1 | SD / echo 1 | Voxels |", "|---|---|---|---|---|---|"]
-        L += [f"| {b['echo']} | {b['median_mean']:.2f} | {b['median_temporal_sd']:.2f} | {b['mean_ratio_to_echo1']:.3f} | "
-              f"{b['sd_ratio_to_echo1']:.3f} | {b['n_voxels']} |" for b in s["background_noise"]]
+        f3 = lambda v: "n/a" if v is None else f"{v:.3f}"
+        L += [f"| {b['echo']} | {b['median_mean']:.2f} | {b['median_temporal_sd']:.2f} | {f3(b['mean_ratio_to_echo1'])} | "
+              f"{f3(b['sd_ratio_to_echo1'])} | {b['n_voxels']} |" for b in s["background_noise"]]
+        if s.get("background_zero_filled"):
+            L += ["", "The air outside the head is zero-filled in this reconstruction: no noise there, so no ratios from air "
+                  "(the brain mask then uses a positive noise floor)."]
     if "mppca_check" in s:
         m = s["mppca_check"]
         L += ["", "## Sigma cross-check per echo: residual model (sigma x ratio) vs MP-PCA (raw echoes)", "",
