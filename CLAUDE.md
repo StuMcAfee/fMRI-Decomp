@@ -20,7 +20,6 @@ Deliverables:
 5. Validation by injection of known signals into the raw echoes, and each participant's measured sensitivity.
 6. The joint decomposition with background-corrected η (descriptive) and the comparison with tedana.
 7. An LSF batch interface; participant- and region-level tables for the joint analysis with the cerebellar factors and, later, the controls.
-
 8. Surface-based cortical regions (FreeSurfer, fs_LR 32k: Schaefer 200/7 and the 1876-parcel icosahedral tessellation) and BOLD-like parcel time courses in the cortico-cerebellar connectivity models' format; a lesion-network analysis (design A, user 2026-11-17): the cortical territories connected to each patient's damaged cerebellum, from the healthy connectivity model, related to cortical measures. No cerebellar BOLD is measured. Plan and definitions: `docs/SURFACE_PLAN.md`.
 
 Stretch goal: a structured factorization with group-sparse channel maps.
