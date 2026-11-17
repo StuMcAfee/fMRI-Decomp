@@ -60,5 +60,6 @@ Inputs: each patient's cerebellar lesion map (and, separately, dose map) in SUIT
    the brain-wide pattern) are lower where D is higher, expressed against the controls once available; (b) across
    patients, network-level D against network-level integration. Both secondary; the primary outcome is unchanged.
 
-Open for the user: the model choice (1), the handling of negative weights (2), the outcome measures in (4), and the
+Decided (user, 2026-11-17): model `Nettekoven_2024_Fusion_L2` primary (HCP_L2 sensitivity) and positive weights
+(|W| sensitivity). Still open: the outcome measures in (4), to be fixed before any look at the relation, and the
 availability and timing of SUIT lesion / dose maps.

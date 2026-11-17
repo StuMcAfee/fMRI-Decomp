@@ -447,7 +447,7 @@ Cerebral regions only (section 1): Schaefer 200 parcels / 7 networks (400 / 17 a
 - region BOLD-like, S0-like and leftover shares, by network;
 - BOLD-like versus ordinary connectivity; global BOLD-like share (S0-like connectivity dropped, user 2026-11-11: region S0-like time courses are mostly noise);
 - thalamic and striatal BOLD-like coupling with the cortical networks;
-- lesion-network analysis (design A, user 2026-11-17; definitions pending approval in `docs/SURFACE_PLAN.md`): cortical disconnection from each patient's cerebellar lesion / dose map through the healthy cortico-cerebellar connectivity model (Nettekoven et al. 2024), related to parcel- and network-level BOLD-like measures.
+- lesion-network analysis (design A, user 2026-11-17; Fusion L2 model and positive weights decided; outcome tests still to be fixed, `docs/SURFACE_PLAN.md`): cortical disconnection from each patient's cerebellar lesion / dose map through the healthy cortico-cerebellar connectivity model (Nettekoven et al. 2024), related to parcel- and network-level BOLD-like measures.
 
 **Descriptive:** joint-decomposition components across k with background-corrected eta; the comparison with tedana's components and "Likely BOLD" counts. Counts depend on the estimator, k, scan length and signal strength (interpolation and filtering alone change ME-ICA counts, Olafsson et al. 2015); they are not outcomes.
 
