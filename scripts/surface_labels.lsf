@@ -35,10 +35,13 @@ for f in fs_LR-deformed_to-fsaverage.L.sphere.32k_fs_LR.surf.gii fs_LR-deformed_
     [ -f "$RES/$f" ] || fail "missing $RES/$f (run scripts/fetch_fs32k_resources.sh on the login node)"
 done
 [ -x "$WB" ] || fail "wb_command not found at $WB (conda create -n workbench -c conda-forge connectome-workbench-cli, or set WB_COMMAND)"
+# module init and FreeSurfer's setup refer to unset variables: relax "set -u" while they run
+set +u
 for init in /usr/share/Modules/init/bash /etc/profile.d/modules.sh /cm/local/apps/environment-modules/*/init/bash; do
     [ -f "$init" ] && { source "$init"; break; }
 done
-command -v module >/dev/null 2>&1 && module load "$FSMOD"
+command -v module >/dev/null 2>&1 && { module load "$FSMOD" || echo "warning: module load $FSMOD failed"; }
+set -u
 command -v mris_convert >/dev/null 2>&1 || fail "mris_convert not available (module load $FSMOD)"
 mris_convert --help 2>&1 | grep -q -- "--to-scanner" || fail "this mris_convert has no --to-scanner option (FreeSurfer 7 needed)"
 mkdir -p "$S" "$AS" "$RB"

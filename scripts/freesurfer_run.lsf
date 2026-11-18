@@ -9,10 +9,14 @@ FSMOD="${FS_MODULE:-freesurfer/7.4.1}"
 fail() { echo "PREFLIGHT FAILED: $*" >&2; exit 2; }
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 [ -n "$NAME" ] || fail "first argument: run name"
+echo "== start $(date) | host $(hostname) | loading $FSMOD"
+# module init and FreeSurfer's setup refer to unset variables: relax "set -u" while they run
+set +u
 for init in /usr/share/Modules/init/bash /etc/profile.d/modules.sh /cm/local/apps/environment-modules/*/init/bash; do
     [ -f "$init" ] && { source "$init"; break; }
 done
-command -v module >/dev/null 2>&1 && module load "$FSMOD"
+command -v module >/dev/null 2>&1 && { module load "$FSMOD" || echo "warning: module load $FSMOD failed"; }
+set -u
 command -v recon-all >/dev/null 2>&1 && [ -n "${FREESURFER_HOME:-}" ] || fail "FreeSurfer not available after 'module load $FSMOD'"
 if [ -z "${FS_LICENSE:-}" ] || [ ! -f "${FS_LICENSE:-}" ]; then
     [ -f "$FREESURFER_HOME/license.txt" ] && export FS_LICENSE="$FREESURFER_HOME/license.txt" \
