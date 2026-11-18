@@ -230,6 +230,52 @@ def match_networks(maps: np.ndarray, networks: list, names=("Vis", "SomMot", "Do
 
 
 # ---------------------------------------------------------------- real data (gate P2)
+def load_inputs(folder) -> dict:
+    """Parcel channels for the ICA from either source, as (cortical parcels x frames) arrays with global parcel ids:
+    - route B output (region_timecourses.npz + route_b.json; volumetric or surface-based Schaefer parcels): the
+      cortical regions;
+    - icosahedral export (parcel_channels.npz + export.json, outputs/route_b_surf/<run>/ico1002_7): all 1876 parcels
+      in the connectivity model's order (parcels without voxels are dropped later), networks from the icosahedral
+      table (Yeo-7 by vertex majority)."""
+    import json
+    from pathlib import Path
+    F = Path(folder)
+    if (F / "parcel_channels.npz").exists():
+        npz = np.load(F / "parcel_channels.npz")
+        ex = json.loads((F / "export.json").read_text())
+        n = npz["c0"].shape[0]
+        ids = np.arange(1, n + 1)
+        table = {}
+        tf = Path(ex.get("anat_dir", "")) / "atlas_table_ico1002_7.json"
+        if tf.exists():
+            table = {int(k): v for k, v in json.loads(tf.read_text()).items()}
+        nets = np.array([str(table.get(i, {}).get("network", "")) for i in ids])
+        hemi = np.array([("L" if i <= n // 2 else "R") for i in ids])
+        return {"source": "icosahedral export", "atlas": ex.get("atlas", "ico1002_7"), "ids": ids, "networks": nets, "hemisphere": hemi,
+                "c0": npz["c0"], "c1": npz["c1"], "R": npz["R"], "noise_var": npz["noise_var"], "r": npz["r"],
+                "frames": npz["frames"] if "frames" in npz.files else None, "nuisance_rank": int(npz["nuisance_rank"]),
+                "frontend_dir": ex.get("frontend_dir"), "band_hz": (0.01, 0.1), "table_found": bool(table)}
+    summ_rb = json.loads((F / "route_b.json").read_text())
+    npz = np.load(F / "region_timecourses.npz")
+    ids = np.asarray(summ_rb["cortex_ids"], int)
+    rows = {r["id"]: r for r in summ_rb["regions"]}
+    nets = np.array([str(rows[i].get("network")) for i in ids])
+    hemi = np.array(["L" if "_LH_" in str(rows[i].get("name")) else "R" if "_RH_" in str(rows[i].get("name")) else "" for i in ids])
+    R = np.asarray(npz["R"], float)
+    c1 = npz["c1"] if "c1" in npz.files else npz["a"] * R[:, 1, 1, None]
+    frames = npz["frames"] if "frames" in npz.files else None
+    tl = summ_rb.get("timeline") or {}
+    if frames is None and tl.get("n_used"):                            # older outputs: rebuild route B's frames
+        start = int((tl.get("longest_stretch") or [0])[0])
+        frames = np.arange(start, start + int(tl["n_used"]))
+    sel = ids - 1
+    return {"source": "route B", "atlas": summ_rb.get("atlas", "200_7"), "ids": ids, "networks": nets, "hemisphere": hemi,
+            "c0": npz["c0"][sel], "c1": c1[sel], "R": R[sel], "noise_var": npz["noise_var"][sel],
+            "r": npz["r"][sel] if "r" in npz.files else None, "frames": frames,
+            "nuisance_rank": int(summ_rb.get("nuisance_rank") or 0), "frontend_dir": summ_rb.get("frontend_dir"),
+            "band_hz": tuple(summ_rb.get("band_hz") or (0.01, 0.1))}
+
+
 def run_dir(route_b_dir, cfg: dict, out_dir, k: int | None = None, n_seeds: int = 30, input_channel: str = "b",
             n_jobs: int | None = None) -> dict:
     """Parcel ICA on one participant's route B output (region_timecourses.npz, route_b.json): cortical parcels, the
@@ -243,22 +289,13 @@ def run_dir(route_b_dir, cfg: dict, out_dir, k: int | None = None, n_seeds: int 
     from . import io
     rb, out = Path(route_b_dir), Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
-    summ_rb = json.loads((rb / "route_b.json").read_text())
-    npz = np.load(rb / "region_timecourses.npz")
-    ids = np.asarray(summ_rb["cortex_ids"], int)
-    rows = {r["id"]: r for r in summ_rb["regions"]}
-    nets = np.array([str(rows[i].get("network")) for i in ids])
-    R = np.asarray(npz["R"], float)
-    c1 = npz["c1"] if "c1" in npz.files else npz["a"] * R[:, 1, 1, None]
-    frames = npz["frames"] if "frames" in npz.files else None
-    tl = summ_rb.get("timeline") or {}
-    if frames is None and tl.get("n_used"):                            # older outputs: rebuild route B's frames
-        start = int((tl.get("longest_stretch") or [0])[0])
-        frames = np.arange(start, start + int(tl["n_used"]))
-    sel = ids - 1
-    pr = prepare(npz["c0"][sel], c1[sel], R[sel], npz["noise_var"][sel], npz["r"][sel] if "r" in npz.files else None, frames)
-    nets = nets[pr["ok"]]
-    nuis = int(summ_rb.get("nuisance_rank") or 0)
+    inp = load_inputs(rb)
+    pr = prepare(inp["c0"], inp["c1"], inp["R"], inp["noise_var"], inp["r"], inp["frames"])
+    nets = inp["networks"][pr["ok"]]
+    ids = inp["ids"]
+    hemi = inp["hemisphere"][pr["ok"]]
+    summ_rb = {"frontend_dir": inp["frontend_dir"], "band_hz": inp["band_hz"]}
+    nuis = int(inp["nuisance_rank"])
     z = pr["zb"] if input_channel == "b" else pr["cw"][:, 0]
     T = z.shape[1]
     df = T - nuis - 1
@@ -274,7 +311,7 @@ def run_dir(route_b_dir, cfg: dict, out_dir, k: int | None = None, n_seeds: int 
         resp = (fs.get("nuisance", {}).get("filter", {}).get("respiratory_peak") or {}).get("freq_hz")
     except Exception:
         pass
-    res = {"route_b_dir": str(rb), "input": input_channel, "n_parcels": int(z.shape[0]), "n_frames": int(T), "df": int(df),
+    res = {"route_b_dir": str(rb), "atlas": inp["atlas"], "source": inp["source"], "input": input_channel, "n_parcels": int(z.shape[0]), "n_frames": int(T), "df": int(df),
            "k_mp": dim["k_mp"], "k_null": dim.get("k_null"), "mp_edge": dim["mp_edge"], "k_used": kk,
            "eigenvalues_top": [round(float(x), 3) for x in dim["eigenvalues"][:40]], "respiratory_peak_hz": resp,
            "rule": {"high_share": 0.5, "eta": 0.5}}
@@ -288,7 +325,13 @@ def run_dir(route_b_dir, cfg: dict, out_dir, k: int | None = None, n_seeds: int 
     ica = spatial_ica(z, kk, seeds, n_jobs=n_jobs)
     sp = spectral_measures(ica["tc"], tr, band=tuple(summ_rb.get("band_hz") or (0.01, 0.1)), resp_hz=resp or 0.3,
                            noise_var=ica["tc_noise_var"])
-    folds = np.random.default_rng(int(cfg.get("project_seed", 0)) + 23).permutation(np.arange(z.shape[0]) % 2)
+    # cross-fitting folds: the two hemispheres (neighbouring parcels can share noise through motion-correction
+    # interpolation; the hemispheres do not), random halves only if hemispheres are unknown
+    if set(np.unique(hemi)) == {"L", "R"}:
+        folds = (hemi == "R").astype(int)
+    else:
+        folds = np.random.default_rng(int(cfg.get("project_seed", 0)) + 23).permutation(np.arange(z.shape[0]) % 2)
+    res["folds"] = "hemispheres" if set(np.unique(hemi)) == {"L", "R"} else "random halves"
     s0 = s0_coupling(ica["maps"], z, pr["cw"], pr["rho"], folds)          # time courses from the ICA input itself
     gc = global_correlation(ica["tc"], pr["zb"])
     mm = map_measures(ica["maps"])
@@ -312,7 +355,8 @@ def run_dir(route_b_dir, cfg: dict, out_dir, k: int | None = None, n_seeds: int 
     np.save(out / "maps.npy", ica["maps"].astype(np.float32))
     np.save(out / "timecourses.npy", ica["tc"].astype(np.float32))
     io.write_tsv(out / "components.tsv", {k_: [c[k_] for c in comps] for k_ in comps[0]})
-    io.write_json(out / "parcel_ica.json", {**res, "cortex_ids_used": ids[pr["ok"]].tolist(), **io.provenance(cfg, {})})
+    io.write_json(out / "parcel_ica.json", {**res, "cortex_ids_used": ids[pr["ok"]].tolist(), "parcel_networks_used": nets.tolist(),
+                                            **io.provenance(cfg, {})})
     io.write_text(out / "parcel_ica.md", render(res))
     try:
         figure(res, ica, dim, tr, out / "parcel_ica.png", resp)
@@ -340,14 +384,20 @@ def surface_figures(out_dir, resources, z_min: float = 1.0) -> dict:
     out = Path(out_dir)
     pj = json.loads((out / "parcel_ica.json").read_text())
     maps = np.load(out / "maps.npy")
-    rb = json.loads((Path(pj["route_b_dir"]) / "route_b.json").read_text())
-    atlas = rb.get("atlas", "200_7")
-    rows = {r["id"]: r for r in rb["regions"]}
     ids = [int(i) for i in pj["cortex_ids_used"]]
-    nets = [str(rows[i].get("network")) for i in ids]
+    rows = {}
+    if pj.get("parcel_networks_used") is not None:
+        atlas, nets = pj.get("atlas", "200_7"), list(pj["parcel_networks_used"])
+    else:                                                              # outputs written before 2026-11-18 (route B only)
+        rb = json.loads((Path(pj["route_b_dir"]) / "route_b.json").read_text())
+        atlas = rb.get("atlas", "200_7")
+        rows = {r["id"]: r for r in rb["regions"]}
+        nets = [str(rows[i].get("network")) for i in ids]
+    if atlas == "200_7" and not rows and (Path(pj["route_b_dir"]) / "route_b.json").exists():
+        rows = {r["id"]: r for r in json.loads((Path(pj["route_b_dir"]) / "route_b.json").read_text())["regions"]}
     res = surface_plot.load_resources(resources, atlas)
     if atlas == "200_7":                                               # route B ids must name the same parcels as the dlabel
-        bad = [i for i in ids if rows[i].get("name") and res["schaefer_names"].get(i) != rows[i]["name"]]
+        bad = [i for i in ids if rows.get(i, {}).get("name") and res["schaefer_names"].get(i) != rows[i]["name"]]
         if bad:
             raise ValueError(f"route B parcel names differ from the surface atlas for ids {bad[:5]}")
     comps = pj["components"]

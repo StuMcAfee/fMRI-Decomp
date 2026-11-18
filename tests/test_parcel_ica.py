@@ -151,3 +151,18 @@ def test_surface_figures_on_a_synthetic_mesh(tmp_path):
     assert len(files) == 2 and all(__import__("os").path.getsize(x) > 1000 for x in files)
     out = sp.winner_take_all(maps, ids, pnets, res, tmp_path / "wta.png", flagged=[False, False, True])
     assert out["winner"][:3] == [0, 1, 2] and out["n_parcels_no_winner"] == 5 and (tmp_path / "wta.png").exists()
+
+
+def test_load_inputs_icosahedral_export(tmp_path):
+    import json
+    d, _ = _sim(n_parcels=40, T=200)
+    anat = tmp_path / "anat"
+    anat.mkdir()
+    (anat / "atlas_table_ico1002_7.json").write_text(json.dumps({str(i): {"network": "Vis" if i < 10 else "Default"} for i in range(1, 41)}))
+    np.savez(tmp_path / "parcel_channels.npz", c0=d["c0"], c1=d["c1"], r=d["r"], R=d["R"], noise_var=d["noise_var"],
+             nuisance_rank=3, frames=np.arange(5, 195))
+    (tmp_path / "export.json").write_text(json.dumps({"atlas": "ico1002_7", "anat_dir": str(anat)}))
+    inp = pi.load_inputs(tmp_path)
+    assert inp["atlas"] == "ico1002_7" and inp["nuisance_rank"] == 3 and len(inp["frames"]) == 190
+    assert list(inp["ids"][:2]) == [1, 2] and inp["networks"][0] == "Vis" and inp["networks"][20] == "Default"
+    assert (inp["hemisphere"] == "L").sum() == 20 and inp["table_found"]

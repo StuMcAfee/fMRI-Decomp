@@ -2,25 +2,34 @@
 # Parcel ICA, gate P2 (docs/PARCEL_ICA_PLAN.md; exploratory, branch claude/parcel-ica): spatial ICA on one run's
 # route B cortical parcel signals, component measurements and the candidate removal rule (flags only; route B is
 # not changed). Runs both inputs: BOLD-like b (the agreed design) and the OC-like c0 channel (descriptive comparison).
-# Arguments: <subject number, run folder name, or a route B output folder> [atlas: 200_7 (default) | ico1002_7] [config]
+# Arguments: <subject number, run folder name, or an input folder> [atlas: ico1002_7 (default) | 200_7 | 200_7_surf] [config]
+#   ico1002_7   the 1876 icosahedral parcels (outputs/route_b_surf/<run>/ico1002_7/parcel_channels.npz, from
+#               scripts/surface_labels.lsf); 200_7_surf: surface-based Schaefer route B (outputs/route_b_surf/<run>/200_7);
+#   200_7       volumetric Schaefer route B (outputs/route_b/<run>/200_7)
 #   (a route B output folder, e.g. outputs/pilot/pilot_me3/route_b/200_7, is used as given; pass that run's config,
 #    e.g. outputs/pilot/pilot_me3/config_pass2.yaml, when its TR differs from configs/default.yaml)
 # Submit (login node, from the repository): bsub -q standard -n 4 -R "rusage[mem=4000] span[hosts=1]" -env "all" -J pica -o "logs/parcel_ica_%J.log" bash scripts/parcel_ica.lsf <run> [atlas] [config]
 # Outputs: outputs/parcel_ica/<run>/<atlas>/{b,c0,b_k10,b_k20}/ (parcel_ica.md / .json / .png, components.tsv, maps.npy, timecourses.npy)
 set -uo pipefail
-RUNARG="${1:-}"; ATLAS="${2:-200_7}"; CFG="${3:-}"; ROOT="outputs/route_b"
+RUNARG="${1:-}"; ATLAS="${2:-ico1002_7}"; CFG="${3:-}"
+case "$ATLAS" in
+    ico1002_7) ROOT="outputs/route_b_surf"; SUB="ico1002_7"; NEED="parcel_channels.npz" ;;
+    200_7_surf) ROOT="outputs/route_b_surf"; SUB="200_7"; NEED="region_timecourses.npz" ;;
+    *) ROOT="outputs/route_b"; SUB="$ATLAS"; NEED="region_timecourses.npz" ;;
+esac
 PY="${MEJOINT_PY:-$HOME/miniconda3_new/envs/mejoint/bin/python}"
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}" PYTHONUNBUFFERED=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
 fail() { echo "PREFLIGHT FAILED: $*" >&2; exit 2; }
-if [ -f "$RUNARG/region_timecourses.npz" ]; then
-    RB="${RUNARG%/}"; NAME="$(echo "$RB" | sed 's|^outputs/||; s|/route_b||; s|/'"$ATLAS"'$||; s|/|_|g')"
+if [ -f "$RUNARG/$NEED" ]; then
+    RB="${RUNARG%/}"; NAME="$(echo "$RB" | sed 's|^outputs/||; s|/route_b_surf||; s|/route_b||; s|/'"$SUB"'$||; s|/|_|g')"
 else
     if [ -d "$ROOT/$RUNARG" ]; then NAME="$RUNARG"; else NAME="$(ls -d "$ROOT"/sub-"$RUNARG"_* 2>/dev/null | head -n 1)"; NAME="${NAME:+$(basename "$NAME")}"; fi
-    RB="$ROOT/$NAME/$ATLAS"
+    RB="$ROOT/$NAME/$SUB"
 fi
 CARGS=(); [ -n "$CFG" ] && { [ -f "$CFG" ] || fail "config $CFG not found"; CARGS=(--config "$CFG"); }
-[ -n "$NAME" ] && [ -f "$RB/region_timecourses.npz" ] && [ -f "$RB/route_b.json" ] || fail "no route B output for '$RUNARG' (expected $RB/region_timecourses.npz)"
+[ -n "$NAME" ] && [ -f "$RB/$NEED" ] || fail "no $ATLAS input for '$RUNARG' (expected $RB/$NEED; for ico1002_7 run scripts/surface_labels.lsf first)"
+[ -f outputs/atlases_fs32k/tpl-fs32k_hemi-L_inflated.surf.gii ] || echo "NOTE: no inflated surfaces in outputs/atlases_fs32k: surface figures will be skipped (run scripts/fetch_fs32k_resources.sh)"
 echo "== parcel ICA | $NAME | $ATLAS | $(date) | host $(hostname) | job ${LSB_JOBID:-interactive} | git $(git rev-parse --short HEAD 2>/dev/null || echo '?')"
 # b and c0 at the MP count; b also at fixed k (network mapping: networks split into many components at the MP
 # count, so lower k values are compared; set K_LIST to change them)
