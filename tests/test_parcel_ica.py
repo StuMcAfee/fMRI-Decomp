@@ -118,3 +118,36 @@ def test_run_dir_on_route_b_outputs(tmp_path):
         assert res["k_used"] >= 7 and (rb / "out" / "components.tsv").exists() and (rb / "out" / "parcel_ica.md").exists()
         assert res["n_flagged"] >= 1                                     # the strong respiratory source
         assert (res["k_null"] is not None) == new
+
+
+def test_surface_figures_on_a_synthetic_mesh(tmp_path):
+    """Winner-take-all and weight maps on a small closed mesh (two 'hemispheres' made of an octahedron sphere)."""
+    from mejoint import surface_plot as sp
+    # subdivided octahedron -> sphere
+    v = np.array([[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]], float)
+    f = np.array([[0, 2, 4], [2, 1, 4], [1, 3, 4], [3, 0, 4], [2, 0, 5], [1, 2, 5], [3, 1, 5], [0, 3, 5]])
+    for _ in range(3):
+        cache, nf = {}, []
+        def mid(a, b):
+            key = tuple(sorted((a, b)))
+            if key not in cache:
+                cache[key] = len(v_list)
+                v_list.append((v_list[a] + v_list[b]) / 2)
+            return cache[key]
+        v_list = list(v)
+        for a, b, c in f:
+            ab, bc, ca = mid(a, b), mid(b, c), mid(c, a)
+            nf += [[a, ab, ca], [ab, b, bc], [ca, bc, c], [ab, bc, ca]]
+        v, f = np.array(v_list), np.array(nf)
+    v /= np.linalg.norm(v, axis=1, keepdims=True)
+    lab = 1 + (np.arctan2(v[:, 1], v[:, 0]) > 0) + 2 * (v[:, 2] > 0)        # 4 parcels per hemisphere
+    nets = {"L": np.array(["Vis", "SomMot", "Default", "Cont"])[lab - 1], "R": np.array(["Vis", "SomMot", "Default", "Cont"])[lab - 1]}
+    cols = {n: np.array([*c, 1.0]) for n, c in zip(sp.NETS7, np.random.default_rng(0).uniform(0, 1, (7, 3)))}
+    res = {"surf": {"L": (v, f), "R": (v, f)}, "labels": {"L": lab, "R": lab + 4}, "net_vertex": nets, "net_colours": cols}
+    ids = list(range(1, 9))
+    pnets = ["Vis", "SomMot", "Default", "Cont"] * 2
+    maps = np.eye(8)[:, :3] * 3 + 0.01 * np.random.default_rng(1).standard_normal((8, 3))
+    files = sp.weight_maps(maps, ids, res, tmp_path / "w", ["a", "b", "c"], per_page=2)
+    assert len(files) == 2 and all(__import__("os").path.getsize(x) > 1000 for x in files)
+    out = sp.winner_take_all(maps, ids, pnets, res, tmp_path / "wta.png", flagged=[False, False, True])
+    assert out["winner"][:3] == [0, 1, 2] and out["n_parcels_no_winner"] == 5 and (tmp_path / "wta.png").exists()

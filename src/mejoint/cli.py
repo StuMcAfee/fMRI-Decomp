@@ -252,6 +252,11 @@ def main(argv=None) -> int:
     pq.add_argument("--input", choices=["b", "c0"], default="b", help="ICA input: BOLD-like b (default) or the OC-like c0 channel")
     pq.add_argument("--n-seeds", type=int, default=30)
     pq.add_argument("--config", default=None)
+    ps_ = sub.add_parser("parcel-ica-surface", help="surface weight maps and winner-take-all map for a parcel ICA output folder")
+    ps_.add_argument("--dir", required=True, help="parcel ICA output folder (maps.npy, parcel_ica.json)")
+    ps_.add_argument("--resources", default="outputs/atlases_fs32k")
+    ps_.add_argument("--z-min", type=float, default=1.0, help="winner shown only where its z-scored loading is at least this")
+    ps_.add_argument("--config", default=None)
     rb = sub.add_parser("route-b", help="route B on one run: region shares, BOLD-like connectivity, integration with circular-shift nulls")
     rb.add_argument("--frontend-dir", required=True, help="front end of the run (maps, nuisance basis, echo paths in done.json)")
     rb.add_argument("--anat-dir", required=True, help="anatomy folder (labels_<atlas>.nii.gz, regions_<atlas>.json)")
@@ -490,6 +495,9 @@ def main(argv=None) -> int:
             raise SystemExit("refusing to write participant results inside the repository (use outputs/...)")
         parcel_ica.run_dir(args.route_b_dir, cfg, args.out, k=args.k, n_seeds=args.n_seeds, input_channel=args.input)
         print(open(f"{args.out}/parcel_ica.md").read())
+    elif args.cmd == "parcel-ica-surface":
+        from . import parcel_ica
+        print(parcel_ica.surface_figures(args.dir, args.resources, args.z_min))
     elif args.cmd == "route-b":
         from . import regions
         regions.run_dir(args.frontend_dir, args.anat_dir, cfg, args.out, atlas=args.atlas, common_ids_file=args.common_ids)

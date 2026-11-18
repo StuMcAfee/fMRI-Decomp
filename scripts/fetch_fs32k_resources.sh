@@ -27,6 +27,7 @@ for H in L R; do
     get "$HCP/resample_fsaverage/fs_LR-deformed_to-fsaverage.$H.sphere.32k_fs_LR.surf.gii" "fs_LR-deformed_to-fsaverage.$H.sphere.32k_fs_LR.surf.gii"
     get "$FF/tpl-fs32k/Icosahedron1002.$H.label.gii" "Icosahedron1002.$H.label.gii"
     get "$FF/tpl-fs32k/tpl-fs32k_hemi-${H}_mask.label.gii" "tpl-fs32k_hemi-${H}_mask.label.gii"
+    get "$FF/tpl-fs32k/tpl-fs32k_hemi-${H}_inflated.surf.gii" "tpl-fs32k_hemi-${H}_inflated.surf.gii"   # for figures
 done
 get "$CBIG/Schaefer2018_200Parcels_7Networks_order.dlabel.nii" "Schaefer2018_200Parcels_7Networks_order.dlabel.nii"
 get "$CCC/Nettekoven_2024_Fusion_L2.pdconn.nii" "Nettekoven_2024_Fusion_L2.pdconn.nii"

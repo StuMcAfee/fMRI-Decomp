@@ -318,7 +318,47 @@ def run_dir(route_b_dir, cfg: dict, out_dir, k: int | None = None, n_seeds: int 
         figure(res, ica, dim, tr, out / "parcel_ica.png", resp)
     except Exception as exc:                                           # a figure never blocks the result
         print(f"figure failed: {exc}")
+    resources = Path(cfg.get("surface", {}).get("resources") or Path(__file__).resolve().parents[2] / "outputs" / "atlases_fs32k")
+    if (resources / "tpl-fs32k_hemi-L_inflated.surf.gii").exists():
+        try:
+            surface_figures(out, resources)
+        except Exception as exc:
+            print(f"surface figures failed: {exc}")
+    else:
+        print(f"surface figures skipped: no inflated surfaces in {resources} (run scripts/fetch_fs32k_resources.sh)")
     return res
+
+
+def surface_figures(out_dir, resources, z_min: float = 1.0) -> dict:
+    """Weight maps and the winner-take-all map on the fs_LR 32k inflated template for one parcel ICA output folder
+    (maps.npy, parcel_ica.json; parcel networks and the atlas from the route B folder it names). Writes
+    surface_weights_p<i>.png, surface_wta.png and surface_wta.json."""
+    import json
+    from pathlib import Path
+
+    from . import io, surface_plot
+    out = Path(out_dir)
+    pj = json.loads((out / "parcel_ica.json").read_text())
+    maps = np.load(out / "maps.npy")
+    rb = json.loads((Path(pj["route_b_dir"]) / "route_b.json").read_text())
+    atlas = rb.get("atlas", "200_7")
+    rows = {r["id"]: r for r in rb["regions"]}
+    ids = [int(i) for i in pj["cortex_ids_used"]]
+    nets = [str(rows[i].get("network")) for i in ids]
+    res = surface_plot.load_resources(resources, atlas)
+    if atlas == "200_7":                                               # route B ids must name the same parcels as the dlabel
+        bad = [i for i in ids if rows[i].get("name") and res["schaefer_names"].get(i) != rows[i]["name"]]
+        if bad:
+            raise ValueError(f"route B parcel names differ from the surface atlas for ids {bad[:5]}")
+    comps = pj["components"]
+    titles = [f"c{c['component']}  {c['network'] or ''}{' (r ' + str(c['network_r']) + ')' if c['network_r'] is not None else ''}\n"
+              f">0.12 Hz {c['high_share']:.2f}  S0 {c['eta'] if c['eta'] is not None else '-'}{chr(10) + 'FLAGGED' if c['flag'] else ''}" for c in comps]
+    files = surface_plot.weight_maps(maps, ids, res, out / "surface_weights", titles)
+    tag = f"{pj['input']} input, k = {pj['k_used']}"
+    wta = surface_plot.winner_take_all(maps, ids, nets, res, out / "surface_wta.png", [c["flag"] for c in comps], z_min,
+                                       f"Winner-take-all over {len(comps)} components ({tag}; parcels shown on the fs_LR 32k template by identity)")
+    io.write_json(out / "surface_wta.json", {"atlas": atlas, "z_min": z_min, "parcel_ids": ids, **wta})
+    return {"weights": files, "wta": str(out / "surface_wta.png")}
 
 
 def render(res: dict) -> str:
