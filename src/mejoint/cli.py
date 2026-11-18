@@ -245,6 +245,13 @@ def main(argv=None) -> int:
     cc.add_argument("--sensitivity", default="outputs/sensitivity/sensitivity_participants.tsv")
     cc.add_argument("--out", default="outputs/clinical")
     cc.add_argument("--config", help="config YAML (default: configs/default.yaml)")
+    pq = sub.add_parser("parcel-ica", help="exploratory parcel ICA on one route B output (docs/PARCEL_ICA_PLAN.md, gate P2)")
+    pq.add_argument("--route-b-dir", required=True, help="route B output folder (region_timecourses.npz, route_b.json)")
+    pq.add_argument("--out", required=True)
+    pq.add_argument("--k", type=int, default=None, help="number of components (default: dimensions above the MP edge)")
+    pq.add_argument("--input", choices=["b", "c0"], default="b", help="ICA input: BOLD-like b (default) or the OC-like c0 channel")
+    pq.add_argument("--n-seeds", type=int, default=30)
+    pq.add_argument("--config", default=None)
     rb = sub.add_parser("route-b", help="route B on one run: region shares, BOLD-like connectivity, integration with circular-shift nulls")
     rb.add_argument("--frontend-dir", required=True, help="front end of the run (maps, nuisance basis, echo paths in done.json)")
     rb.add_argument("--anat-dir", required=True, help="anatomy folder (labels_<atlas>.nii.gz, regions_<atlas>.json)")
@@ -473,6 +480,16 @@ def main(argv=None) -> int:
         from . import clinical
         clinical.compare(args.participants, args.table, args.out, args.contrast, args.subject_col, args.label_col, args.sensitivity)
         print(open(f"{args.out}/clinical_compare.md").read())
+    elif args.cmd == "parcel-ica":
+        from pathlib import Path
+
+        from . import parcel_ica
+        o = Path(args.out).resolve()
+        repo = Path(__file__).resolve().parents[2]
+        if repo in o.parents and (repo / "outputs") not in [o, *o.parents]:
+            raise SystemExit("refusing to write participant results inside the repository (use outputs/...)")
+        parcel_ica.run_dir(args.route_b_dir, cfg, args.out, k=args.k, n_seeds=args.n_seeds, input_channel=args.input)
+        print(open(f"{args.out}/parcel_ica.md").read())
     elif args.cmd == "route-b":
         from . import regions
         regions.run_dir(args.frontend_dir, args.anat_dir, cfg, args.out, atlas=args.atlas, common_ids_file=args.common_ids)

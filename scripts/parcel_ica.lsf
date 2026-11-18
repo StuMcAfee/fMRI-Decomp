@@ -1,0 +1,28 @@
+#!/bin/bash
+# Parcel ICA, gate P2 (docs/PARCEL_ICA_PLAN.md; exploratory, branch claude/parcel-ica): spatial ICA on one run's
+# route B cortical parcel signals, component measurements and the candidate removal rule (flags only; route B is
+# not changed). Runs both inputs: BOLD-like b (the agreed design) and the OC-like c0 channel (descriptive comparison).
+# Arguments: <subject number, run folder name, or a route B output folder> [atlas: 200_7 (default) | ico1002_7] [config]
+#   (a route B output folder, e.g. outputs/pilot/pilot_me3/route_b/200_7, is used as given; pass that run's config,
+#    e.g. outputs/pilot/pilot_me3/config_pass2.yaml, when its TR differs from configs/default.yaml)
+# Submit (login node, from the repository): bsub -q standard -n 4 -R "rusage[mem=4000] span[hosts=1]" -env "all" -J pica -o "logs/parcel_ica_%J.log" bash scripts/parcel_ica.lsf <run> [atlas] [config]
+# Outputs: outputs/parcel_ica/<run>/<atlas>/{b,c0}/ (parcel_ica.md / .json / .png, components.tsv, maps.npy, timecourses.npy)
+set -uo pipefail
+RUNARG="${1:-}"; ATLAS="${2:-200_7}"; CFG="${3:-}"; ROOT="outputs/route_b"
+PY="${MEJOINT_PY:-$HOME/miniconda3_new/envs/mejoint/bin/python}"
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}" PYTHONUNBUFFERED=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
+fail() { echo "PREFLIGHT FAILED: $*" >&2; exit 2; }
+if [ -f "$RUNARG/region_timecourses.npz" ]; then
+    RB="${RUNARG%/}"; NAME="$(echo "$RB" | sed 's|^outputs/||; s|/route_b||; s|/'"$ATLAS"'$||; s|/|_|g')"
+else
+    if [ -d "$ROOT/$RUNARG" ]; then NAME="$RUNARG"; else NAME="$(ls -d "$ROOT"/sub-"$RUNARG"_* 2>/dev/null | head -n 1)"; NAME="${NAME:+$(basename "$NAME")}"; fi
+    RB="$ROOT/$NAME/$ATLAS"
+fi
+CARGS=(); [ -n "$CFG" ] && { [ -f "$CFG" ] || fail "config $CFG not found"; CARGS=(--config "$CFG"); }
+[ -n "$NAME" ] && [ -f "$RB/region_timecourses.npz" ] && [ -f "$RB/route_b.json" ] || fail "no route B output for '$RUNARG' (expected $RB/region_timecourses.npz)"
+echo "== parcel ICA | $NAME | $ATLAS | $(date) | host $(hostname) | job ${LSB_JOBID:-interactive} | git $(git rev-parse --short HEAD 2>/dev/null || echo '?')"
+for IN in b c0; do
+    "$PY" -m mejoint.cli parcel-ica --route-b-dir "$RB" --out "outputs/parcel_ica/$NAME/$ATLAS/$IN" --input "$IN" "${CARGS[@]}" || fail "parcel ICA ($IN) failed"
+done
+echo "== done $(date): $PWD/outputs/parcel_ica/$NAME/$ATLAS/{b,c0}/parcel_ica.md and parcel_ica.png"

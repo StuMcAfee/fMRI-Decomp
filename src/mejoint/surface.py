@@ -163,7 +163,8 @@ def parcel_timecourses(frontend_dir, anat_dir, atlas: str, cfg: dict) -> dict:
     rs = regions.region_signals(S, labels, mu, sigma, fs["echo_noise_ratios_used"], use, P)
     sp = regions.split(rs["ybar"], rs["wsum"], fs["te_ms"], Q)
     nv = regions.leftover_noise(sp["r"], 0 if Q is None else Q.shape[1])   # as regions.analyze
-    return {"b": sp["b"], "a": sp["a"], "noise_var": nv, "n_voxels": rs["n_voxels"], "tr": float(cfg["acquisition"]["tr_s"]),
+    return {"b": sp["b"], "a": sp["a"], "c": sp["c"], "r": sp["r"], "R": sp["R"], "noise_var": nv, "n_voxels": rs["n_voxels"],
+            "nuisance_rank": 0 if Q is None else int(Q.shape[1]), "tr": float(cfg["acquisition"]["tr_s"]),
             "te_ms": fs["te_ms"]}
 
 
@@ -201,6 +202,13 @@ def export_for_models(frontend_dir, anat_dir, cfg: dict, pdconn, out_dir, atlas:
     nvar = np.full(n, np.nan)
     nvar[:P][has] = tc["noise_var"][:P][has]
     io.write_tsv(out / "parcels.tsv", {"parcel": list(pax.name), "n_voxels": list(nvox), "noise_var": [round(float(v), 6) for v in nvar]})
+    # channels, leftover channels and R per parcel (model order; parcels without voxels are zero): the inputs of
+    # the parcel ICA (noise whitening, cross-fitted S0 coupling, empirical noise null; docs/PARCEL_ICA_PLAN.md)
+    E = tc["r"].shape[1]
+    C, Rl, RR = np.zeros((n, 2, T), np.float32), np.zeros((n, E, T), np.float32), np.full((n, 2, 2), np.nan)
+    C[:P][has], Rl[:P][has], RR[:P][has] = tc["c"][:P][has], tc["r"][:P][has], tc["R"][:P][has]
+    np.savez_compressed(out / "parcel_channels.npz", a=np.nan_to_num(A).astype(np.float32), b=np.nan_to_num(B).astype(np.float32),
+                        c0=C[:, 0], c1=C[:, 1], r=Rl, R=RR, noise_var=nvar, n_voxels=nvox, nuisance_rank=tc["nuisance_rank"])
     summ = {"atlas": atlas, "n_parcels": n, "n_with_voxels": int((nvox > 0).sum()), "frames": int(T), "tr_s": tc["tr"],
             "voxels_per_parcel_median": float(np.median(nvox[nvox > 0])) if (nvox > 0).any() else None,
             "pdconn": str(pdconn), "units": {"bold": "dR2* (1/s)", "s0": "dlnS0 (fraction)"}, **io.provenance(cfg, {})}

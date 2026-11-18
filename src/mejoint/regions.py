@@ -535,7 +535,8 @@ def analyze(S, labels, mu, sigma, ratios, use, te_ms, table: list, cfg: dict, Q=
     return {"regions": rows, "integration": out_int, "secondary_coupling": sec, "secondary_coupling_raw": sec_raw, "cortex_ids": ids[cx].tolist(),
             "cortex_networks": nets[cx].tolist(), "corr_b": cb["corr"], "corr_a": ca["corr"], "corr_oc": co["corr"],
             "n_frames": int(T), "n_frames_total": int(T_all), "nuisance_rank": int(removed), "band_hz": list(band),
-            "a": sp_full["a"], "b": sp_full["b"], "c0": sp_full["c"][:, 0], "R": sp["R"], "noise_var": nv,
+            "a": sp_full["a"], "b": sp_full["b"], "c0": sp_full["c"][:, 0], "c1": sp_full["c"][:, 1], "r_all": sp_full["r"],
+            "R": sp["R"], "noise_var": nv,
             "b_int": sp["b"], "frames": frames,
             "censored_fraction": None if keep is None else _r(float(1 - keep.mean())),
             "r_cortex": sp["r"][sel], "cov_b": cb["cov"], "noise_band_b": cb["noise_band_var"], "edge_thr_b": edge_thr_full}
@@ -862,7 +863,9 @@ def run_dir(frontend_dir, anat_dir, cfg: dict, out_dir, atlas: str | None = None
         np.save(out / f"{k}.npy", res[k].astype(np.float32))
     # each region's time courses (row = region id - 1) for recovery against injected truth and later analyses
     np.savez_compressed(out / "region_timecourses.npz", a=res["a"].astype(np.float32), b=res["b"].astype(np.float32),
-                        c0=res["c0"].astype(np.float32), R=res["R"], noise_var=res["noise_var"],
+                        c0=res["c0"].astype(np.float32), c1=res["c1"].astype(np.float32), r=res["r_all"].astype(np.float32),
+                        frames=(np.asarray(res["frames"]) if res.get("frames") is not None else np.arange(res["b"].shape[1])),
+                        R=res["R"], noise_var=res["noise_var"],
                         nuisance_Q=(np.load(fe / "nuisance_Q.npy") if (fe / "nuisance_Q.npy").exists() else np.zeros((res["n_frames"], 0))))
     rows = res["regions"]
     io.write_tsv(out / "regions_route_b.tsv", {k: [(";".join(map(str, r[k])) if isinstance(r[k], list) else r[k]) for r in rows] for k in rows[0]})

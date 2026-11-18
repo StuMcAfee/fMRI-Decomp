@@ -75,3 +75,18 @@ validation gates below; until then denoised results are reported next to the und
 3. Full-band input for ICA (needed to see respiratory and cardiac signatures), measures still in 0.01-0.1 Hz [yes].
 4. Individual ICA with Yeo-7 template matching first; group-informed methods (group ICA with dual regression) later,
    once controls exist, to avoid patient-derived spatial priors [yes].
+
+## 7. Gate P1 result (simulation, 2026-11-18; details in `docs/decisions.md`)
+
+Run: `PYTHONPATH=src python scripts/parcel_ica_p1.py <out_dir> [n_seeds]` (about 2 minutes for 5 seeds).
+Code: `mejoint.parcel_sim` (synthetic route B parcel channels), `mejoint.parcel_ica` (`prepare`, `dimensionality`,
+`spatial_ica`, `spectral_measures`, `s0_coupling`, `remove_components`, `match_networks`).
+
+- Machinery: exact whitening, MP count 0-1 on pure noise, networks recovered (|r| 0.80-0.85).
+- Safety: no component removed when only networks and the brain-wide pattern are present.
+- Sensitivity: breathing and cardiac signals are removed only when strong (2-8 x the assumed amplitudes); slow
+  physiological signal in the analysis band cannot be identified without recordings.
+- Open design point: the S0 coupling cannot flag dS0-rich (pulsatile) components when the ICA runs on b, because b
+  excludes dS0; running the ICA on c0 (or on the stacked channels) would allow it.
+- Next (P2): the same steps on real Schaefer 200 route B outputs (P04 and the volunteer) to see where real
+  physiological signal sits relative to the simulated range.
