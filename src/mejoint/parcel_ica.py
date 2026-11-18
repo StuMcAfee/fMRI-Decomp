@@ -109,11 +109,16 @@ def spectral_measures(tc: np.ndarray, tr: float, band=(0.01, 0.10), resp_hz: flo
         m = (np.abs(f - resp_hz) <= resp_halfwidth) | (np.abs(f - h2) <= resp_halfwidth)
         out["resp_share"] = sh(m)
     hi = f > high_hz
-    from scipy.ndimage import uniform_filter1d
-    Ps = uniform_filter1d(P[:, hi], 5, axis=1)
-    med = np.median(np.abs(np.fft.rfft(tc - tc.mean(1, keepdims=True), axis=1))[:, hi] ** 2, axis=1)
-    j = np.argmax(Ps, axis=1)
-    out["peak_ratio"] = Ps[np.arange(len(j)), j] / np.maximum(med, 1e-30)
+    # narrow peaks against the local spectrum (running median over about 0.1 Hz of the raw periodogram), so the
+    # falling 1/f-like slope does not make the lowest searched frequency look like a peak
+    from scipy.ndimage import median_filter, uniform_filter1d
+    raw = np.abs(np.fft.rfft(tc - tc.mean(1, keepdims=True), axis=1)) ** 2
+    w = max(5, int(round(0.1 / (f[1] - f[0]))) | 1)
+    base = median_filter(raw, size=(1, w), mode="nearest")
+    Ps = uniform_filter1d(raw, 3, axis=1)
+    ratio = (Ps / np.maximum(base, 1e-30))[:, hi]
+    j = np.argmax(ratio, axis=1)
+    out["peak_ratio"] = ratio[np.arange(len(j)), j]
     out["peak_hz"] = f[hi][j]
     return out
 
@@ -151,6 +156,8 @@ def prepare(c0, c1, R, noise_var, r=None, frames=None) -> dict:
 
 
 def s0_coupling(maps: np.ndarray, zb: np.ndarray, cw: np.ndarray, rho: np.ndarray, folds: np.ndarray) -> dict:
+    # zb: the data the maps were estimated from (whitened b, or the whitened c0 channel for the c0 input); the
+    # held-out time courses must come from the same data as the maps
     """Cross-fitted S0 coupling per component, the parcel-level analogue of eta (CLAUDE.md 7.1).
 
     For each fold of parcels, the component time courses are estimated from the other parcels (least squares of zb
@@ -282,7 +289,7 @@ def run_dir(route_b_dir, cfg: dict, out_dir, k: int | None = None, n_seeds: int 
     sp = spectral_measures(ica["tc"], tr, band=tuple(summ_rb.get("band_hz") or (0.01, 0.1)), resp_hz=resp or 0.3,
                            noise_var=ica["tc_noise_var"])
     folds = np.random.default_rng(int(cfg.get("project_seed", 0)) + 23).permutation(np.arange(z.shape[0]) % 2)
-    s0 = s0_coupling(ica["maps"], pr["zb"], pr["cw"], pr["rho"], folds)
+    s0 = s0_coupling(ica["maps"], z, pr["cw"], pr["rho"], folds)          # time courses from the ICA input itself
     gc = global_correlation(ica["tc"], pr["zb"])
     mm = map_measures(ica["maps"])
     nm = match_networks(ica["maps"], list(nets))
@@ -334,6 +341,7 @@ def figure(res, ica, dim, tr, path, resp=None):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+    import matplotlib.ticker
     from scipy.ndimage import uniform_filter1d
     k = ica["tc"].shape[0]
     fig = plt.figure(figsize=(12, 3 + 0.9 * ((k + 2) // 3)), constrained_layout=True)
@@ -363,6 +371,7 @@ def figure(res, ica, dim, tr, path, resp=None):
         ax.set_title(f"c{j}: {c['network'] or '-'} | >0.12 Hz {c['high_share']:.2f} | S0 {c['eta'] if c['eta'] is not None else '-'}"
                      f"{' | FLAG' if c['flag'] else ''}", fontsize=8)
         ax.set_yscale("log")
+        ax.yaxis.set_minor_formatter(matplotlib.ticker.NullFormatter())
         ax.tick_params(labelsize=7)
         if j // 3 == (k - 1) // 3:
             ax.set_xlabel("Hz", fontsize=8)
