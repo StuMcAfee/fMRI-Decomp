@@ -68,7 +68,7 @@ validation gates below; until then denoised results are reported next to the und
 - Without recordings, cardiac components can be identified only indirectly (spectra, S0 coupling, location).
 - Individual ICA on one 10-minute run may be unstable; stability is reported, not assumed.
 
-## 6. Decisions for the user (proposed defaults in brackets)
+## 6. Decisions (user, 2026-11-18: all four defaults accepted)
 
 1. Scope: denoising as a sensitivity analysis until P4 [yes].
 2. Spatial ICA on noise-whitened parcel signals [yes].

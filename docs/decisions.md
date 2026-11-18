@@ -1403,3 +1403,4 @@ Seven variants, each a short override of the default config in `configs/sensitiv
 ### 2026-11-18: branch claude/parcel-ica (user request)
 
 - New exploratory branch from `claude/decomposition`: ICA on parcel BOLD-like signals for physiological denoising and individual network maps on the icosahedral parcels. Plan with validation gates P1-P4 and four design decisions for the user in `docs/PARCEL_ICA_PLAN.md`. The design A outcome tests are on hold (user).
+- **Parcel ICA design decisions (user, 2026-11-18):** all four defaults accepted: denoising is a sensitivity analysis until P4; spatial ICA on noise-whitened parcel signals; full-band input, measures still in 0.01-0.1 Hz; individual ICA with Yeo-7 template matching first, group-informed methods once controls exist.
