@@ -166,3 +166,25 @@ def test_load_inputs_icosahedral_export(tmp_path):
     assert inp["atlas"] == "ico1002_7" and inp["nuisance_rank"] == 3 and len(inp["frames"]) == 190
     assert list(inp["ids"][:2]) == [1, 2] and inp["networks"][0] == "Vis" and inp["networks"][20] == "Default"
     assert (inp["hemisphere"] == "L").sum() == 20 and inp["table_found"]
+
+
+def test_denoised_output_and_removed_overlap(tmp_path):
+    """The flagged (strong respiratory) component is projected out of both channels; the denoised b loses the
+    respiratory signal; the overlap of the removed signal between two runs is reported."""
+    from mejoint import io
+    d, _ = _sim(n_parcels=300, reliability=0.6, include=("network", "respiratory"), amp={"respiratory": 0.6})
+    rb = tmp_path / "rb"
+    rb.mkdir()
+    _route_b_dir(rb, d, True)
+    cfg = io.load_config()
+    r1 = pi.run_dir(rb, cfg, tmp_path / "k9", k=9, n_seeds=4, n_jobs=1)
+    r2 = pi.run_dir(rb, cfg, tmp_path / "knull", k="null", n_seeds=4, n_jobs=1)
+    assert r1["n_flagged"] >= 1 and r2["k_rule"] == "leftover-channel null"
+    z = np.load(tmp_path / "k9" / "denoised.npz")
+    assert z["b"].shape == (300, 580) and int(z["removed_df"]) == r1["n_flagged"]
+    resp = d["truth"]["tc"][d["truth"]["names"].index("respiratory")][np.arange(580)]
+    before = np.mean([abs(np.corrcoef(d["b"][p, :580], resp)[0, 1]) for p in range(300)])
+    after = np.mean([abs(np.corrcoef(z["b"][p], resp)[0, 1]) for p in range(300)])
+    assert after < 0.5 * before
+    ov = pi.compare_removed([tmp_path / "k9", tmp_path / "knull"], tmp_path / "ov.json", 0.75)
+    assert len(ov["pairs"]) == 2 and (tmp_path / "ov.md").exists()

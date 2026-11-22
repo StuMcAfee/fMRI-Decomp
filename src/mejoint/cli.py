@@ -248,7 +248,7 @@ def main(argv=None) -> int:
     pq = sub.add_parser("parcel-ica", help="exploratory parcel ICA on one route B output (docs/PARCEL_ICA_PLAN.md, gate P2)")
     pq.add_argument("--route-b-dir", required=True, help="route B output folder (region_timecourses.npz, route_b.json)")
     pq.add_argument("--out", required=True)
-    pq.add_argument("--k", type=int, default=None, help="number of components (default: dimensions above the MP edge)")
+    pq.add_argument("--k", default=None, help="number of components, or 'null' for the leftover-channel count (default: dimensions above the MP edge, capped)")
     pq.add_argument("--input", choices=["b", "c0"], default="b", help="ICA input: BOLD-like b (default) or the OC-like c0 channel")
     pq.add_argument("--n-seeds", type=int, default=30)
     pq.add_argument("--config", default=None)
@@ -257,6 +257,10 @@ def main(argv=None) -> int:
     ps_.add_argument("--resources", default="outputs/atlases_fs32k")
     ps_.add_argument("--z-min", type=float, default=1.0, help="winner shown only where its z-scored loading is at least this")
     ps_.add_argument("--config", default=None)
+    pcm = sub.add_parser("parcel-ica-compare", help="overlap of the removed (flagged) signal between parcel ICA runs of one participant")
+    pcm.add_argument("--dirs", nargs="+", required=True)
+    pcm.add_argument("--out", required=True, help="JSON file (a .md summary is written next to it)")
+    pcm.add_argument("--config", default=None)
     rb = sub.add_parser("route-b", help="route B on one run: region shares, BOLD-like connectivity, integration with circular-shift nulls")
     rb.add_argument("--frontend-dir", required=True, help="front end of the run (maps, nuisance basis, echo paths in done.json)")
     rb.add_argument("--anat-dir", required=True, help="anatomy folder (labels_<atlas>.nii.gz, regions_<atlas>.json)")
@@ -493,11 +497,16 @@ def main(argv=None) -> int:
         repo = Path(__file__).resolve().parents[2]
         if repo in o.parents and (repo / "outputs") not in [o, *o.parents]:
             raise SystemExit("refusing to write participant results inside the repository (use outputs/...)")
-        parcel_ica.run_dir(args.route_b_dir, cfg, args.out, k=args.k, n_seeds=args.n_seeds, input_channel=args.input)
+        kk = args.k if args.k in (None, "null") else int(args.k)
+        parcel_ica.run_dir(args.route_b_dir, cfg, args.out, k=kk, n_seeds=args.n_seeds, input_channel=args.input)
         print(open(f"{args.out}/parcel_ica.md").read())
     elif args.cmd == "parcel-ica-surface":
         from . import parcel_ica
         print(parcel_ica.surface_figures(args.dir, args.resources, args.z_min))
+    elif args.cmd == "parcel-ica-compare":
+        from . import parcel_ica
+        parcel_ica.compare_removed(args.dirs, args.out, float(cfg["acquisition"]["tr_s"]))
+        print(open(args.out[:-5] + ".md" if args.out.endswith(".json") else args.out + ".md").read())
     elif args.cmd == "route-b":
         from . import regions
         regions.run_dir(args.frontend_dir, args.anat_dir, cfg, args.out, atlas=args.atlas, common_ids_file=args.common_ids)

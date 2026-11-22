@@ -36,7 +36,11 @@ echo "== parcel ICA | $NAME | $ATLAS | $(date) | host $(hostname) | job ${LSB_JO
 for IN in b c0; do
     "$PY" -m mejoint.cli parcel-ica --route-b-dir "$RB" --out "outputs/parcel_ica/$NAME/$ATLAS/$IN" --input "$IN" "${CARGS[@]}" || fail "parcel ICA ($IN) failed"
 done
-for K in ${K_LIST:-10 20}; do
+# b also at the leftover-channel count (b_knull) and at fixed k; then the overlap of the removed signal between them
+for K in null ${K_LIST:-10 20}; do
     "$PY" -m mejoint.cli parcel-ica --route-b-dir "$RB" --out "outputs/parcel_ica/$NAME/$ATLAS/b_k$K" --input b --k "$K" "${CARGS[@]}" || fail "parcel ICA (b, k $K) failed"
 done
-echo "== done $(date): $PWD/outputs/parcel_ica/$NAME/$ATLAS/{b,c0,b_k10,b_k20}/parcel_ica.md and parcel_ica.png"
+D="outputs/parcel_ica/$NAME/$ATLAS"
+DIRS=(); for K in null ${K_LIST:-10 20}; do [ -f "$D/b_k$K/parcel_ica.json" ] && DIRS+=("$D/b_k$K"); done
+"$PY" -m mejoint.cli parcel-ica-compare --dirs "${DIRS[@]}" --out "$D/removed_overlap.json" "${CARGS[@]}" || echo "warning: removed-signal comparison failed"
+echo "== done $(date): $PWD/outputs/parcel_ica/$NAME/$ATLAS/{b,c0,b_knull,b_k10,b_k20}/ (parcel_ica.md, surface_wta.png, denoised.npz) and removed_overlap.md"

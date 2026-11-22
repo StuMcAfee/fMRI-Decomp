@@ -306,7 +306,11 @@ def run_dir(route_b_dir, cfg: dict, out_dir, k: int | None = None, n_seeds: int 
     # without a given k, the MP count, capped (with 1876 parcels the count can reach hundreds, where the restart
     # clustering becomes slow and the components mostly split networks; P2 first look)
     k_max = int(cfg.get("parcel_ica", {}).get("k_max", 100))
-    kk = int(k or min(dim["k_mp"], k_max))
+    if k == "null":                                                    # the leftover-channel count (MP count if no null)
+        kk = int(min(dim["k_null"] if dim.get("k_null") is not None else dim["k_mp"], k_max))
+        k = None if dim.get("k_null") is None else k
+    else:
+        kk = int(int(k) if k else min(dim["k_mp"], k_max))
     tr = float(cfg["acquisition"]["tr_s"])
     resp = None
     try:
@@ -316,6 +320,7 @@ def run_dir(route_b_dir, cfg: dict, out_dir, k: int | None = None, n_seeds: int 
         pass
     res = {"route_b_dir": str(rb), "atlas": inp["atlas"], "source": inp["source"], "input": input_channel, "n_parcels": int(z.shape[0]), "n_frames": int(T), "df": int(df),
            "k_mp": dim["k_mp"], "k_null": dim.get("k_null"), "mp_edge": dim["mp_edge"], "k_used": kk,
+           "k_rule": "leftover-channel null" if k == "null" else ("given" if k else "MP edge (capped)"),
            "k_capped": bool(not k and dim["k_mp"] > k_max),
            "eigenvalues_top": [round(float(x), 3) for x in dim["eigenvalues"][:40]], "respiratory_peak_hz": resp,
            "rule": {"high_share": 0.5, "eta": 0.5}}
@@ -356,6 +361,11 @@ def run_dir(route_b_dir, cfg: dict, out_dir, k: int | None = None, n_seeds: int 
     res["n_flagged"] = int(sum(c["flag"] for c in comps))
     res["network_match"] = nm
     res["explained"] = round(float(ica["explained"]), 4)
+    try:
+        res["denoising"] = denoise_output(out, rb, inp, pr, ica["tc"], np.array([c["flag"] for c in comps]), tr,
+                                          tuple(inp["band_hz"]), nets, nuis)
+    except Exception as exc:                                           # never block the component results
+        print(f"denoised output failed: {exc}")
     np.save(out / "maps.npy", ica["maps"].astype(np.float32))
     np.save(out / "timecourses.npy", ica["tc"].astype(np.float32))
     io.write_tsv(out / "components.tsv", {k_: [c[k_] for c in comps] for k_ in comps[0]})
@@ -415,12 +425,128 @@ def surface_figures(out_dir, resources, z_min: float = 1.0) -> dict:
     return {"weights": files, "wta": str(out / "surface_wta.png")}
 
 
+def denoise_output(out, rb, inp, pr, tc, flags, tr, band, nets, nuisance_rank) -> dict:
+    """Denoised parcel signals: the flagged components' time courses projected out of both channels of every usable
+    parcel (one temporal projector, as for the motion regressors; it commutes with the split into b and a), over the
+    frames the ICA used. Writes denoised.npz (channels, b in 1/s, a, removed time courses, degrees of freedom used),
+    denoise_parcels.tsv (per parcel: share of in-band and of total BOLD-like variance removed) and, for the
+    icosahedral export, bold_denoised.ptseries.nii in the model's parcel order. Nothing in route B is changed."""
+    from pathlib import Path
+
+    from . import io
+    from .regions import band_pass
+    out, rb = Path(out), Path(rb)
+    ok = pr["ok"]
+    fr = inp["frames"] if inp["frames"] is not None else np.arange(np.asarray(inp["c0"]).shape[1])
+    c0 = np.asarray(inp["c0"], np.float64)[ok][:, fr]
+    c1 = np.asarray(inp["c1"], np.float64)[ok][:, fr]
+    c0 -= c0.mean(1, keepdims=True)
+    c1 -= c1.mean(1, keepdims=True)
+    R = np.asarray(inp["R"], np.float64)[ok]
+    rm = np.asarray(tc)[np.asarray(flags, bool)]
+    d0, d1 = remove_components(c0, rm), remove_components(c1, rm)
+
+    def phys(x0, x1):
+        a = x1 / R[:, 1, 1, None]
+        return (x0 - R[:, 0, 1, None] * a) / R[:, 0, 0, None] * 1000.0, a
+    b0, _ = phys(c0, c1)
+    b1, a1 = phys(d0, d1)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        inband = 1 - band_pass(b1, tr, band).var(1) / band_pass(b0, tr, band).var(1)
+        total = 1 - b1.var(1) / b0.var(1)
+    ids_ok = np.asarray(inp["ids"])[ok]
+    n_rm = int(len(rm))
+    np.savez_compressed(out / "denoised.npz", ids=ids_ok, frames=np.asarray(fr), c0=d0.astype(np.float32), c1=d1.astype(np.float32),
+                        b=b1.astype(np.float32), a=a1.astype(np.float32), removed_tc=rm.astype(np.float32),
+                        removed_components=np.flatnonzero(flags), removed_df=int(nuisance_rank) + n_rm)
+    io.write_tsv(out / "denoise_parcels.tsv", {"parcel": ids_ok.tolist(), "network": list(nets),
+                                               "inband_removed": [round(float(v), 4) for v in inband],
+                                               "total_removed": [round(float(v), 4) for v in total]})
+    if (rb / "bold.ptseries.nii").exists():                            # icosahedral export: same parcel axis
+        import nibabel as nib
+
+        from .surface import write_ptseries
+        pax = nib.load(str(rb / "bold.ptseries.nii")).header.get_axis(1)
+        B = np.full((len(pax), b1.shape[1]), np.nan)
+        B[ids_ok - 1] = b1
+        write_ptseries(B, pax, tr, out / "bold_denoised.ptseries.nii")
+    q = lambda v: [round(float(x), 4) for x in np.nanpercentile(v, [10, 50, 90])]
+    by_net = {n: round(float(np.nanmedian(inband[np.asarray(nets) == n])), 4) for n in sorted(set(nets)) if n and (np.asarray(nets) == n).any()}
+    return {"n_removed": n_rm, "removed_components": np.flatnonzero(flags).tolist(), "removed_df": int(nuisance_rank) + n_rm,
+            "band_hz": list(band), "inband_removed_p10_50_90": q(inband), "total_removed_p10_50_90": q(total),
+            "inband_removed_median_by_network": by_net}
+
+
+def compare_removed(dirs, out_path=None, tr: float | None = None) -> dict:
+    """How much of the signal one parcel ICA run removes is also removed by another (e.g. k = 10, 12, 20): for runs A
+    and B with flagged time-course subspaces Qa, Qb (same input, same frames), share(A in B) = |X Pa Pb|^2 / |X Pa|^2
+    on the whitened BOLD-like data X, over the whole band and over the analysis band."""
+    import json
+    from pathlib import Path
+
+    from . import io
+    from .regions import band_pass
+    runs = []
+    for d in dirs:
+        d = Path(d)
+        pj = json.loads((d / "parcel_ica.json").read_text())
+        flags = np.array([c["flag"] for c in pj.get("components", [])], bool)
+        tc = np.load(d / "timecourses.npy") if (d / "timecourses.npy").exists() else np.zeros((0, 0))
+        runs.append({"dir": str(d), "label": d.name, "k": pj.get("k_used"), "tc": tc[flags] if flags.any() else None, "pj": pj})
+    inp = load_inputs(runs[0]["pj"]["route_b_dir"])
+    pr = prepare(inp["c0"], inp["c1"], inp["R"], inp["noise_var"], None, inp["frames"])
+    X = pr["zb"]
+    Xb = band_pass(X, tr, tuple(inp["band_hz"])) if tr else None
+
+    def proj(tcs):
+        if tcs is None or len(tcs) == 0:
+            return None
+        Q, _ = np.linalg.qr((tcs - tcs.mean(1, keepdims=True)).T)
+        return Q
+    for r in runs:
+        r["Q"] = proj(r["tc"])
+    rows = []
+    for A in runs:
+        for B in runs:
+            if A is B:
+                continue
+            if A["Q"] is None or B["Q"] is None:
+                rows.append({"removed_by": A["label"], "also_removed_by": B["label"], "share": None})
+                continue
+            def share(Y):
+                YA = (Y @ A["Q"]) @ A["Q"].T
+                return float((((YA @ B["Q"]) @ B["Q"].T) ** 2).sum() / max((YA ** 2).sum(), 1e-30))
+            rows.append({"removed_by": A["label"], "k_A": A["k"], "n_A": int(A["Q"].shape[1]), "also_removed_by": B["label"],
+                         "k_B": B["k"], "n_B": int(B["Q"].shape[1]), "share": round(share(X), 4),
+                         "share_in_band": None if Xb is None else round(share(Xb), 4)})
+    res = {"runs": [{"label": r["label"], "k": r["k"], "n_removed": 0 if r["Q"] is None else int(r["Q"].shape[1])} for r in runs],
+           "pairs": rows}
+    if out_path:
+        io.write_json(Path(out_path), res)
+        L = ["# Overlap of the removed signal between parcel ICA runs", "",
+             "share = part of the BOLD-like signal removed by the first run that the second run also removes", "",
+             "| removed by (k, n removed) | also removed by (k, n removed) | share | share in band |", "|---|---|---|---|"]
+        for r in rows:
+            L.append(f"| {r['removed_by']} ({r.get('k_A')}, {r.get('n_A')}) | {r['also_removed_by']} ({r.get('k_B')}, {r.get('n_B')}) | "
+                     f"{'-' if r['share'] is None else format(r['share'], '.2f')} | "
+                     f"{'-' if r.get('share_in_band') is None else format(r['share_in_band'], '.2f')} |")
+        io.write_text(Path(out_path).with_suffix(".md"), "\n".join(L) + "\n")
+    return res
+
+
 def render(res: dict) -> str:
     L = [f"# Parcel ICA ({res['input']} input; exploratory, nothing removed from route B)", "",
          f"- {res['n_parcels']} cortical parcels, {res['n_frames']} frames (df {res['df']}); breathing peak "
          f"{res['respiratory_peak_hz'] or 'not found (0.3 Hz assumed)'} Hz",
          f"- Dimensions above the MP edge ({res['mp_edge']:.2f}): {res['k_mp']}; above the leftover-channel null: {res['k_null']}; k used {res['k_used']}",
          f"- Candidate rule (P1): signal share above 0.12 Hz > 0.5 or S0 coupling > 0.5: {res.get('n_flagged', 0)} flagged", ""]
+    dn = res.get("denoising")
+    if dn:
+        L[-1:-1] = [f"- Denoised output (flagged components projected out; denoised.npz): {dn['n_removed']} removed "
+                    f"(degrees of freedom used {dn['removed_df']}); share of BOLD-like variance removed per parcel, "
+                    f"10th / 50th / 90th percentile: in {dn['band_hz'][0]}-{dn['band_hz'][1]} Hz {dn['inband_removed_p10_50_90']}, "
+                    f"whole band {dn['total_removed_p10_50_90']}",
+                    "- In-band share removed, median by network: " + ", ".join(f"{n} {v:.3f}" for n, v in dn["inband_removed_median_by_network"].items())]
     if res.get("components"):
         L += ["| comp | stability Iq | in band | above 0.12 Hz | at breathing | peak (Hz, ratio) | S0 coupling | global r | network (r) | flag |",
               "|---|---|---|---|---|---|---|---|---|---|"]
