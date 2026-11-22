@@ -303,7 +303,10 @@ def run_dir(route_b_dir, cfg: dict, out_dir, k: int | None = None, n_seeds: int 
     if pr.get("null_channels"):
         nulls = pr["null_channels"] if input_channel == "c0" else [n for n in pr["null_channels"]]
     dim = dimensionality(z, df, nulls)
-    kk = int(k or dim["k_mp"])
+    # without a given k, the MP count, capped (with 1876 parcels the count can reach hundreds, where the restart
+    # clustering becomes slow and the components mostly split networks; P2 first look)
+    k_max = int(cfg.get("parcel_ica", {}).get("k_max", 100))
+    kk = int(k or min(dim["k_mp"], k_max))
     tr = float(cfg["acquisition"]["tr_s"])
     resp = None
     try:
@@ -313,6 +316,7 @@ def run_dir(route_b_dir, cfg: dict, out_dir, k: int | None = None, n_seeds: int 
         pass
     res = {"route_b_dir": str(rb), "atlas": inp["atlas"], "source": inp["source"], "input": input_channel, "n_parcels": int(z.shape[0]), "n_frames": int(T), "df": int(df),
            "k_mp": dim["k_mp"], "k_null": dim.get("k_null"), "mp_edge": dim["mp_edge"], "k_used": kk,
+           "k_capped": bool(not k and dim["k_mp"] > k_max),
            "eigenvalues_top": [round(float(x), 3) for x in dim["eigenvalues"][:40]], "respiratory_peak_hz": resp,
            "rule": {"high_share": 0.5, "eta": 0.5}}
     if kk < 2:
