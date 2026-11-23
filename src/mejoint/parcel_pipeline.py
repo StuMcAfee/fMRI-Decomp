@@ -403,6 +403,10 @@ def run(input_dir, cfg: dict, out_dir, resources=None, n_jobs: int | None = None
     reliable = rel >= rmin
     res = {"input": str(input_dir), "atlas": inp["atlas"], "n_parcels_total": n_total, "n_parcels_with_voxels": int(len(ids)),
            "n_frames": int(T), "tr_s": tr, "band_hz": list(band), "nuisance_rank": nuis, "respiratory_peak_hz": resp,
+           # fewer frames than the common number: k, node count and other count-based measures are not comparable
+           # with the other participants (user, 2026-11-23)
+           "n_frames_common": G.get("n_volumes_common"),
+           "comparable": bool(G.get("n_volumes_common") is None or T >= int(G.get("n_volumes_common"))),
            "settings": P_, "reliability_min": rmin,
            "stage2": {"rounds": [{k_: v for k_, v in r.items() if k_ not in ("maps_removed", "tc_removed")} for r in rounds],
                       "n_removed": q, "stop": stop, "cap_reached": stop == "maximum number of rounds reached"},
@@ -512,7 +516,11 @@ def run(input_dir, cfg: dict, out_dir, resources=None, n_jobs: int | None = None
 def render(res: dict) -> str:
     m, s2, s3 = res["metrics"], res["stage2"], res["stage3"]
     f = lambda v: "-" if v is None or (isinstance(v, float) and not np.isfinite(v)) else (f"{v:.3f}" if isinstance(v, float) else str(v))
-    L = ["# Parcel pipeline (icosahedral parcels; exploratory, route B unchanged)", "",
+    L = ["# Parcel pipeline (icosahedral parcels; exploratory, route B unchanged)", ""]
+    if not res.get("comparable", True):
+        L += [f"**Not comparable: {res['n_frames']} frames, fewer than the common {res.get('n_frames_common')}; k, node count and other "
+              "count-based measures cannot be compared with other participants.**", ""]
+    L += [
          f"- {res['n_parcels_with_voxels']} of {res['n_parcels_total']} parcels with voxels; {res['n_frames']} frames; breathing peak "
          + (f"{res['respiratory_peak_hz']} Hz" if res['respiratory_peak_hz'] else "not found in the motion parameters (0.3 Hz assumed)"),
          f"- Stage 2 (non-neural removal): {s2['n_removed']} components removed over {len(s2['rounds'])} round(s); stopped: {s2['stop']}"

@@ -284,6 +284,7 @@ canvas{{width:100%;height:150px;background:var(--card);border:1px solid var(--li
 @media (max-width:700px){{.two{{grid-template-columns:1fr}}}}
 </style></head><body><main>
 <h1>Parcel pipeline: networks and denoising</h1>
+{"" if res.get("comparable", True) else f"<p style='border:1px solid #d1366b;border-radius:6px;padding:6px 10px;color:#d1366b'><b>Not comparable:</b> {res['n_frames']} frames, fewer than the common {res.get('n_frames_common')}. k, node count and other count-based measures cannot be compared with other participants.</p>"}
 <p class="m">Icosahedral parcels (fs_LR 32k, 1876); {res['n_frames']} frames, TR {res['tr_s']} s; breathing peak {str(res['respiratory_peak_hz']) + ' Hz' if res['respiratory_peak_hz'] else 'not found in the motion parameters'}.
 Exploratory: route B is unchanged.</p>
 <div class="kpi">
