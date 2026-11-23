@@ -30,6 +30,7 @@ for H in L R; do
     get "$FF/tpl-fs32k/tpl-fs32k_hemi-${H}_inflated.surf.gii" "tpl-fs32k_hemi-${H}_inflated.surf.gii"   # for figures
 done
 get "$CBIG/Schaefer2018_200Parcels_7Networks_order.dlabel.nii" "Schaefer2018_200Parcels_7Networks_order.dlabel.nii"
+get "$CBIG/Schaefer2018_200Parcels_17Networks_order.dlabel.nii" "Schaefer2018_200Parcels_17Networks_order.dlabel.nii"   # Yeo-17 partition
 get "$CCC/Nettekoven_2024_Fusion_L2.pdconn.nii" "Nettekoven_2024_Fusion_L2.pdconn.nii"
 get "$FF/tpl-SUIT/tpl-SUIT_res-3_gmcmask.nii" "tpl-SUIT_res-3_gmcmask.nii"
 # the connectivity model as published (sha256 of the Git LFS object, checked 2026-11-17)

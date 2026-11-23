@@ -261,6 +261,11 @@ def main(argv=None) -> int:
     pcm.add_argument("--dirs", nargs="+", required=True)
     pcm.add_argument("--out", required=True, help="JSON file (a .md summary is written next to it)")
     pcm.add_argument("--config", default=None)
+    pp = sub.add_parser("parcel-pipeline", help="two-stage parcel denoising, networks, integration measures and HTML report (icosahedral export)")
+    pp.add_argument("--input", required=True, help="icosahedral export folder (parcel_channels.npz, export.json)")
+    pp.add_argument("--out", required=True)
+    pp.add_argument("--resources", default=None, help="fs_LR 32k resources (default: outputs/atlases_fs32k)")
+    pp.add_argument("--config", default=None)
     rb = sub.add_parser("route-b", help="route B on one run: region shares, BOLD-like connectivity, integration with circular-shift nulls")
     rb.add_argument("--frontend-dir", required=True, help="front end of the run (maps, nuisance basis, echo paths in done.json)")
     rb.add_argument("--anat-dir", required=True, help="anatomy folder (labels_<atlas>.nii.gz, regions_<atlas>.json)")
@@ -507,6 +512,16 @@ def main(argv=None) -> int:
         from . import parcel_ica
         parcel_ica.compare_removed(args.dirs, args.out, float(cfg["acquisition"]["tr_s"]))
         print(open(args.out[:-5] + ".md" if args.out.endswith(".json") else args.out + ".md").read())
+    elif args.cmd == "parcel-pipeline":
+        from pathlib import Path
+
+        from . import parcel_pipeline
+        o = Path(args.out).resolve()
+        repo = Path(__file__).resolve().parents[2]
+        if repo in o.parents and (repo / "outputs") not in [o, *o.parents]:
+            raise SystemExit("refusing to write participant results inside the repository (use outputs/...)")
+        parcel_pipeline.run(args.input, cfg, args.out, resources=args.resources)
+        print(open(f"{args.out}/pipeline.md").read())
     elif args.cmd == "route-b":
         from . import regions
         regions.run_dir(args.frontend_dir, args.anat_dir, cfg, args.out, atlas=args.atlas, common_ids_file=args.common_ids)

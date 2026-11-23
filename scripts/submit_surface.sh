@@ -33,9 +33,9 @@ for r in "${RUNS[@]}"; do
     bsub -q standard -n 4 -R "rusage[mem=8000] span[hosts=1]" -env "all" -J "$J" -o "logs/surface_${r}_%J.log" \
          "bash scripts/surface_labels.lsf $r $CFG"
     if [ "$ICA" = 1 ]; then
-        bsub -q standard -n 4 -R "rusage[mem=6000] span[hosts=1]" -env "all" -w "done($J)" -J "pica_${r:0:40}" -o "logs/parcel_ica_${r}_%J.log" \
-             "bash scripts/parcel_ica.lsf $r ico1002_7 $CFG"
+        bsub -q standard -n 4 -R "rusage[mem=6000] span[hosts=1]" -env "all" -w "done($J)" -J "pp_${r:0:40}" -o "logs/parcel_pipeline_${r}_%J.log" \
+             "bash scripts/parcel_pipeline.lsf $r $CFG"
     fi
     n=$((n + 1))
 done
-echo "submitted surface jobs for $n runs$([ "$ICA" = 1 ] && echo ', each followed by its parcel ICA job')"
+echo "submitted surface jobs for $n runs$([ "$ICA" = 1 ] && echo ', each followed by its parcel pipeline job')"

@@ -1,0 +1,24 @@
+#!/bin/bash
+# Two-stage parcel pipeline on one participant's icosahedral export (docs/PARCEL_ICA_PLAN.md section 8; exploratory):
+# repeated removal of non-neural components, network decomposition at the thermal-noise threshold, node count,
+# coverage, integration measures (Yeo-7, Yeo-17, data-driven partitions), denoised signals and report.html.
+# Arguments: <run folder name or subject number> [config]
+# Submit (login node, from the repository): bsub -q standard -n 4 -R "rusage[mem=6000] span[hosts=1]" -env "all" -J ppipe -o "logs/parcel_pipeline_%J.log" bash scripts/parcel_pipeline.lsf <run> [config]
+# Input: outputs/route_b_surf/<run>/ico1002_7 (scripts/surface_labels.lsf); output: outputs/parcel_pipeline/<run>/
+set -uo pipefail
+RUNARG="${1:-}"; CFG="${2:-}"
+PY="${MEJOINT_PY:-$HOME/miniconda3_new/envs/mejoint/bin/python}"
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}" PYTHONUNBUFFERED=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
+fail() { echo "PREFLIGHT FAILED: $*" >&2; exit 2; }
+ROOT="outputs/route_b_surf"
+if [ -d "$ROOT/$RUNARG" ]; then NAME="$RUNARG"; else NAME="$(ls -d "$ROOT"/sub-"$RUNARG"_* 2>/dev/null | head -n 1)"; NAME="${NAME:+$(basename "$NAME")}"; fi
+IN="$ROOT/$NAME/ico1002_7"
+[ -n "$NAME" ] && [ -f "$IN/parcel_channels.npz" ] || fail "no icosahedral export for '$RUNARG' (expected $IN/parcel_channels.npz; run scripts/surface_labels.lsf)"
+for f in tpl-fs32k_hemi-L_inflated.surf.gii Schaefer2018_200Parcels_7Networks_order.dlabel.nii Schaefer2018_200Parcels_17Networks_order.dlabel.nii; do
+    [ -f "outputs/atlases_fs32k/$f" ] || fail "missing outputs/atlases_fs32k/$f (run scripts/fetch_fs32k_resources.sh on the login node)"
+done
+CARGS=(); [ -n "$CFG" ] && { [ -f "$CFG" ] || fail "config $CFG not found"; CARGS=(--config "$CFG"); }
+echo "== parcel pipeline | $NAME | $(date) | host $(hostname) | job ${LSB_JOBID:-interactive} | git $(git rev-parse --short HEAD 2>/dev/null || echo '?')"
+"$PY" -m mejoint.cli parcel-pipeline --input "$IN" --out "outputs/parcel_pipeline/$NAME" "${CARGS[@]}" || fail "parcel pipeline failed"
+echo "== done $(date): $PWD/outputs/parcel_pipeline/$NAME/report.html"

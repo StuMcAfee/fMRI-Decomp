@@ -310,3 +310,13 @@ simulate:                     # Phase 1 ground-truth simulator; tests override p
     dephasing_hz_max: 8.0     # field spread across a voxel; signal x |sinc(df * TE)|
     t2s_ms: 22.0
     resp_modulation: 0.3      # df(t) = df0 (1 + 0.3 resp(t)): dynamic curvature
+
+parcel_pipeline:               # two-stage parcel denoising and networks (docs/PARCEL_ICA_PLAN.md section 8; exploratory)
+  max_rounds: 5                 # stage 2 repeats at most this often (reaching it is reported)
+  k_max: 100                    # cap on any automatic k
+  z_min: 1.0                    # winner-take-all: winner shown where its z-scored loading reaches this
+  n_seeds: 30                   # ICA restarts per decomposition
+  n_null: 50                    # circular-shift surrogates for the participation ratio
+  high_share: 0.5               # non-neural criterion: noise-debiased signal share above high_hz
+  high_hz: 0.12
+  eta: 0.5                      # non-neural criterion: S0 coupling

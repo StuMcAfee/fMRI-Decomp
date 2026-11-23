@@ -233,3 +233,70 @@ def winner_take_all(maps, parcel_ids, parcel_networks, res: dict, path, flagged=
     plt.close(fig)
     return {"winner": [int(w) for w in win], "component_network": [(n, round(r, 3)) for n, r in cn],
             "n_parcels_no_winner": int((win < 0).sum()), "n_components_winning": int(len(set(win[win >= 0].tolist())))}
+
+
+# ------------------------------------------------------------------ generic rows (pipeline report)
+def vertex_colours(values_by_id: dict, labels: np.ndarray, cmap, norm, missing=MEDIAL) -> np.ndarray:
+    """Per-vertex RGBA from parcel values (parcels without a value: `missing`)."""
+    vv = vertex_values(values_by_id, labels)
+    return np.where(np.isfinite(vv)[:, None], cmap(norm(np.nan_to_num(vv))), missing)
+
+
+def label_colours(colour_by_id: dict, labels: np.ndarray, missing=MEDIAL) -> np.ndarray:
+    """Per-vertex RGBA from a colour per parcel id."""
+    vc = np.tile(np.asarray(missing, float), (labels.size, 1))
+    for pid, c in colour_by_id.items():
+        vc[labels == pid] = c
+    return vc
+
+
+def rows_figure(res: dict, rows: list, path, legend=None, cbar=None, row_height: float = 1.55, width: float = 10.0,
+                dpi: int = 110, titles_left: bool = True) -> None:
+    """Several rows of four views; rows = [(title, {"L": vertex colours, "R": vertex colours}), ...]; optional legend
+    handles (right) or colour bar (cmap, norm, label)."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    n = len(rows)
+    extra = 0.32 if (legend or cbar) else 0.0
+    fig = plt.figure(figsize=(width * (1 + extra * 0.5), row_height * n + 0.35))
+    wr = ([0.55] if titles_left else []) + [1, 1, 1, 1] + ([0.9] if legend else [0.06] if cbar else [])
+    gs = fig.add_gridspec(n, len(wr), width_ratios=wr, hspace=0.08, wspace=0.02, left=0.01, right=0.97 if cbar else 0.99,
+                          top=1 - 0.3 / (row_height * n + 0.35), bottom=0.01)
+    off = 1 if titles_left else 0
+    for i, (title, vcs) in enumerate(rows):
+        if titles_left:
+            tax = fig.add_subplot(gs[i, 0])
+            tax.axis("off")
+            tax.text(0, 0.5, title, fontsize=8, va="center", ha="left", color="#222", transform=tax.transAxes)
+        for c, (h, view) in enumerate(VIEWS):
+            ax = fig.add_subplot(gs[i, c + off])
+            draw(ax, *res["surf"][h], vcs[h], h, view)
+            if i == 0:
+                ax.set_title(f"{'left' if h == 'L' else 'right'} {view}", fontsize=7, color="#555")
+    if legend:
+        lax = fig.add_subplot(gs[:, -1])
+        lax.axis("off")
+        lax.legend(handles=legend, loc="upper left", fontsize=6.5 if len(legend) <= 26 else 5.2, frameon=False,
+                   ncol=1 if len(legend) <= 26 else 2)
+    elif cbar:
+        cax = fig.add_subplot(gs[:, -1])
+        cb = fig.colorbar(matplotlib.cm.ScalarMappable(norm=cbar[1], cmap=cbar[0]), cax=cax)
+        cb.set_label(cbar[2], fontsize=7)
+        cb.ax.tick_params(labelsize=6)
+    fig.savefig(path, dpi=dpi)
+    plt.close(fig)
+
+
+def network_colours(resources, dlabel_name: str) -> dict:
+    """Network name -> RGBA from a Schaefer dlabel's label table (the atlas colours)."""
+    import nibabel as nib
+
+    from . import surface
+    lt = nib.load(str(Path(resources) / dlabel_name)).header.get_axis(0).label[0]
+    out = {}
+    for k, (nm, rgba) in lt.items():
+        n = surface.network_of(nm) if int(k) > 0 else ""
+        if n and n not in out:
+            out[n] = np.array(rgba, float)
+    return out
