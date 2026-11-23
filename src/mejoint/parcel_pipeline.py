@@ -30,7 +30,8 @@ import numpy as np
 from . import parcel_ica as pi
 
 DEFAULTS = {"k_max": 100, "max_rounds": 5, "z_min": 1.0, "n_seeds": 30, "n_null": 50, "high_share": 0.5, "eta": 0.5,
-            "high_hz": 0.12, "stage3_k": "fidelity", "fidelity_min": 0.7, "edge_fdr_q": 0.05}
+            "high_hz": 0.12, "stage3_k": "fidelity", "fidelity_min": 0.7, "edge_fdr_q": 0.05, "dominance_q": 0.95,
+            "n_perm_dominance": 200}
 
 
 # ------------------------------------------------------------------ anatomy of the icosahedral parcels
@@ -268,6 +269,25 @@ def integration(z: np.ndarray, noise_var: np.ndarray, tr: float, band, partition
     return out
 
 
+def dominance(Zm: np.ndarray, rng, n_perm: int = 200) -> dict:
+    """Per parcel: strength z1 (strongest z-scored loading), margin z1 - z2, and the margin's percentile against a
+    null in which every component's map is shuffled across parcels independently (same k, same value distributions,
+    alignment between maps destroyed; user, 2026-11-23). The null margins are pooled over parcels and shuffles."""
+    Zm = np.asarray(Zm, float)
+    if Zm.shape[1] < 2:
+        n = Zm.shape[0]
+        return {"z1": Zm[:, 0] if Zm.shape[1] else np.zeros(n), "margin": np.full(n, np.nan), "percentile": np.full(n, np.nan)}
+    srt = np.sort(Zm, axis=1)
+    z1, margin = srt[:, -1], srt[:, -1] - srt[:, -2]
+    null = []
+    for _ in range(int(n_perm)):
+        Zp = np.sort(rng.permuted(Zm, axis=0), axis=1)
+        null.append(Zp[:, -1] - Zp[:, -2])
+    null = np.sort(np.concatenate(null))
+    pct = np.searchsorted(null, margin, side="right") / null.size
+    return {"z1": z1, "margin": margin, "percentile": pct}
+
+
 def component_labels(maps: np.ndarray, ids: np.ndarray, nets7, nets17, n_left: int = 938) -> list:
     """Per component: best positive Yeo-7 and Yeo-17 overlap (correlation of the z-scored map with the network
     indicator) and hemispheric asymmetry of its positive loadings ((left - right) / (left + right))."""
@@ -421,7 +441,13 @@ def run(input_dir, cfg: dict, out_dir, resources=None, n_jobs: int | None = None
         Zm = zscore(ica3["maps"])
         win_full = np.argmax(Zm, axis=1)
         zwin = Zm[np.arange(len(win_full)), win_full]
-        win = np.where(zwin >= P_["z_min"], win_full, -1)
+        # dominance (user, 2026-11-23): strong = z1 >= z_min; clear = margin above the shuffled-map null's
+        # dominance_q quantile; dominated = strong and clear (the winner); shared = strong, not clear; weak = not strong
+        dom = dominance(Zm, np.random.default_rng(seed_root + 37), int(P_["n_perm_dominance"]))
+        strong = dom["z1"] >= P_["z_min"]
+        clear = dom["percentile"] >= P_["dominance_q"]
+        category = np.where(~strong, "weak", np.where(clear, "dominated", "shared"))
+        win = np.where(strong & clear, win_full, -1)
         for j in range(k3):
             comp3.append({"component": j, "iq": round(float(ica3["iq"][j]), 3), **labs[j],
                           "band_share": round(float(sp3["band_share"][j]), 3), "high_share": round(float(sp3["high_share"][j]), 3),
@@ -429,7 +455,8 @@ def run(input_dir, cfg: dict, out_dir, resources=None, n_jobs: int | None = None
                           "eta": None if not np.isfinite(s03["eta"][j]) else round(float(s03["eta"][j]), 3),
                           "meets_nonneural_criteria": bool(rule(sp3, s03)[j]),
                           "n_parcels_won": int(((win == j) & reliable).sum())})
-        wta = {"win": win, "win_full": win_full, "zwin": zwin, "maps": ica3["maps"], "tc": ica3["tc"], "tc_noise_var": ica3["tc_noise_var"]}
+        wta = {"win": win, "win_full": win_full, "zwin": zwin, "maps": ica3["maps"], "tc": ica3["tc"], "tc_noise_var": ica3["tc_noise_var"],
+               "dom_pct": dom["percentile"], "margin": dom["margin"], "category": category}
     res["stage3"]["components"] = comp3
 
     # ---- measures
@@ -440,7 +467,10 @@ def run(input_dir, cfg: dict, out_dir, resources=None, n_jobs: int | None = None
                "k_stage3": k3, "node_count": nc["node_count"], "components_winning": n_win,
                "patches_per_component": round(nc["node_count"] / n_win, 3) if n_win else None,
                "single_parcel_patches": int(sum(1 for s in nc["patch_sizes"] if s == 1)),
-               "undominated_pct": round(100.0 * float(((win_r < 0) & reliable).sum()) / max(int(reliable.sum()), 1), 2) if wta else None,
+               "undominated_pct": round(100.0 * float(((wta["category"] == "shared") & reliable).sum()) / max(int(reliable.sum()), 1), 2) if wta else None,
+               "weak_pct": round(100.0 * float(((wta["category"] == "weak") & reliable).sum()) / max(int(reliable.sum()), 1), 2) if wta else None,
+               "dominated_pct": round(100.0 * float(((wta["category"] == "dominated") & reliable).sum()) / max(int(reliable.sum()), 1), 2) if wta else None,
+               "dominance_percentile_median": round(float(np.nanmedian(wta["dom_pct"][reliable])), 3) if wta and reliable.any() else None,
                "n_removed_stage2": q,
                "signal_sd_band_median": round(float(np.median(signal_sd_band)), 5),
                "noise_sd_band_median": round(float(np.median(noise_sd_band)), 5)}
@@ -495,6 +525,8 @@ def run(input_dir, cfg: dict, out_dir, resources=None, n_jobs: int | None = None
                                        "signal_sd_band": [round(float(v), 5) for v in signal_sd_band],
                                        "noise_sd_band": [round(float(v), 5) for v in noise_sd_band],
                                        "winner": (wta["win"].tolist() if wta else [-1] * len(ids)),
+                                       "dominance": (wta["category"].tolist() if wta else [""] * len(ids)),
+                                       "dominance_percentile": ([num(v) for v in wta["dom_pct"]] if wta else [None] * len(ids)),
                                        "strongest": (wta["win_full"].tolist() if wta else [-1] * len(ids)),
                                        **{f"pc_{p}": [num(v) for v in pcmap[p]] for p in pcmap}})
     np.savez_compressed(out / "stage3.npz", ids=ids, maps=wta["maps"] if wta else np.zeros((len(ids), 0)),
@@ -531,7 +563,9 @@ def render(res: dict) -> str:
          f"- Reliable parcels: {m['reliable_parcels']} ({m['reliable_coverage_pct']} % of {res['n_parcels_total']})",
          f"- Node count (contiguous same-winner patches): {m['node_count']}; components winning parcels: {m['components_winning']} of k = {m['k_stage3']}; "
          f"patches per component: {f(m['patches_per_component'])}; single-parcel patches: {m['single_parcel_patches']}",
-         f"- Undominated (reliable parcels with no component z >= {res['settings']['z_min']}): {f(m['undominated_pct'])} %",
+         f"- Dominance of reliable parcels (strong: z >= {res['settings']['z_min']}; clear margin: above the shuffled-map null's "
+         f"{res['settings']['dominance_q']} quantile): dominated {f(m.get('dominated_pct'))} %, undominated (shared) {f(m['undominated_pct'])} %, "
+         f"weak {f(m.get('weak_pct'))} %; median margin percentile {f(m.get('dominance_percentile_median'))}",
          f"- In-band BOLD-like amplitude, median over parcels (1/s): signal {m.get('signal_sd_band_median')}, thermal noise {m.get('noise_sd_band_median')}", "",
          "## Integration (noise-corrected in-band correlations; graph measures on positive weights clipped at 1)", "",
          "Graph measures use correlations beyond the brain-wide pattern (first pattern removed) and only edges reliably above chance "

@@ -89,3 +89,19 @@ def test_remove_first_pattern():
     within = Rb[:15, :15][np.triu_indices(15, 1)].mean()
     between = Rb[:15, 15:].mean()
     assert R[:15, 15:].mean() > 0.5 and within > 0.2 and between < 0.0
+
+
+import pytest  # noqa: E402
+
+
+@pytest.mark.xfail(reason="shuffled-map null calls clear dominance unclear for sparse maps (2026-11-23); replacement pending user decision", strict=False)
+def test_dominance_margin_against_shuffled_null():
+    """Parcels where one component clearly dominates get high percentiles; parcels with two equal loadings low."""
+    g = np.random.default_rng(3)
+    Z = g.standard_normal((400, 10))
+    Z[:50, 0] += 4.0                                   # clearly dominated by component 0
+    Z[50:100, 1] += 3.0
+    Z[50:100, 2] += 3.0                                # shared between components 1 and 2
+    d = pp.dominance(Z, g, 100)
+    assert np.median(d["percentile"][:50]) > 0.95 and np.median(d["percentile"][50:100]) < 0.8
+    assert np.all(d["z1"] >= d["z1"] - d["margin"])

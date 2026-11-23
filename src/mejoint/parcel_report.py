@@ -122,7 +122,7 @@ def build(out, res, ids, rel, reliable, rounds, wta, sets, pcmap, nets7, nets17,
             rows.append(("Yeo-17", {h: sp.label_colours({p_: col17.get(n, sp.MEDIAL) for p_, n in zip(ids.tolist(), nets17)}, R["labels"][h]) for h in ("L", "R")}))
         won = sorted(set(win[(win >= 0) & reliable].tolist()))
         leg = [Patch(color=cols[j], label=f"c{j}: {comps[j]['yeo7']}") for j in won][:40]
-        leg += [Patch(color=sp.NOWIN, label="undominated (no z >= 1)"), Patch(color=DROPPED, label="below reliability floor"),
+        leg += [Patch(color=sp.NOWIN, label="undominated or weak"), Patch(color=DROPPED, label="below reliability floor"),
                 Patch(color=sp.MEDIAL, label="no parcel / no voxels")]
         sp.rows_figure(R, rows, fd / "partitions.png", legend=leg, row_height=1.55, width=10.0, dpi=110)
         imgs["partitions"] = _b64(fd / "partitions.png")
@@ -132,6 +132,13 @@ def build(out, res, ids, rel, reliable, rounds, wta, sets, pcmap, nets7, nets17,
     sp.rows_figure(R, [("reliability", {h: sp.vertex_colours(vals, R["labels"][h], seq, Normalize(0, 1)) for h in ("L", "R")})],
                    fd / "reliability.png", cbar=(seq, Normalize(0, 1), f"reliability (floor {res['reliability_min']})"), row_height=1.5)
     imgs["reliability"] = _b64(fd / "reliability.png")
+    if wta and "dom_pct" in wta:                                       # continuous dominance map (weak parcels grey)
+        cby = {}
+        for p_, r_, c_, v_ in zip(ids.tolist(), reliable, wta["category"], wta["dom_pct"]):
+            cby[p_] = DROPPED if not r_ else (np.array([0.80, 0.80, 0.78, 1.0]) if c_ == "weak" else seq(float(v_)))
+        sp.rows_figure(R, [("dominance\n(margin percentile)", {h: sp.label_colours(cby, R["labels"][h]) for h in ("L", "R")})],
+                       fd / "dominance.png", cbar=(seq, Normalize(0, 1), "margin percentile vs shuffled maps"), row_height=1.5)
+        imgs["dominance"] = _b64(fd / "dominance.png")
     if amp is not None:                                                # signal amplitude and thermal noise, same scale
         vmax = float(np.nanpercentile(np.r_[amp["signal"], amp["noise"]], 98)) or 1.0
         nrm = Normalize(0, vmax)
@@ -291,7 +298,7 @@ Exploratory: route B is unchanged.</p>
 <div><span class="m">reliable coverage</span><b>{m['reliable_coverage_pct']} %</b><span class="m">{m['reliable_parcels']} parcels</span></div>
 <div><span class="m">node count</span><b>{m['node_count']}</b><span class="m">{_fmt(m['patches_per_component'], 2)} patches / component</span></div>
 <div><span class="m">network components (k)</span><b>{m['k_stage3']}</b><span class="m">map fidelity &ge; {s3.get('fidelity_min')} &middot; {m['components_winning']} win parcels</span></div>
-<div><span class="m">undominated</span><b>{_fmt(m['undominated_pct'], 1)} %</b><span class="m">of reliable parcels</span></div>
+<div><span class="m">undominated (shared)</span><b>{_fmt(m['undominated_pct'], 1)} %</b><span class="m">weak {_fmt(m.get('weak_pct'), 1)} % of reliable parcels</span></div>
 <div><span class="m">non-neural removed</span><b>{s2['n_removed']}</b><span class="m">{len(s2['rounds'])} round(s){' &middot; CAP REACHED' if s2['cap_reached'] else ''}</span></div>
 </div>
 
@@ -303,10 +310,16 @@ Labels give the best positive overlap with Yeo-7 / Yeo-17; asymmetry = (left - r
 <div class="two"><canvas id="tcv"></canvas><canvas id="spv"></canvas></div></div>
 
 <h2>Partitions</h2>
-<p class="m">Data-driven: each reliable parcel coloured by its winning component (z &ge; {res['settings']['z_min']}); hue = the component's best Yeo-7 network,
+<p class="m">Data-driven: each reliable parcel coloured by its winning component (z &ge; {res['settings']['z_min']} and a clear margin over the second strongest); hue = the component's best Yeo-7 network,
 lightness steps separate components of one network; patch borders darkened. Node count = contiguous same-winner patches ({m['node_count']},
 single-parcel patches {m['single_parcel_patches']}).</p>
 {img('partitions', 'partitions')}
+<h4>Dominance</h4>
+<p class="m">For each reliable parcel: how clearly its strongest component exceeds the second strongest, as the percentile of that margin
+against maps shuffled across parcels (same k). Dark = one network clearly owns the parcel; light = two or more load comparably (shared,
+undominated above the {res['settings'].get('dominance_q')} quantile cut); grey = no strong component (weak); dark grey = below the reliability floor.
+Dominated {_fmt(m.get('dominated_pct'), 1)} %, undominated (shared) {_fmt(m['undominated_pct'], 1)} %, weak {_fmt(m.get('weak_pct'), 1)} %.</p>
+{img('dominance', 'dominance')}
 
 <h2>Integration</h2>
 <p class="m">Noise-corrected in-band correlations; participation ratio (PR) with the circular-shift null median; participation coefficient (PC) and

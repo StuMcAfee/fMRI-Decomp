@@ -322,4 +322,6 @@ parcel_pipeline:               # two-stage parcel denoising and networks (docs/P
   eta: 0.5                      # non-neural criterion: S0 coupling
   stage3_k: fidelity            # stage 3 k: 'fidelity' (expected map correlation >= fidelity_min; user 2026-11-23) or 'mp' (thermal-noise edge)
   fidelity_min: 0.7
+  dominance_q: 0.95             # a parcel's strongest component dominates when its margin over the second exceeds this quantile of the shuffled-map null (user 2026-11-23)
+  n_perm_dominance: 200
   edge_fdr_q: 0.05              # graph measures keep only edges above their circular-shift null at this false discovery rate (user 2026-11-23)
