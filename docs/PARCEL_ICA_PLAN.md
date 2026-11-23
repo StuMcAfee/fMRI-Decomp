@@ -134,5 +134,7 @@ Decided (user, 2026-11-23):
 - In the node count, no-clear-winner parcels are gaps (like dropped parcels); single-parcel islands count as patches.
 - Undominated share: the percentage of reliable parcels with no clear winner, reported as its own metric.
 
-Open: stage 2 stopping rule (fixed leftover-channel count, or repeat decompose-and-remove until no component meets the
-non-neural criteria).
+- Stage 2 stopping rule: repeat decompose-and-remove until no component meets the non-neural criteria, each round
+  starting from the leftover-channel count of the data remaining (user, 2026-11-23). The user does not expect this
+  physiology to differ between PFS and non-PFS patients; the pilot's different acquisition sequence (not only its echo
+  number) may explain its different noise and counts.
