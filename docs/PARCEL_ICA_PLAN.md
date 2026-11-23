@@ -122,5 +122,13 @@ Decided (user, 2026-11-23):
 - Graph view in the report: connectivity matrices sorted by partition, to show integration versus segregation next to
   the measures.
 
+- Node count uses the winner-take-all map with the dropped (low-reliability) parcels left as holes, and is reported
+  next to reliable coverage, k and patches per component.
+- Connectivity matrices: every parcel assigned to its strongest component (no cut-off) for the sorting.
+- Noise-corrected correlations clipped at 1; positive edges only.
+- Parcels with no clear winner (no component z >= 1) are of interest (cortex not dominated by one network); an
+  additional integration measure on all parcels is to be reported alongside the reliable-parcel measures.
+
 Open: stage 2 stopping rule (fixed leftover-channel count, or repeat decompose-and-remove until no component meets the
-non-neural criteria); details of the node count (see decisions.md).
+non-neural criteria); how no-clear-winner parcels enter the node count; minimum patch size; the exact parcel set of the
+all-parcel integration measure.
