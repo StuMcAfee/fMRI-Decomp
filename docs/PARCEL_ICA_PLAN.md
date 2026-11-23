@@ -111,5 +111,16 @@ Code: `mejoint.parcel_sim` (synthetic route B parcel channels), `mejoint.parcel_
    network components at the top (time course, surface map, spectrum), removed noise components shown explicitly
    below with their effect, then the physics stage.
 
+Decided (user, 2026-11-23):
+- Node count (fragmentation): from the stage 3 winner-take-all map, contiguous parcels with the same winner are merged
+  for counting only, and the number of such patches is reported; the merge is never used for integration measures.
+- Reliable coverage: the percentage of icosahedral parcels passing the reliability floor.
+- Each person keeps their own set of reliable parcels; the number kept is reported next to every measure.
+- Integration measures: participation ratio (with and without the first pattern), participation coefficient and system
+  segregation under Yeo-7, Yeo-17 and the data-driven partition; weighted, positive edges only (noise-corrected
+  correlations).
+- Graph view in the report: connectivity matrices sorted by partition, to show integration versus segregation next to
+  the measures.
+
 Open: stage 2 stopping rule (fixed leftover-channel count, or repeat decompose-and-remove until no component meets the
-non-neural criteria); the definition of the node-count metric; which integration measures and graph views to test.
+non-neural criteria); details of the node count (see decisions.md).
