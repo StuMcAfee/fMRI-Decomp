@@ -30,8 +30,7 @@ import numpy as np
 from . import parcel_ica as pi
 
 DEFAULTS = {"k_max": 100, "max_rounds": 5, "z_min": 1.0, "n_seeds": 30, "n_null": 50, "high_share": 0.5, "eta": 0.5,
-            "high_hz": 0.12, "stage3_k": "fidelity", "fidelity_min": 0.7, "edge_fdr_q": 0.05, "dominance_q": 0.95,
-            "n_perm_dominance": 200}
+            "high_hz": 0.12, "stage3_k": "fidelity", "fidelity_min": 0.7, "edge_fdr_q": 0.05, "dominance_q": 0.95}
 
 
 # ------------------------------------------------------------------ anatomy of the icosahedral parcels
@@ -269,23 +268,31 @@ def integration(z: np.ndarray, noise_var: np.ndarray, tr: float, band, partition
     return out
 
 
-def dominance(Zm: np.ndarray, rng, n_perm: int = 200) -> dict:
-    """Per parcel: strength z1 (strongest z-scored loading), margin z1 - z2, and the margin's percentile against a
-    null in which every component's map is shuffled across parcels independently (same k, same value distributions,
-    alignment between maps destroyed; user, 2026-11-23). The null margins are pooled over parcels and shuffles."""
-    Zm = np.asarray(Zm, float)
+def dominance(z: np.ndarray, maps: np.ndarray, tc: np.ndarray) -> dict:
+    """Per parcel: strength z1 (strongest z-scored loading), margin z1 - z2, and the confidence that the strongest
+    component truly exceeds the second strongest given the loadings' estimation uncertainty (user, 2026-11-23,
+    replacing a shuffled-map null that called clear dominance unclear for sparse maps). Each parcel's loadings are the
+    regression of its whitened signal on the component time courses; their standard errors come from the parcel's
+    residual variance and (tc tc')^-1, expressed in the same z units as the maps (divided by each map's SD over
+    parcels); confidence = Phi(margin / sqrt(SE1^2 + SE2^2))."""
+    from scipy.stats import norm
+    from .surface_plot import zscore
+    maps, tc, z = np.asarray(maps, float), np.asarray(tc, float), np.asarray(z, float)
+    Zm = zscore(maps)
+    n = Zm.shape[0]
     if Zm.shape[1] < 2:
-        n = Zm.shape[0]
-        return {"z1": Zm[:, 0] if Zm.shape[1] else np.zeros(n), "margin": np.full(n, np.nan), "percentile": np.full(n, np.nan)}
-    srt = np.sort(Zm, axis=1)
-    z1, margin = srt[:, -1], srt[:, -1] - srt[:, -2]
-    null = []
-    for _ in range(int(n_perm)):
-        Zp = np.sort(rng.permuted(Zm, axis=0), axis=1)
-        null.append(Zp[:, -1] - Zp[:, -2])
-    null = np.sort(np.concatenate(null))
-    pct = np.searchsorted(null, margin, side="right") / null.size
-    return {"z1": z1, "margin": margin, "percentile": pct}
+        return {"z1": Zm[:, 0] if Zm.shape[1] else np.zeros(n), "margin": np.full(n, np.nan), "confidence": np.full(n, np.nan)}
+    k, T = tc.shape
+    resid = z - maps @ tc
+    rv = resid.var(1) * T / max(T - k, 1)
+    cinv = np.diag(np.linalg.inv(tc @ tc.T))
+    se = np.sqrt(rv[:, None] * cinv[None, :]) / np.maximum(maps.std(0), 1e-12)[None, :]
+    o = np.argsort(Zm, axis=1)
+    i = np.arange(n)
+    j1, j2 = o[:, -1], o[:, -2]
+    z1, margin = Zm[i, j1], Zm[i, j1] - Zm[i, j2]
+    conf = norm.cdf(margin / np.sqrt(se[i, j1] ** 2 + se[i, j2] ** 2))
+    return {"z1": z1, "margin": margin, "confidence": conf, "se_median": float(np.median(se))}
 
 
 def component_labels(maps: np.ndarray, ids: np.ndarray, nets7, nets17, n_left: int = 938) -> list:
@@ -441,11 +448,12 @@ def run(input_dir, cfg: dict, out_dir, resources=None, n_jobs: int | None = None
         Zm = zscore(ica3["maps"])
         win_full = np.argmax(Zm, axis=1)
         zwin = Zm[np.arange(len(win_full)), win_full]
-        # dominance (user, 2026-11-23): strong = z1 >= z_min; clear = margin above the shuffled-map null's
-        # dominance_q quantile; dominated = strong and clear (the winner); shared = strong, not clear; weak = not strong
-        dom = dominance(Zm, np.random.default_rng(seed_root + 37), int(P_["n_perm_dominance"]))
+        # dominance (user, 2026-11-23): strong = z1 >= z_min; clear = confidence >= dominance_q that the strongest
+        # component truly exceeds the second; dominated = strong and clear (the winner); shared = strong, not clear;
+        # weak = not strong
+        dom = dominance(Z, ica3["maps"], ica3["tc"])
         strong = dom["z1"] >= P_["z_min"]
-        clear = dom["percentile"] >= P_["dominance_q"]
+        clear = dom["confidence"] >= P_["dominance_q"]
         category = np.where(~strong, "weak", np.where(clear, "dominated", "shared"))
         win = np.where(strong & clear, win_full, -1)
         for j in range(k3):
@@ -456,7 +464,7 @@ def run(input_dir, cfg: dict, out_dir, resources=None, n_jobs: int | None = None
                           "meets_nonneural_criteria": bool(rule(sp3, s03)[j]),
                           "n_parcels_won": int(((win == j) & reliable).sum())})
         wta = {"win": win, "win_full": win_full, "zwin": zwin, "maps": ica3["maps"], "tc": ica3["tc"], "tc_noise_var": ica3["tc_noise_var"],
-               "dom_pct": dom["percentile"], "margin": dom["margin"], "category": category}
+               "dom_pct": dom["confidence"], "margin": dom["margin"], "category": category}
     res["stage3"]["components"] = comp3
 
     # ---- measures
@@ -470,7 +478,7 @@ def run(input_dir, cfg: dict, out_dir, resources=None, n_jobs: int | None = None
                "undominated_pct": round(100.0 * float(((wta["category"] == "shared") & reliable).sum()) / max(int(reliable.sum()), 1), 2) if wta else None,
                "weak_pct": round(100.0 * float(((wta["category"] == "weak") & reliable).sum()) / max(int(reliable.sum()), 1), 2) if wta else None,
                "dominated_pct": round(100.0 * float(((wta["category"] == "dominated") & reliable).sum()) / max(int(reliable.sum()), 1), 2) if wta else None,
-               "dominance_percentile_median": round(float(np.nanmedian(wta["dom_pct"][reliable])), 3) if wta and reliable.any() else None,
+               "dominance_confidence_median": round(float(np.nanmedian(wta["dom_pct"][reliable])), 3) if wta and reliable.any() else None,
                "n_removed_stage2": q,
                "signal_sd_band_median": round(float(np.median(signal_sd_band)), 5),
                "noise_sd_band_median": round(float(np.median(noise_sd_band)), 5)}
@@ -526,7 +534,7 @@ def run(input_dir, cfg: dict, out_dir, resources=None, n_jobs: int | None = None
                                        "noise_sd_band": [round(float(v), 5) for v in noise_sd_band],
                                        "winner": (wta["win"].tolist() if wta else [-1] * len(ids)),
                                        "dominance": (wta["category"].tolist() if wta else [""] * len(ids)),
-                                       "dominance_percentile": ([num(v) for v in wta["dom_pct"]] if wta else [None] * len(ids)),
+                                       "dominance_confidence": ([num(v) for v in wta["dom_pct"]] if wta else [None] * len(ids)),
                                        "strongest": (wta["win_full"].tolist() if wta else [-1] * len(ids)),
                                        **{f"pc_{p}": [num(v) for v in pcmap[p]] for p in pcmap}})
     np.savez_compressed(out / "stage3.npz", ids=ids, maps=wta["maps"] if wta else np.zeros((len(ids), 0)),
@@ -563,9 +571,9 @@ def render(res: dict) -> str:
          f"- Reliable parcels: {m['reliable_parcels']} ({m['reliable_coverage_pct']} % of {res['n_parcels_total']})",
          f"- Node count (contiguous same-winner patches): {m['node_count']}; components winning parcels: {m['components_winning']} of k = {m['k_stage3']}; "
          f"patches per component: {f(m['patches_per_component'])}; single-parcel patches: {m['single_parcel_patches']}",
-         f"- Dominance of reliable parcels (strong: z >= {res['settings']['z_min']}; clear margin: above the shuffled-map null's "
-         f"{res['settings']['dominance_q']} quantile): dominated {f(m.get('dominated_pct'))} %, undominated (shared) {f(m['undominated_pct'])} %, "
-         f"weak {f(m.get('weak_pct'))} %; median margin percentile {f(m.get('dominance_percentile_median'))}",
+         f"- Dominance of reliable parcels (strong: z >= {res['settings']['z_min']}; clear: confidence >= {res['settings']['dominance_q']} that "
+         f"the strongest component exceeds the second): dominated {f(m.get('dominated_pct'))} %, undominated (shared) {f(m['undominated_pct'])} %, "
+         f"weak {f(m.get('weak_pct'))} %; median confidence {f(m.get('dominance_confidence_median'))}",
          f"- In-band BOLD-like amplitude, median over parcels (1/s): signal {m.get('signal_sd_band_median')}, thermal noise {m.get('noise_sd_band_median')}", "",
          "## Integration (noise-corrected in-band correlations; graph measures on positive weights clipped at 1)", "",
          "Graph measures use correlations beyond the brain-wide pattern (first pattern removed) and only edges reliably above chance "

@@ -136,8 +136,8 @@ def build(out, res, ids, rel, reliable, rounds, wta, sets, pcmap, nets7, nets17,
         cby = {}
         for p_, r_, c_, v_ in zip(ids.tolist(), reliable, wta["category"], wta["dom_pct"]):
             cby[p_] = DROPPED if not r_ else (np.array([0.80, 0.80, 0.78, 1.0]) if c_ == "weak" else seq(float(v_)))
-        sp.rows_figure(R, [("dominance\n(margin percentile)", {h: sp.label_colours(cby, R["labels"][h]) for h in ("L", "R")})],
-                       fd / "dominance.png", cbar=(seq, Normalize(0, 1), "margin percentile vs shuffled maps"), row_height=1.5)
+        sp.rows_figure(R, [("dominance\n(confidence)", {h: sp.label_colours(cby, R["labels"][h]) for h in ("L", "R")})],
+                       fd / "dominance.png", cbar=(seq, Normalize(0, 1), "confidence strongest > second"), row_height=1.5)
         imgs["dominance"] = _b64(fd / "dominance.png")
     if amp is not None:                                                # signal amplitude and thermal noise, same scale
         vmax = float(np.nanpercentile(np.r_[amp["signal"], amp["noise"]], 98)) or 1.0
@@ -315,9 +315,10 @@ lightness steps separate components of one network; patch borders darkened. Node
 single-parcel patches {m['single_parcel_patches']}).</p>
 {img('partitions', 'partitions')}
 <h4>Dominance</h4>
-<p class="m">For each reliable parcel: how clearly its strongest component exceeds the second strongest, as the percentile of that margin
-against maps shuffled across parcels (same k). Dark = one network clearly owns the parcel; light = two or more load comparably (shared,
-undominated above the {res['settings'].get('dominance_q')} quantile cut); grey = no strong component (weak); dark grey = below the reliability floor.
+<p class="m">For each reliable parcel: the confidence that its strongest component truly exceeds the second strongest, given the loadings'
+estimation uncertainty. Dark = one network clearly owns the parcel; light = the top two cannot be told apart (shared, undominated below
+{res['settings'].get('dominance_q')}); grey = no strong component (weak); dark grey = below the reliability floor. Confidence also rises with more
+frames and stronger signal.
 Dominated {_fmt(m.get('dominated_pct'), 1)} %, undominated (shared) {_fmt(m['undominated_pct'], 1)} %, weak {_fmt(m.get('weak_pct'), 1)} %.</p>
 {img('dominance', 'dominance')}
 

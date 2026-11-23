@@ -91,17 +91,26 @@ def test_remove_first_pattern():
     assert R[:15, 15:].mean() > 0.5 and within > 0.2 and between < 0.0
 
 
-import pytest  # noqa: E402
-
-
-@pytest.mark.xfail(reason="shuffled-map null calls clear dominance unclear for sparse maps (2026-11-23); replacement pending user decision", strict=False)
-def test_dominance_margin_against_shuffled_null():
-    """Parcels where one component clearly dominates get high percentiles; parcels with two equal loadings low."""
-    g = np.random.default_rng(3)
-    Z = g.standard_normal((400, 10))
-    Z[:50, 0] += 4.0                                   # clearly dominated by component 0
-    Z[50:100, 1] += 3.0
-    Z[50:100, 2] += 3.0                                # shared between components 1 and 2
-    d = pp.dominance(Z, g, 100)
-    assert np.median(d["percentile"][:50]) > 0.95 and np.median(d["percentile"][50:100]) < 0.8
-    assert np.all(d["z1"] >= d["z1"] - d["margin"])
+def test_dominance_confidence():
+    """Non-overlapping simulated networks: most strong parcels are confidently dominated; a parcel loaded equally on
+    two components is not."""
+    from mejoint import parcel_ica as pi
+    from mejoint import parcel_sim as ps
+    d = ps.simulate(600, T=600, reliability=0.6, seed=7, include=("network",))
+    pr = pi.prepare(d["c0"], d["c1"], d["R"], d["noise_var"])
+    ica = pi.spatial_ica(pr["zb"], 7, range(4))
+    dom = pp.dominance(pr["zb"], ica["maps"], ica["tc"])
+    strong = dom["z1"] >= 1
+    assert (dom["confidence"][strong] >= 0.95).mean() > 0.6
+    # two equal loadings -> confidence about 0.5
+    g = np.random.default_rng(1)
+    tc = g.standard_normal((2, 600))
+    tc /= tc.std(1, keepdims=True)
+    m0 = g.normal(0, 1, 200)
+    m0[0] = 3.0
+    m1 = g.permutation(m0[1:])
+    maps = np.column_stack([m0, np.r_[3.0, m1]])                       # identical value distributions, equal loading
+    assert np.isclose(maps[:, 0].std(), maps[:, 1].std())
+    z = maps @ tc + g.standard_normal((200, 600))
+    d2 = pp.dominance(z, maps, tc)
+    assert 0.2 < d2["confidence"][0] < 0.8
