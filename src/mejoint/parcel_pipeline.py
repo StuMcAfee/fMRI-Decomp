@@ -12,8 +12,8 @@ Stage 2, non-neural removal, repeated: spatial ICA at the leftover-channel count
 Stage 3, networks: spatial ICA on the cleaned signal with k from the thermal-noise (Marchenko-Pastur) threshold
          (capped); per component its best positive Yeo-7 / Yeo-17 overlap and hemispheric asymmetry; winner-take-all
          partition (winner where its z-scored loading >= z_min).
-Measures: reliable coverage, node count (contiguous same-winner patches over reliable parcels; dropped and undominated
-         parcels are gaps; single parcels count), patches per winning component, undominated share; participation
+Measures: reliable coverage (floor from the precision of the noise correction), node count (contiguous same-winner
+         patches over all parcels with voxels; undominated and weak parcels are gaps; single parcels count), patches per winning component, undominated share; participation
          ratio (all patterns and without the first) with a circular-shift null; participation coefficient and system
          segregation (weighted, positive, noise-corrected correlations clipped at 1) under Yeo-7, Yeo-17 and the
          data-driven partition; three parcel sets: reliable parcels (main), every parcel with voxels (A), reliable
@@ -30,7 +30,8 @@ import numpy as np
 from . import parcel_ica as pi
 
 DEFAULTS = {"k_max": 100, "max_rounds": 5, "z_min": 1.0, "n_seeds": 30, "n_null": 50, "high_share": 0.5, "eta": 0.5,
-            "high_hz": 0.12, "stage3_k": "fidelity", "fidelity_min": 0.7, "edge_fdr_q": 0.05, "dominance_q": 0.95}
+            "high_hz": 0.12, "stage3_k": "fidelity", "fidelity_min": 0.7, "edge_fdr_q": 0.05, "dominance_q": 0.95,
+            "correction_error_max": 0.15}
 
 
 # ------------------------------------------------------------------ anatomy of the icosahedral parcels
@@ -66,6 +67,16 @@ def ico_anatomy(resources, n_left: int = 938) -> dict:
 
 
 # ------------------------------------------------------------------ measures
+def reliability_floor(T: int, tr: float, band, max_error: float = 0.15) -> float:
+    """Lowest reliability r at which the noise-correction factor 1/sqrt(r) is known within max_error (relative): the
+    in-band variance is estimated with about 2 x (frequency bins in the band) degrees of freedom, so its relative SE
+    is s = sqrt(2 / df); the factor's relative error is about (1 - r) / r x s / 2, giving r = 1 / (1 + 2 max_error / s)."""
+    f = np.fft.rfftfreq(int(T), tr)
+    nb = int(((f >= band[0]) & (f <= band[1])).sum())
+    s = np.sqrt(2.0 / max(2 * nb, 1))
+    return float(1.0 / (1.0 + 2.0 * max_error / s))
+
+
 def reliability(z: np.ndarray, tr: float, band) -> np.ndarray:
     """Signal share of each whitened parcel signal's slow-band variance: 1 - expected noise / observed (unit noise)."""
     from .regions import band_fraction, band_pass
@@ -333,7 +344,7 @@ def run(input_dir, cfg: dict, out_dir, resources=None, n_jobs: int | None = None
     P_ = {**DEFAULTS, **cfg.get("parcel_pipeline", {})}
     G = cfg.get("regions", {})
     band = tuple(G.get("band_hz", (0.01, 0.10)))
-    rmin = float(G.get("reliability_min", 0.5))
+    rmin_route_b = float(G.get("reliability_min", 0.5))
     tr = float(cfg["acquisition"]["tr_s"])
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -427,14 +438,19 @@ def run(input_dir, cfg: dict, out_dir, resources=None, n_jobs: int | None = None
     bf = band_fraction(T, tr, band)
     noise_sd_band = sd_b * np.sqrt(bf * noise_scale)
     signal_sd_band = sd_b * np.sqrt(np.clip(_bp(Z, tr, band).var(1) - bf * noise_scale, 0, None))
+    # floor for the noise-corrected integration measures (user, 2026-11-23): the lowest reliability at which the
+    # correction factor 1/sqrt(reliability) is known within correction_error_max, given the in-band degrees of freedom
+    # (two per frequency bin in the band); map-based measures (winner-take-all, dominance, node count) use every parcel
+    rmin = reliability_floor(T, tr, band, float(P_["correction_error_max"]))
     reliable = rel >= rmin
+    allp = np.ones(len(ids), bool)
     res = {"input": str(input_dir), "atlas": inp["atlas"], "n_parcels_total": n_total, "n_parcels_with_voxels": int(len(ids)),
            "n_frames": int(T), "tr_s": tr, "band_hz": list(band), "nuisance_rank": nuis, "respiratory_peak_hz": resp,
            # fewer frames than the common number: k, node count and other count-based measures are not comparable
            # with the other participants (user, 2026-11-23)
            "n_frames_common": G.get("n_volumes_common"),
            "comparable": bool(G.get("n_volumes_common") is None or T >= int(G.get("n_volumes_common"))),
-           "settings": P_, "reliability_min": rmin,
+           "settings": P_, "reliability_min": round(rmin, 3), "reliability_min_rule": f"correction factor within {P_['correction_error_max']}",
            "stage2": {"rounds": [{k_: v for k_, v in r.items() if k_ not in ("maps_removed", "tc_removed")} for r in rounds],
                       "n_removed": q, "stop": stop, "cap_reached": stop == "maximum number of rounds reached"},
            "denoising": den, "stage3": st3}
@@ -462,23 +478,25 @@ def run(input_dir, cfg: dict, out_dir, resources=None, n_jobs: int | None = None
                           "peak_hz": round(float(sp3["peak_hz"][j]), 3), "peak_ratio": round(float(sp3["peak_ratio"][j]), 2),
                           "eta": None if not np.isfinite(s03["eta"][j]) else round(float(s03["eta"][j]), 3),
                           "meets_nonneural_criteria": bool(rule(sp3, s03)[j]),
-                          "n_parcels_won": int(((win == j) & reliable).sum())})
+                          "n_parcels_won": int((win == j).sum())})
         wta = {"win": win, "win_full": win_full, "zwin": zwin, "maps": ica3["maps"], "tc": ica3["tc"], "tc_noise_var": ica3["tc_noise_var"],
                "dom_pct": dom["confidence"], "margin": dom["margin"], "category": category}
     res["stage3"]["components"] = comp3
 
     # ---- measures
-    win_r = np.where(reliable, wta["win"], -1) if wta else -np.ones(len(ids), int)
+    win_r = wta["win"] if wta else -np.ones(len(ids), int)            # map-based: all parcels with voxels
     nc = node_count(ids, win_r, anat["adjacent_pairs"])
     n_win = int(len(set(win_r[win_r >= 0].tolist())))
     metrics = {"reliable_parcels": int(reliable.sum()), "reliable_coverage_pct": round(100.0 * reliable.sum() / n_total, 2),
                "k_stage3": k3, "node_count": nc["node_count"], "components_winning": n_win,
                "patches_per_component": round(nc["node_count"] / n_win, 3) if n_win else None,
                "single_parcel_patches": int(sum(1 for s in nc["patch_sizes"] if s == 1)),
-               "undominated_pct": round(100.0 * float(((wta["category"] == "shared") & reliable).sum()) / max(int(reliable.sum()), 1), 2) if wta else None,
-               "weak_pct": round(100.0 * float(((wta["category"] == "weak") & reliable).sum()) / max(int(reliable.sum()), 1), 2) if wta else None,
-               "dominated_pct": round(100.0 * float(((wta["category"] == "dominated") & reliable).sum()) / max(int(reliable.sum()), 1), 2) if wta else None,
-               "dominance_confidence_median": round(float(np.nanmedian(wta["dom_pct"][reliable])), 3) if wta and reliable.any() else None,
+               "undominated_pct": round(100.0 * float((wta["category"] == "shared").mean()), 2) if wta else None,
+               "weak_pct": round(100.0 * float((wta["category"] == "weak").mean()), 2) if wta else None,
+               "dominated_pct": round(100.0 * float((wta["category"] == "dominated").mean()), 2) if wta else None,
+               "dominance_confidence_median": round(float(np.nanmedian(wta["dom_pct"])), 3) if wta else None,
+               "reliability_floor": round(rmin, 3),
+               "coverage_at_0_5_pct": round(100.0 * float((rel >= 0.5).sum()) / n_total, 2),
                "n_removed_stage2": q,
                "signal_sd_band_median": round(float(np.median(signal_sd_band)), 5),
                "noise_sd_band_median": round(float(np.median(noise_sd_band)), 5)}
@@ -543,7 +561,7 @@ def run(input_dir, cfg: dict, out_dir, resources=None, n_jobs: int | None = None
     io.write_text(out / "pipeline.md", render(res))
     try:
         from . import parcel_report
-        parcel_report.build(out, res, ids=ids, rel=rel, reliable=reliable, rounds=rounds, wta=wta, sets=sets, pcmap=pcmap,
+        parcel_report.build(out, res, ids=ids, rel=rel, reliable=reliable, rounds=rounds, wta=wta, sets=sets, pcmap=pcmap, map_mask=allp,
                             amp={"signal": signal_sd_band, "noise": noise_sd_band},
                             nets7=nets7, nets17=nets17, resources=resources, tr=tr, resp=resp, dim3=dim3)
     except Exception as exc:                                           # the report never blocks the results
@@ -568,10 +586,11 @@ def render(res: dict) -> str:
          f"- Stage 3 (networks): k = {s3['k']} (expected map fidelity >= {s3.get('fidelity_min')}: {s3.get('k_fidelity')}; thermal-noise threshold "
          f"{s3['k_mp']}{'; capped' if s3['k_capped'] else ''})",
          "", "## Metrics", "",
-         f"- Reliable parcels: {m['reliable_parcels']} ({m['reliable_coverage_pct']} % of {res['n_parcels_total']})",
+         f"- Reliable parcels (floor {res['reliability_min']}, {res['reliability_min_rule']}): {m['reliable_parcels']} ({m['reliable_coverage_pct']} % of "
+         f"{res['n_parcels_total']}; {m.get('coverage_at_0_5_pct')} % at 0.5); the floor applies to the integration measures only",
          f"- Node count (contiguous same-winner patches): {m['node_count']}; components winning parcels: {m['components_winning']} of k = {m['k_stage3']}; "
          f"patches per component: {f(m['patches_per_component'])}; single-parcel patches: {m['single_parcel_patches']}",
-         f"- Dominance of reliable parcels (strong: z >= {res['settings']['z_min']}; clear: confidence >= {res['settings']['dominance_q']} that "
+         f"- Dominance, all parcels with voxels (strong: z >= {res['settings']['z_min']}; clear: confidence >= {res['settings']['dominance_q']} that "
          f"the strongest component exceeds the second): dominated {f(m.get('dominated_pct'))} %, undominated (shared) {f(m['undominated_pct'])} %, "
          f"weak {f(m.get('weak_pct'))} %; median confidence {f(m.get('dominance_confidence_median'))}",
          f"- In-band BOLD-like amplitude, median over parcels (1/s): signal {m.get('signal_sd_band_median')}, thermal noise {m.get('noise_sd_band_median')}", "",

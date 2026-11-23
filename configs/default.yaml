@@ -323,4 +323,5 @@ parcel_pipeline:               # two-stage parcel denoising and networks (docs/P
   stage3_k: fidelity            # stage 3 k: 'fidelity' (expected map correlation >= fidelity_min; user 2026-11-23) or 'mp' (thermal-noise edge)
   fidelity_min: 0.7
   dominance_q: 0.95             # a parcel's strongest component dominates when the confidence that it exceeds the second strongest (loading uncertainty) reaches this (user 2026-11-23)
+  correction_error_max: 0.15    # reliability floor for the noise-corrected integration measures: correction factor known within this (about 0.31 at 797 frames; user 2026-11-23); map-based measures use every parcel
   edge_fdr_q: 0.05              # graph measures keep only edges above their circular-shift null at this false discovery rate (user 2026-11-23)

@@ -57,7 +57,7 @@ def component_colours(labels7: list, net_colours: dict, flagged=None) -> np.ndar
     return col
 
 
-def build(out, res, ids, rel, reliable, rounds, wta, sets, pcmap, nets7, nets17, resources, tr, resp, dim3, amp=None) -> Path:
+def build(out, res, ids, rel, reliable, rounds, wta, sets, pcmap, nets7, nets17, resources, tr, resp, dim3, amp=None, map_mask=None) -> Path:
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -73,6 +73,7 @@ def build(out, res, ids, rel, reliable, rounds, wta, sets, pcmap, nets7, nets17,
     f17 = Path(resources) / "Schaefer2018_200Parcels_17Networks_order.dlabel.nii"
     col17 = sp.network_colours(resources, f17.name) if f17.exists() else {}
     ids = np.asarray(ids)
+    mm = np.ones(len(ids), bool) if map_mask is None else np.asarray(map_mask, bool)   # parcels shown in map-based figures
     seq = LinearSegmentedColormap.from_list("seq_blue", ["#f0efec", "#9ec5f4", "#2a78d6", "#0d366b"])
     div = sp.diverging_cmap()
     imgs = {}
@@ -101,14 +102,14 @@ def build(out, res, ids, rel, reliable, rounds, wta, sets, pcmap, nets7, nets17,
         # ---- partitions: data-driven winner-take-all (with gaps), Yeo-7, Yeo-17
         win = wta["win"]
         cby = {}
-        for p_, w_, r_ in zip(ids.tolist(), win, reliable):
+        for p_, w_, r_ in zip(ids.tolist(), win, mm):
             cby[p_] = DROPPED if not r_ else (sp.NOWIN if w_ < 0 else cols[w_])
         vc_w = {}
         for h in ("L", "R"):
             v = sp.label_colours(cby, R["labels"][h])
             lab = R["labels"][h]
             compv = np.full(lab.size, -9)
-            for p_, w_, r_ in zip(ids.tolist(), win, reliable):
+            for p_, w_, r_ in zip(ids.tolist(), win, mm):
                 if r_ and w_ >= 0:
                     compv[lab == p_] = w_
             fv = compv[R["surf"][h][1]]
@@ -120,7 +121,7 @@ def build(out, res, ids, rel, reliable, rounds, wta, sets, pcmap, nets7, nets17,
             rows.append(("Yeo-7", {h: sp.label_colours({p_: col7.get(n, sp.MEDIAL) for p_, n in zip(ids.tolist(), nets7)}, R["labels"][h]) for h in ("L", "R")}))
         if nets17 is not None and col17:
             rows.append(("Yeo-17", {h: sp.label_colours({p_: col17.get(n, sp.MEDIAL) for p_, n in zip(ids.tolist(), nets17)}, R["labels"][h]) for h in ("L", "R")}))
-        won = sorted(set(win[(win >= 0) & reliable].tolist()))
+        won = sorted(set(win[(win >= 0) & mm].tolist()))
         leg = [Patch(color=cols[j], label=f"c{j}: {comps[j]['yeo7']}") for j in won][:40]
         leg += [Patch(color=sp.NOWIN, label="undominated or weak"), Patch(color=DROPPED, label="below reliability floor"),
                 Patch(color=sp.MEDIAL, label="no parcel / no voxels")]
@@ -134,7 +135,7 @@ def build(out, res, ids, rel, reliable, rounds, wta, sets, pcmap, nets7, nets17,
     imgs["reliability"] = _b64(fd / "reliability.png")
     if wta and "dom_pct" in wta:                                       # continuous dominance map (weak parcels grey)
         cby = {}
-        for p_, r_, c_, v_ in zip(ids.tolist(), reliable, wta["category"], wta["dom_pct"]):
+        for p_, r_, c_, v_ in zip(ids.tolist(), mm, wta["category"], wta["dom_pct"]):
             cby[p_] = DROPPED if not r_ else (np.array([0.80, 0.80, 0.78, 1.0]) if c_ == "weak" else seq(float(v_)))
         sp.rows_figure(R, [("dominance\n(confidence)", {h: sp.label_colours(cby, R["labels"][h]) for h in ("L", "R")})],
                        fd / "dominance.png", cbar=(seq, Normalize(0, 1), "confidence strongest > second"), row_height=1.5)
@@ -295,10 +296,10 @@ canvas{{width:100%;height:150px;background:var(--card);border:1px solid var(--li
 <p class="m">Icosahedral parcels (fs_LR 32k, 1876); {res['n_frames']} frames, TR {res['tr_s']} s; breathing peak {str(res['respiratory_peak_hz']) + ' Hz' if res['respiratory_peak_hz'] else 'not found in the motion parameters'}.
 Exploratory: route B is unchanged.</p>
 <div class="kpi">
-<div><span class="m">reliable coverage</span><b>{m['reliable_coverage_pct']} %</b><span class="m">{m['reliable_parcels']} parcels</span></div>
+<div><span class="m">reliable coverage</span><b>{m['reliable_coverage_pct']} %</b><span class="m">{m['reliable_parcels']} parcels &ge; {res['reliability_min']}</span></div>
 <div><span class="m">node count</span><b>{m['node_count']}</b><span class="m">{_fmt(m['patches_per_component'], 2)} patches / component</span></div>
 <div><span class="m">network components (k)</span><b>{m['k_stage3']}</b><span class="m">map fidelity &ge; {s3.get('fidelity_min')} &middot; {m['components_winning']} win parcels</span></div>
-<div><span class="m">undominated (shared)</span><b>{_fmt(m['undominated_pct'], 1)} %</b><span class="m">weak {_fmt(m.get('weak_pct'), 1)} % of reliable parcels</span></div>
+<div><span class="m">undominated (shared)</span><b>{_fmt(m['undominated_pct'], 1)} %</b><span class="m">weak {_fmt(m.get('weak_pct'), 1)} % of parcels</span></div>
 <div><span class="m">non-neural removed</span><b>{s2['n_removed']}</b><span class="m">{len(s2['rounds'])} round(s){' &middot; CAP REACHED' if s2['cap_reached'] else ''}</span></div>
 </div>
 
@@ -310,14 +311,14 @@ Labels give the best positive overlap with Yeo-7 / Yeo-17; asymmetry = (left - r
 <div class="two"><canvas id="tcv"></canvas><canvas id="spv"></canvas></div></div>
 
 <h2>Partitions</h2>
-<p class="m">Data-driven: each reliable parcel coloured by its winning component (z &ge; {res['settings']['z_min']} and a clear margin over the second strongest); hue = the component's best Yeo-7 network,
+<p class="m">Data-driven: every parcel with voxels coloured by its winning component (z &ge; {res['settings']['z_min']} and a clear margin over the second strongest); hue = the component's best Yeo-7 network,
 lightness steps separate components of one network; patch borders darkened. Node count = contiguous same-winner patches ({m['node_count']},
 single-parcel patches {m['single_parcel_patches']}).</p>
 {img('partitions', 'partitions')}
 <h4>Dominance</h4>
-<p class="m">For each reliable parcel: the confidence that its strongest component truly exceeds the second strongest, given the loadings'
+<p class="m">For each parcel with voxels (no reliability floor: the confidence carries each parcel's uncertainty): the confidence that its strongest component truly exceeds the second strongest, given the loadings'
 estimation uncertainty. Dark = one network clearly owns the parcel; light = the top two cannot be told apart (shared, undominated below
-{res['settings'].get('dominance_q')}); grey = no strong component (weak); dark grey = below the reliability floor. Confidence also rises with more
+{res['settings'].get('dominance_q')}); grey = no strong component (weak). Confidence also rises with more
 frames and stronger signal.
 Dominated {_fmt(m.get('dominated_pct'), 1)} %, undominated (shared) {_fmt(m['undominated_pct'], 1)} %, weak {_fmt(m.get('weak_pct'), 1)} %.</p>
 {img('dominance', 'dominance')}
@@ -326,8 +327,9 @@ Dominated {_fmt(m.get('dominated_pct'), 1)} %, undominated (shared) {_fmt(m['und
 <p class="m">Noise-corrected in-band correlations; participation ratio (PR) with the circular-shift null median; participation coefficient (PC) and
 segregation (seg) on the correlations beyond the brain-wide pattern (first pattern removed, as in the primary outcome), positive weights clipped at
 1, using only edges reliably above chance (each edge against its own circular-shift null, false discovery rate 0.05); edge density = share of
-possible edges kept. Main: reliable parcels (data-driven partition without undominated parcels); A: every parcel with
-voxels; B: reliable parcels with undominated parcels assigned to their strongest component.</p>
+possible edges kept. Main: parcels at or above the reliability floor ({res['reliability_min']}, where the noise correction is known within
+{res['settings'].get('correction_error_max')}; data-driven partition without undominated parcels); A: every parcel with voxels; B: main parcels with
+undominated parcels assigned to their strongest component.</p>
 <table><tr><th>set</th><th>parcels (with signal)</th><th>PR</th><th>PR without first (null)</th><th>global share</th><th>edge density</th>
 <th>PC Yeo-7</th><th>PC Yeo-17</th><th>PC data-driven</th><th>seg Yeo-7</th><th>seg Yeo-17</th><th>seg data-driven</th></tr>{integ}</table>
 <h4>Connectivity beyond the brain-wide pattern (main set; edges reliably above chance), sorted by partition</h4>{img('matrices', 'connectivity matrices')}

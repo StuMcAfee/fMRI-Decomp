@@ -114,3 +114,10 @@ def test_dominance_confidence():
     z = maps @ tc + g.standard_normal((200, 600))
     d2 = pp.dominance(z, maps, tc)
     assert 0.2 < d2["confidence"][0] < 0.8
+
+
+def test_reliability_floor_from_correction_precision():
+    """About 0.31 for 797 frames at TR 0.75 s in 0.01-0.1 Hz; higher with fewer frames; the stated precision holds."""
+    r = pp.reliability_floor(797, 0.75, (0.01, 0.1), 0.15)
+    assert 0.28 < r < 0.34
+    assert pp.reliability_floor(531, 0.75, (0.01, 0.1), 0.15) > r
