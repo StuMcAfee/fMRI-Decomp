@@ -74,3 +74,18 @@ def test_significant_edges_keep_real_connections():
     within = S[:10, :10][np.triu_indices(10, 1)].mean()
     indep = S[20:, 20:][np.triu_indices(20, 1)].mean()
     assert within > 0.9 and indep < 0.1
+
+
+def test_remove_first_pattern():
+    """A shared pattern plus two groups: after removal the shared part is gone, the groups remain."""
+    g = np.random.default_rng(2)
+    P, T = 30, 2000
+    shared = g.standard_normal(T)
+    grp = g.standard_normal((2, T))
+    X = np.outer(np.ones(P), shared) * 1.5 + np.vstack([np.outer(np.ones(15), grp[0]), np.outer(np.ones(15), grp[1])]) + g.standard_normal((P, T))
+    R = np.corrcoef(X)
+    Rb = pp.remove_first_pattern(R)
+    assert np.allclose(np.diag(Rb), 1.0)
+    within = Rb[:15, :15][np.triu_indices(15, 1)].mean()
+    between = Rb[:15, 15:].mean()
+    assert R[:15, 15:].mean() > 0.5 and within > 0.2 and between < 0.0

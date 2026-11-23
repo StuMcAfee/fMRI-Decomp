@@ -145,6 +145,30 @@ def segregation_positive(W: np.ndarray, labels) -> float:
     return float((w - b) / w) if w > 0 else float("nan")
 
 
+def remove_first_pattern(R: np.ndarray) -> np.ndarray:
+    """Correlations beyond the brain-wide pattern (user, 2026-11-23): the first eigencomponent (lambda_1 v1 v1') is
+    removed from the noise-corrected correlation matrix of the parcels with signal and the remainder is rescaled to
+    unit diagonal, so each entry is the correlation of two parcels after the pattern all of them share. Rows without
+    signal (NaN diagonal) stay NaN."""
+    R = np.asarray(R, float)
+    ok = np.isfinite(np.diag(R))
+    out = np.full_like(R, np.nan)
+    if ok.sum() < 3:
+        return out
+    S = R[np.ix_(ok, ok)].copy()
+    S = np.where(np.isfinite(S), S, 0.0)
+    lam, V = np.linalg.eigh(S)
+    v = V[:, -1]
+    Rr = S - lam[-1] * np.outer(v, v)
+    d = np.diag(Rr).copy()
+    good = d > 1e-6
+    with np.errstate(invalid="ignore", divide="ignore"):
+        Rn = Rr / np.sqrt(np.outer(np.where(good, d, np.nan), np.where(good, d, np.nan)))
+    np.fill_diagonal(Rn, np.where(good, 1.0, np.nan))
+    out[np.ix_(ok, ok)] = Rn
+    return out
+
+
 def pr_null(z: np.ndarray, noise_var: np.ndarray, tr: float, band, n: int, min_shift: int, rng) -> dict:
     """Circular-shift null (each parcel's band-passed signal shifted by its own random lag): the participation ratio
     (all patterns and without the first) per surrogate, and for every edge the mean and SD of its noise-corrected
@@ -165,9 +189,10 @@ def pr_null(z: np.ndarray, noise_var: np.ndarray, tr: float, band, n: int, min_s
         d = np.sqrt(np.where(ok, sig, np.nan))
         with np.errstate(invalid="ignore", divide="ignore"):
             Rf = C / np.outer(d, d)
-        fin = np.isfinite(Rf)
-        s1 += np.where(fin, Rf, 0.0)
-        s2 += np.where(fin, Rf ** 2, 0.0)
+        Rb = remove_first_pattern(Rf)                                  # edges are tested beyond the brain-wide pattern
+        fin = np.isfinite(Rb)
+        s1 += np.where(fin, Rb, 0.0)
+        s2 += np.where(fin, Rb ** 2, 0.0)
         cnt += fin
         Rr = Rf[np.ix_(ok, ok)].copy()
         np.fill_diagonal(Rr, 1.0)
@@ -182,7 +207,8 @@ def pr_null(z: np.ndarray, noise_var: np.ndarray, tr: float, band, n: int, min_s
 
 
 def significant_edges(corr: np.ndarray, null: dict, q: float = 0.05) -> np.ndarray:
-    """Edges reliably above chance (user, 2026-11-23): each edge's noise-corrected correlation against its own
+    """Edges reliably above chance (user, 2026-11-23; tested on the correlations beyond the brain-wide pattern, with the
+    same removal applied to every surrogate): each edge's correlation against its own
     circular-shift null (z = (r - null mean) / null SD, one-sided, normal approximation), Benjamini-Hochberg false
     discovery rate q over all edges. Returns a symmetric boolean matrix (diagonal False)."""
     from scipy.stats import norm
@@ -217,16 +243,19 @@ def integration(z: np.ndarray, noise_var: np.ndarray, tr: float, band, partition
         out["pr_null_median"] = float(np.median(null["pr"]))
         out["pr_resid_null_median"] = float(np.median(null["pr_resid"]))
         out["pr_resid_null_q05"] = float(np.quantile(null["pr_resid"], 0.05))
-    W = positive_weights(corr)
+    # graph: correlations beyond the brain-wide pattern, positive, edges reliably above chance (user, 2026-11-23)
+    corr_b = remove_first_pattern(corr)
+    out["corr_beyond_first"] = True
+    W = positive_weights(corr_b)
     if null is not None and "edge_sd" in null:                         # keep only edges reliably above chance
-        S = significant_edges(corr, null, fdr_q)
+        S = significant_edges(corr_b, null, fdr_q)
         W = np.where(S, W, 0.0)
         nsig = np.isfinite(np.diag(corr))
         npairs = nsig.sum() * (nsig.sum() - 1) / 2
         out["edges_kept"] = int(np.triu(W > 0, 1).sum())
         out["edge_density"] = float(out["edges_kept"] / npairs) if npairs else float("nan")
         out["nodes_without_edges"] = int(((W > 0).sum(1) == 0)[nsig].sum())
-        out["edge_rule"] = f"above the circular-shift null, FDR q = {fdr_q}"
+        out["edge_rule"] = f"beyond the brain-wide pattern, above the circular-shift null, FDR q = {fdr_q}"
     out["W"] = W
     out["pc"], out["pc_map"], out["seg"] = {}, {}, {}
     for name, lab in partitions.items():
@@ -497,7 +526,8 @@ def render(res: dict) -> str:
          f"- Undominated (reliable parcels with no component z >= {res['settings']['z_min']}): {f(m['undominated_pct'])} %",
          f"- In-band BOLD-like amplitude, median over parcels (1/s): signal {m.get('signal_sd_band_median')}, thermal noise {m.get('noise_sd_band_median')}", "",
          "## Integration (noise-corrected in-band correlations; graph measures on positive weights clipped at 1)", "",
-         "Graph measures use only edges reliably above chance (circular-shift null per edge, false discovery rate).", "",
+         "Graph measures use correlations beyond the brain-wide pattern (first pattern removed) and only edges reliably above chance "
+         "(circular-shift null per edge, false discovery rate).", "",
          "| set | parcels (with signal) | PR | PR without first (null median) | global share | edge density | PC Yeo-7 | PC Yeo-17 | PC data-driven | seg Yeo-7 | seg Yeo-17 | seg data-driven |",
          "|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for name, s in res.get("integration", {}).items():

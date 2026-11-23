@@ -309,12 +309,13 @@ single-parcel patches {m['single_parcel_patches']}).</p>
 
 <h2>Integration</h2>
 <p class="m">Noise-corrected in-band correlations; participation ratio (PR) with the circular-shift null median; participation coefficient (PC) and
-segregation (seg) on positive weights clipped at 1, using only edges reliably above chance (each edge against its own circular-shift null,
-false discovery rate 0.05); edge density = share of possible edges kept. Main: reliable parcels (data-driven partition without undominated parcels); A: every parcel with
+segregation (seg) on the correlations beyond the brain-wide pattern (first pattern removed, as in the primary outcome), positive weights clipped at
+1, using only edges reliably above chance (each edge against its own circular-shift null, false discovery rate 0.05); edge density = share of
+possible edges kept. Main: reliable parcels (data-driven partition without undominated parcels); A: every parcel with
 voxels; B: reliable parcels with undominated parcels assigned to their strongest component.</p>
 <table><tr><th>set</th><th>parcels (with signal)</th><th>PR</th><th>PR without first (null)</th><th>global share</th><th>edge density</th>
 <th>PC Yeo-7</th><th>PC Yeo-17</th><th>PC data-driven</th><th>seg Yeo-7</th><th>seg Yeo-17</th><th>seg data-driven</th></tr>{integ}</table>
-<h4>Connectivity (main set; edges reliably above chance), sorted by partition</h4>{img('matrices', 'connectivity matrices')}
+<h4>Connectivity beyond the brain-wide pattern (main set; edges reliably above chance), sorted by partition</h4>{img('matrices', 'connectivity matrices')}
 <h4>Participation coefficient by parcel (main set)</h4>{img('participation', 'participation coefficient')}
 
 <h2>Removed non-neural components (stage 2)</h2>
