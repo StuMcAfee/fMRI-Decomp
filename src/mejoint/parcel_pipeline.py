@@ -30,7 +30,7 @@ import numpy as np
 from . import parcel_ica as pi
 
 DEFAULTS = {"k_max": 100, "max_rounds": 5, "z_min": 1.0, "n_seeds": 30, "n_null": 50, "high_share": 0.5, "eta": 0.5,
-            "high_hz": 0.12, "stage3_k": "fidelity", "fidelity_min": 0.7}
+            "high_hz": 0.12, "stage3_k": "fidelity", "fidelity_min": 0.7, "edge_fdr_q": 0.05}
 
 
 # ------------------------------------------------------------------ anatomy of the icosahedral parcels
@@ -146,30 +146,64 @@ def segregation_positive(W: np.ndarray, labels) -> float:
 
 
 def pr_null(z: np.ndarray, noise_var: np.ndarray, tr: float, band, n: int, min_shift: int, rng) -> dict:
-    """Circular-shift null of the participation ratio (all patterns and without the first): each parcel's band-passed
-    signal shifted by its own random lag (one eigendecomposition per surrogate)."""
+    """Circular-shift null (each parcel's band-passed signal shifted by its own random lag): the participation ratio
+    (all patterns and without the first) per surrogate, and for every edge the mean and SD of its noise-corrected
+    correlation over the surrogates (accumulated, not stored), for the edge test."""
     from .regions import band_fraction, band_pass
     T = z.shape[1]
     xb = band_pass(np.asarray(z, float), tr, band)
+    P = xb.shape[0]
     nb = np.asarray(noise_var, float) * band_fraction(T, tr, band)
     pr, pr1 = np.zeros(n), np.zeros(n)
+    s1, s2, cnt = np.zeros((P, P)), np.zeros((P, P)), np.zeros((P, P))
     for i in range(n):
-        lags = rng.integers(min_shift, T - min_shift + 1, xb.shape[0])
-        xs = np.stack([np.roll(xb[p], int(lags[p])) for p in range(xb.shape[0])])
+        lags = rng.integers(min_shift, T - min_shift + 1, P)
+        xs = np.stack([np.roll(xb[p], int(lags[p])) for p in range(P)])
         C = xs @ xs.T / T
         sig = np.diag(C) - nb
         ok = sig > 0
-        d = np.sqrt(sig[ok])
-        Rr = C[np.ix_(ok, ok)] / np.outer(d, d)
+        d = np.sqrt(np.where(ok, sig, np.nan))
+        with np.errstate(invalid="ignore", divide="ignore"):
+            Rf = C / np.outer(d, d)
+        fin = np.isfinite(Rf)
+        s1 += np.where(fin, Rf, 0.0)
+        s2 += np.where(fin, Rf ** 2, 0.0)
+        cnt += fin
+        Rr = Rf[np.ix_(ok, ok)].copy()
         np.fill_diagonal(Rr, 1.0)
         lam = np.sort(np.clip(np.linalg.eigvalsh(Rr), 0, None))[::-1]
         pr[i] = lam.sum() ** 2 / (lam ** 2).sum()
         rest = lam[1:]
         pr1[i] = rest.sum() ** 2 / (rest ** 2).sum()
-    return {"pr": pr, "pr_resid": pr1}
+    with np.errstate(invalid="ignore", divide="ignore"):
+        mean = s1 / cnt
+        sd = np.sqrt(np.clip(s2 / cnt - mean ** 2, 0, None) * cnt / np.maximum(cnt - 1, 1))
+    return {"pr": pr, "pr_resid": pr1, "edge_mean": mean, "edge_sd": sd, "edge_n": cnt}
 
 
-def integration(z: np.ndarray, noise_var: np.ndarray, tr: float, band, partitions: dict, null=None) -> dict:
+def significant_edges(corr: np.ndarray, null: dict, q: float = 0.05) -> np.ndarray:
+    """Edges reliably above chance (user, 2026-11-23): each edge's noise-corrected correlation against its own
+    circular-shift null (z = (r - null mean) / null SD, one-sided, normal approximation), Benjamini-Hochberg false
+    discovery rate q over all edges. Returns a symmetric boolean matrix (diagonal False)."""
+    from scipy.stats import norm
+    P = corr.shape[0]
+    iu = np.triu_indices(P, 1)
+    r, m, sd = corr[iu], null["edge_mean"][iu], null["edge_sd"][iu]
+    ok = np.isfinite(r) & np.isfinite(m) & np.isfinite(sd) & (sd > 0)
+    p = np.ones(r.size)
+    p[ok] = norm.sf((r[ok] - m[ok]) / sd[ok])
+    order = np.argsort(p)
+    ranked = p[order] * p.size / np.arange(1, p.size + 1)
+    passed = np.zeros(p.size, bool)
+    below = np.flatnonzero(ranked <= q)
+    if below.size:
+        passed[order[: below.max() + 1]] = True
+    S = np.zeros((P, P), bool)
+    S[iu] = passed & ok
+    return S | S.T
+
+
+def integration(z: np.ndarray, noise_var: np.ndarray, tr: float, band, partitions: dict, null=None, fdr_q: float = 0.05) -> dict:
     """Integration measures on one parcel set: noise-corrected in-band correlations (route B's coupling), the
     participation ratio (all patterns / without the first) from them, and per partition the participation
     coefficient (mean over nodes and per parcel) and segregation on the positive weights (clipped at 1)."""
@@ -184,6 +218,15 @@ def integration(z: np.ndarray, noise_var: np.ndarray, tr: float, band, partition
         out["pr_resid_null_median"] = float(np.median(null["pr_resid"]))
         out["pr_resid_null_q05"] = float(np.quantile(null["pr_resid"], 0.05))
     W = positive_weights(corr)
+    if null is not None and "edge_sd" in null:                         # keep only edges reliably above chance
+        S = significant_edges(corr, null, fdr_q)
+        W = np.where(S, W, 0.0)
+        nsig = np.isfinite(np.diag(corr))
+        npairs = nsig.sum() * (nsig.sum() - 1) / 2
+        out["edges_kept"] = int(np.triu(W > 0, 1).sum())
+        out["edge_density"] = float(out["edges_kept"] / npairs) if npairs else float("nan")
+        out["nodes_without_edges"] = int(((W > 0).sum(1) == 0)[nsig].sum())
+        out["edge_rule"] = f"above the circular-shift null, FDR q = {fdr_q}"
     out["W"] = W
     out["pc"], out["pc_map"], out["seg"] = {}, {}, {}
     for name, lab in partitions.items():
@@ -387,8 +430,10 @@ def run(input_dir, cfg: dict, out_dir, resources=None, n_jobs: int | None = None
                     main_null = null
             else:
                 null = main_null                                       # same parcels as the main set
-            sets[name] = {"idx": idx, **integration(Z[idx], nv[idx], tr, band, parts, null)}
+            sets[name] = {"idx": idx, **integration(Z[idx], nv[idx], tr, band, parts, null, float(P_["edge_fdr_q"]))}
     res["integration"] = {name: {k_: v for k_, v in s.items() if k_ not in ("W", "pc_map", "idx")} for name, s in sets.items()}
+    for name in list(sets):                                            # the null's edge arrays are large: not kept
+        sets[name].pop("edge_null", None)
 
     # ---- outputs
     def num(v):
@@ -396,7 +441,8 @@ def run(input_dir, cfg: dict, out_dir, resources=None, n_jobs: int | None = None
     rows = []
     for name, s in res["integration"].items():
         base = {"set": name, "n_parcels": s["n_parcels"], "n_with_signal": s["n_with_signal"], "pr": num(s["pr"]),
-                "pr_resid": num(s["pr_resid"]), "pr_resid_null_median": num(s.get("pr_resid_null_median")), "global_share": num(s["global_share"])}
+                "pr_resid": num(s["pr_resid"]), "pr_resid_null_median": num(s.get("pr_resid_null_median")), "global_share": num(s["global_share"]),
+                "edge_density": num(s.get("edge_density")), "nodes_without_edges": s.get("nodes_without_edges")}
         for part in ("Yeo-7", "Yeo-17", "data-driven"):
             base[f"pc_{part}"] = num(s["pc"].get(part))
             base[f"seg_{part}"] = num(s["seg"].get(part))
@@ -451,11 +497,12 @@ def render(res: dict) -> str:
          f"- Undominated (reliable parcels with no component z >= {res['settings']['z_min']}): {f(m['undominated_pct'])} %",
          f"- In-band BOLD-like amplitude, median over parcels (1/s): signal {m.get('signal_sd_band_median')}, thermal noise {m.get('noise_sd_band_median')}", "",
          "## Integration (noise-corrected in-band correlations; graph measures on positive weights clipped at 1)", "",
-         "| set | parcels (with signal) | PR | PR without first (null median) | global share | PC Yeo-7 | PC Yeo-17 | PC data-driven | seg Yeo-7 | seg Yeo-17 | seg data-driven |",
-         "|---|---|---|---|---|---|---|---|---|---|---|"]
+         "Graph measures use only edges reliably above chance (circular-shift null per edge, false discovery rate).", "",
+         "| set | parcels (with signal) | PR | PR without first (null median) | global share | edge density | PC Yeo-7 | PC Yeo-17 | PC data-driven | seg Yeo-7 | seg Yeo-17 | seg data-driven |",
+         "|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for name, s in res.get("integration", {}).items():
         L.append(f"| {name} | {s['n_parcels']} ({s['n_with_signal']}) | {f(s['pr'])} | {f(s['pr_resid'])} ({f(s.get('pr_resid_null_median'))}) | "
-                 f"{f(s['global_share'])} | {f(s['pc'].get('Yeo-7'))} | {f(s['pc'].get('Yeo-17'))} | {f(s['pc'].get('data-driven'))} | "
+                 f"{f(s['global_share'])} | {f(s.get('edge_density'))} | {f(s['pc'].get('Yeo-7'))} | {f(s['pc'].get('Yeo-17'))} | {f(s['pc'].get('data-driven'))} | "
                  f"{f(s['seg'].get('Yeo-7'))} | {f(s['seg'].get('Yeo-17'))} | {f(s['seg'].get('data-driven'))} |")
     L += ["", "## Stage 2 rounds", "", "| round | df | k (leftover null) | removed | components (above 0.12 Hz / S0 coupling) |", "|---|---|---|---|---|"]
     for r in s2["rounds"]:

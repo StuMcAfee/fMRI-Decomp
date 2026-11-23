@@ -260,6 +260,7 @@ def _html(res, comp_js, imgs, removed_html) -> str:
     integ = "".join(
         f"<tr><td>{html.escape(n)}</td><td>{s['n_parcels']} ({s['n_with_signal']})</td><td>{_fmt(s['pr'], 2)}</td>"
         f"<td>{_fmt(s['pr_resid'], 2)} <span class='m'>({_fmt(s.get('pr_resid_null_median'), 2)})</span></td><td>{_fmt(s['global_share'])}</td>"
+        f"<td>{_fmt(s.get('edge_density'))}</td>"
         + "".join(f"<td>{_fmt(s['pc'].get(p))}</td>" for p in ("Yeo-7", "Yeo-17", "data-driven"))
         + "".join(f"<td>{_fmt(s['seg'].get(p))}</td>" for p in ("Yeo-7", "Yeo-17", "data-driven")) + "</tr>"
         for n, s in res.get("integration", {}).items())
@@ -308,11 +309,12 @@ single-parcel patches {m['single_parcel_patches']}).</p>
 
 <h2>Integration</h2>
 <p class="m">Noise-corrected in-band correlations; participation ratio (PR) with the circular-shift null median; participation coefficient (PC) and
-segregation (seg) on positive weights clipped at 1. Main: reliable parcels (data-driven partition without undominated parcels); A: every parcel with
+segregation (seg) on positive weights clipped at 1, using only edges reliably above chance (each edge against its own circular-shift null,
+false discovery rate 0.05); edge density = share of possible edges kept. Main: reliable parcels (data-driven partition without undominated parcels); A: every parcel with
 voxels; B: reliable parcels with undominated parcels assigned to their strongest component.</p>
-<table><tr><th>set</th><th>parcels (with signal)</th><th>PR</th><th>PR without first (null)</th><th>global share</th>
+<table><tr><th>set</th><th>parcels (with signal)</th><th>PR</th><th>PR without first (null)</th><th>global share</th><th>edge density</th>
 <th>PC Yeo-7</th><th>PC Yeo-17</th><th>PC data-driven</th><th>seg Yeo-7</th><th>seg Yeo-17</th><th>seg data-driven</th></tr>{integ}</table>
-<h4>Connectivity (main set), sorted by partition</h4>{img('matrices', 'connectivity matrices')}
+<h4>Connectivity (main set; edges reliably above chance), sorted by partition</h4>{img('matrices', 'connectivity matrices')}
 <h4>Participation coefficient by parcel (main set)</h4>{img('participation', 'participation coefficient')}
 
 <h2>Removed non-neural components (stage 2)</h2>

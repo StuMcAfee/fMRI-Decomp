@@ -56,3 +56,21 @@ def test_map_fidelity_matches_simulation():
     assert pi.map_fidelity(pi.mp_edge(P, T), P, T)[0] == 0.0
     lam7 = pi.fidelity_threshold(0.7, P, T)
     assert abs(pi.map_fidelity(lam7, P, T)[0] - 0.7) < 1e-6
+
+
+def test_significant_edges_keep_real_connections():
+    """Two coupled groups of parcels plus independent ones: edges within the coupled groups pass the circular-shift
+    null at FDR 0.05; edges among independent parcels mostly do not."""
+    from mejoint.parcel_sim import band_noise
+    g = np.random.default_rng(1)
+    T, tr = 600, 0.75
+    s1, s2 = band_noise(T, tr, (0.01, 0.1), g, 2)
+    z = np.vstack([np.outer(np.ones(10), s1) * 2.0, np.outer(np.ones(10), s2) * 2.0, np.zeros((20, T))])
+    z = z + band_noise(T, tr, (0.01, 0.1), g, 40) * 1.0 + g.standard_normal((40, T))
+    from mejoint import regions
+    corr = regions.coupling(z, np.ones(40), tr, (0.01, 0.1))["corr"]
+    null = pp.pr_null(z, np.ones(40), tr, (0.01, 0.1), 40, 40, g)
+    S = pp.significant_edges(corr, null, 0.05)
+    within = S[:10, :10][np.triu_indices(10, 1)].mean()
+    indep = S[20:, 20:][np.triu_indices(20, 1)].mean()
+    assert within > 0.9 and indep < 0.1
