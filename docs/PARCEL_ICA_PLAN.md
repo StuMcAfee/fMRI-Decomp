@@ -129,6 +129,10 @@ Decided (user, 2026-11-23):
 - Parcels with no clear winner (no component z >= 1) are of interest (cortex not dominated by one network); an
   additional integration measure on all parcels is to be reported alongside the reliable-parcel measures.
 
+- All-parcel measures, both versions: (A) every parcel with voxels, including those below the reliability floor; (B)
+  the partition-based measures with no-clear-winner parcels assigned to their strongest component.
+- In the node count, no-clear-winner parcels are gaps (like dropped parcels); single-parcel islands count as patches.
+- Undominated share: the percentage of reliable parcels with no clear winner, reported as its own metric.
+
 Open: stage 2 stopping rule (fixed leftover-channel count, or repeat decompose-and-remove until no component meets the
-non-neural criteria); how no-clear-winner parcels enter the node count; minimum patch size; the exact parcel set of the
-all-parcel integration measure.
+non-neural criteria).
