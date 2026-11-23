@@ -100,7 +100,7 @@ def build(out, res, ids, rel, reliable, rounds, wta, sets, pcmap, nets7, nets17,
                             "noise": float(wta["tc_noise_var"][j])})
 
         # ---- partitions: data-driven winner-take-all (with gaps), Yeo-7, Yeo-17
-        win = wta["win"]
+        win = wta["win_full"]                                          # every parcel shows its strongest component (user)
         cby = {}
         for p_, w_, r_ in zip(ids.tolist(), win, mm):
             cby[p_] = DROPPED if not r_ else (sp.NOWIN if w_ < 0 else cols[w_])
@@ -123,8 +123,7 @@ def build(out, res, ids, rel, reliable, rounds, wta, sets, pcmap, nets7, nets17,
             rows.append(("Yeo-17", {h: sp.label_colours({p_: col17.get(n, sp.MEDIAL) for p_, n in zip(ids.tolist(), nets17)}, R["labels"][h]) for h in ("L", "R")}))
         won = sorted(set(win[(win >= 0) & mm].tolist()))
         leg = [Patch(color=cols[j], label=f"c{j}: {comps[j]['yeo7']}") for j in won][:40]
-        leg += [Patch(color=sp.NOWIN, label="undominated or weak"), Patch(color=DROPPED, label="below reliability floor"),
-                Patch(color=sp.MEDIAL, label="no parcel / no voxels")]
+        leg += [Patch(color=sp.MEDIAL, label="no parcel / no voxels")]
         sp.rows_figure(R, rows, fd / "partitions.png", legend=leg, row_height=1.55, width=10.0, dpi=110)
         imgs["partitions"] = _b64(fd / "partitions.png")
 
@@ -311,8 +310,9 @@ Labels give the best positive overlap with Yeo-7 / Yeo-17; asymmetry = (left - r
 <div class="two"><canvas id="tcv"></canvas><canvas id="spv"></canvas></div></div>
 
 <h2>Partitions</h2>
-<p class="m">Data-driven: every parcel with voxels coloured by its winning component (z &ge; {res['settings']['z_min']} and a clear margin over the second strongest); hue = the component's best Yeo-7 network,
-lightness steps separate components of one network; patch borders darkened. Node count = contiguous same-winner patches ({m['node_count']},
+<p class="m">Data-driven: every parcel with voxels coloured by its strongest component (winner-take-all); hue = the component's best Yeo-7 network,
+lightness steps separate components of one network; patch borders darkened. How clearly each parcel's winner leads is shown in the dominance
+map below, which explains parcel-to-parcel variability. Node count = contiguous same-winner patches of dominated parcels ({m['node_count']},
 single-parcel patches {m['single_parcel_patches']}).</p>
 {img('partitions', 'partitions')}
 <h4>Dominance</h4>
