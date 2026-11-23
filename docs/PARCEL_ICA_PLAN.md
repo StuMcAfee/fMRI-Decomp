@@ -90,3 +90,25 @@ Code: `mejoint.parcel_sim` (synthetic route B parcel channels), `mejoint.parcel_
   excludes dS0; running the ICA on c0 (or on the stacked channels) would allow it.
 - Next (P2): the same steps on real Schaefer 200 route B outputs (P04 and the volunteer) to see where real
   physiological signal sits relative to the simulated range.
+
+## 8. Target pipeline (user, 2026-11-23; replaces the single-decomposition design)
+
+1. Physics stage: echo-averaged parcel signals split into BOLD-like (dR2*) and S0-like parts, thermal noise from the
+   leftover channels (route B, icosahedral export).
+2. Small decomposition on the BOLD-like signal (start: the leftover-channel count) to isolate non-neural
+   (cardiorespiratory) components, identified from their own signal characteristics (frequency relative to the
+   participant's breathing rate from the motion parameters and predicted aliases, S0 coupling, spatial pattern); no
+   physiological recordings exist or are planned. These components are removed.
+3. Large decomposition on the cleaned signal with k from the thermal-noise (Marchenko-Pastur) threshold (user: preferred
+   to split-half reproducibility, because mental activity varies over a scan); a user-selectable criterion may come later.
+4. Outputs: cleaned icosahedral (ico1002) signals; integration measures; surface maps; four partitions for
+   interpretation: data-driven (stage 3 winner-take-all), Yeo-7, Yeo-17, Schaefer-200. Individual partitions are
+   treated as clinically informative. Integration at icosahedral scale: parcels below the reliability floor dropped;
+   contiguous parcels with the same winner-take-all component may be merged into one node.
+5. Report: one self-contained HTML per participant (research storage only), pre-rendered images; interactive
+   network components at the top (time course, surface map, spectrum), removed noise components shown explicitly
+   below with their effect, then the physics stage.
+
+Open: stage 2 stopping rule (fixed leftover-channel count, or repeat decompose-and-remove until no component meets the
+non-neural criteria); what "Schaefer-200 partition" means for the participation coefficient; how node-count
+differences between participants are handled when nodes come from the data-driven partition.
