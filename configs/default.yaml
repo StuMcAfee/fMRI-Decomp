@@ -320,3 +320,5 @@ parcel_pipeline:               # two-stage parcel denoising and networks (docs/P
   high_share: 0.5               # non-neural criterion: noise-debiased signal share above high_hz
   high_hz: 0.12
   eta: 0.5                      # non-neural criterion: S0 coupling
+  stage3_k: fidelity            # stage 3 k: 'fidelity' (expected map correlation >= fidelity_min; user 2026-11-23) or 'mp' (thermal-noise edge)
+  fidelity_min: 0.7

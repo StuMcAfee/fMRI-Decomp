@@ -36,3 +36,23 @@ def test_positive_weights_and_reliability():
     g = np.random.default_rng(0)
     rel = pp.reliability(g.standard_normal((50, 800)), 0.75, (0.01, 0.1))      # pure unit noise -> about 0
     assert abs(np.median(rel)) < 0.1
+
+
+def test_map_fidelity_matches_simulation():
+    """The expected map fidelity from an eigenvalue agrees with the observed overlap of a planted spike."""
+    from mejoint import parcel_ica as pi
+    g = np.random.default_rng(0)
+    P, T = 600, 300
+    for ell in (4.0, 8.0):
+        est, emp = [], []
+        for _ in range(6):
+            v = g.standard_normal(P)
+            v /= np.linalg.norm(v)
+            X = g.standard_normal((P, T)) + np.sqrt(ell - 1) * np.outer(v, g.standard_normal(T))
+            lam, U = np.linalg.eigh(X @ X.T / T)
+            est.append(pi.map_fidelity(lam[-1], P, T)[0])
+            emp.append(abs(U[:, -1] @ v))
+        assert abs(np.mean(est) - np.mean(emp)) < 0.05
+    assert pi.map_fidelity(pi.mp_edge(P, T), P, T)[0] == 0.0
+    lam7 = pi.fidelity_threshold(0.7, P, T)
+    assert abs(pi.map_fidelity(lam7, P, T)[0] - 0.7) < 1e-6

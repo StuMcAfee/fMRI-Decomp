@@ -35,6 +35,32 @@ def eigenvalues(z: np.ndarray, df: int | None = None) -> np.ndarray:
     return lam[: min(z.shape)]
 
 
+def map_fidelity(lam, n_parcels: int, df: int) -> np.ndarray:
+    """Expected correlation between an estimated component map and the true map, from its eigenvalue (spiked
+    covariance model, unit white noise; Baik-Ben Arous-Peche / Paul 2007). With gamma = parcels / df, a population
+    eigenvalue l > 1 + sqrt(gamma) appears as lam = l (1 + gamma / (l - 1)), and the squared overlap of its
+    eigenvector (here: the map over parcels) with the true one is (1 - gamma / (l - 1)^2) / (1 + gamma / (l - 1)).
+    Eigenvalues at or below the Marchenko-Pastur edge get 0."""
+    lam = np.atleast_1d(np.asarray(lam, float))
+    g = n_parcels / df
+    b = lam + 1 - g
+    disc = b ** 2 - 4 * lam
+    with np.errstate(invalid="ignore", divide="ignore"):
+        ell = (b + np.sqrt(np.clip(disc, 0, None))) / 2
+        ov2 = (1 - g / (ell - 1) ** 2) / (1 + g / (ell - 1))
+    ok = (lam > mp_edge(n_parcels, df)) & (disc > 0) & (ell > 1 + np.sqrt(g))
+    return np.where(ok, np.sqrt(np.clip(ov2, 0, 1)), 0.0)
+
+
+def fidelity_threshold(fid: float, n_parcels: int, df: int) -> float:
+    """The eigenvalue at which the expected map fidelity reaches fid (inverse of map_fidelity, by bisection)."""
+    lo, hi = mp_edge(n_parcels, df) * (1 + 1e-9), 1e6
+    for _ in range(200):
+        mid = 0.5 * (lo + hi)
+        lo, hi = (mid, hi) if map_fidelity(mid, n_parcels, df)[0] < fid else (lo, mid)
+    return float(hi)
+
+
 def mp_edge(n_parcels: int, df: int) -> float:
     """Upper Marchenko-Pastur edge for unit-variance white noise, n_parcels variables, df samples."""
     return float((1.0 + np.sqrt(n_parcels / df)) ** 2)

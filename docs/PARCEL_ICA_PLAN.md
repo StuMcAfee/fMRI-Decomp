@@ -99,8 +99,11 @@ Code: `mejoint.parcel_sim` (synthetic route B parcel channels), `mejoint.parcel_
    (cardiorespiratory) components, identified from their own signal characteristics (frequency relative to the
    participant's breathing rate from the motion parameters and predicted aliases, S0 coupling, spatial pattern); no
    physiological recordings exist or are planned. These components are removed.
-3. Large decomposition on the cleaned signal with k from the thermal-noise (Marchenko-Pastur) threshold (user: preferred
-   to split-half reproducibility, because mental activity varies over a scan); a user-selectable criterion may come later.
+3. Large decomposition on the cleaned signal. k (user, 2026-11-23, revised the same day): the number of components whose
+   maps are expected to correlate at least 0.7 with the true maps, from each eigenvalue under the spiked-covariance model
+   (unit white noise after whitening); the thermal-noise (Marchenko-Pastur) count, which only says that structure is
+   detectable, is reported as the upper bound. Split-half reproducibility was not chosen (mental activity varies over a
+   scan); elbow and gap rules were rejected (smooth spectra, no physical meaning).
 4. Outputs: cleaned icosahedral (ico1002) signals; integration measures; surface maps; four partitions for
    interpretation: data-driven (stage 3 winner-take-all), Yeo-7, Yeo-17 (Schaefer-200 retracted, user 2026-11-23).
    Individual partitions are treated as clinically informative. Integration at icosahedral scale: parcels below the

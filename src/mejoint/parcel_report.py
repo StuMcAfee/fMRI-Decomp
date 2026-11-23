@@ -57,7 +57,7 @@ def component_colours(labels7: list, net_colours: dict, flagged=None) -> np.ndar
     return col
 
 
-def build(out, res, ids, rel, reliable, rounds, wta, sets, pcmap, nets7, nets17, resources, tr, resp, dim3) -> Path:
+def build(out, res, ids, rel, reliable, rounds, wta, sets, pcmap, nets7, nets17, resources, tr, resp, dim3, amp=None) -> Path:
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -132,6 +132,13 @@ def build(out, res, ids, rel, reliable, rounds, wta, sets, pcmap, nets7, nets17,
     sp.rows_figure(R, [("reliability", {h: sp.vertex_colours(vals, R["labels"][h], seq, Normalize(0, 1)) for h in ("L", "R")})],
                    fd / "reliability.png", cbar=(seq, Normalize(0, 1), f"reliability (floor {res['reliability_min']})"), row_height=1.5)
     imgs["reliability"] = _b64(fd / "reliability.png")
+    if amp is not None:                                                # signal amplitude and thermal noise, same scale
+        vmax = float(np.nanpercentile(np.r_[amp["signal"], amp["noise"]], 98)) or 1.0
+        nrm = Normalize(0, vmax)
+        rows = [(f"in-band signal SD\n(median {np.median(amp['signal']):.3f} 1/s)", {h: sp.vertex_colours(dict(zip(ids.tolist(), amp["signal"])), R["labels"][h], seq, nrm) for h in ("L", "R")}),
+                (f"in-band thermal noise SD\n(median {np.median(amp['noise']):.3f} 1/s)", {h: sp.vertex_colours(dict(zip(ids.tolist(), amp["noise"])), R["labels"][h], seq, nrm) for h in ("L", "R")})]
+        sp.rows_figure(R, rows, fd / "amplitude_noise.png", cbar=(seq, nrm, "BOLD-like dR2* SD (1/s)"), row_height=1.5)
+        imgs["amplitude"] = _b64(fd / "amplitude_noise.png")
     if pcmap:
         rows = [(f"PC, {k}", {h: sp.vertex_colours({p_: v for p_, v in zip(ids.tolist(), pcmap[k]) if np.isfinite(v)}, R["labels"][h], seq, Normalize(0, 1))
                               for h in ("L", "R")}) for k in pcmap]
@@ -228,7 +235,10 @@ def build(out, res, ids, rel, reliable, rounds, wta, sets, pcmap, nets7, nets17,
     lam3 = np.array(res["stage3"]["eigenvalues_top"])
     axs[1].semilogy(np.arange(1, lam3.size + 1), lam3, "o-", ms=3, lw=1, color="#2a78d6")
     axs[1].axhline(res["stage3"]["mp_edge"], color="#555", ls=":", lw=0.8)
-    axs[1].set_title(f"stage 3: cleaned signal, thermal-noise edge (dotted): k = {res['stage3']['k']}", fontsize=8)
+    if res["stage3"].get("fidelity_eigenvalue"):
+        axs[1].axhline(res["stage3"]["fidelity_eigenvalue"], color="#2a78d6", ls="--", lw=0.8)
+    axs[1].set_title(f"stage 3: thermal-noise edge (dotted, {res['stage3']['k_mp']}), map fidelity >= {res['stage3'].get('fidelity_min')} "
+                     f"(dashed): k = {res['stage3']['k']}", fontsize=8)
     for a in axs:
         a.tick_params(labelsize=6)
     imgs["eigen"] = _png(fig, 100)
@@ -278,13 +288,14 @@ Exploratory: route B is unchanged.</p>
 <div class="kpi">
 <div><span class="m">reliable coverage</span><b>{m['reliable_coverage_pct']} %</b><span class="m">{m['reliable_parcels']} parcels</span></div>
 <div><span class="m">node count</span><b>{m['node_count']}</b><span class="m">{_fmt(m['patches_per_component'], 2)} patches / component</span></div>
-<div><span class="m">network components (k)</span><b>{m['k_stage3']}</b><span class="m">{m['components_winning']} win parcels</span></div>
+<div><span class="m">network components (k)</span><b>{m['k_stage3']}</b><span class="m">map fidelity &ge; {s3.get('fidelity_min')} &middot; {m['components_winning']} win parcels</span></div>
 <div><span class="m">undominated</span><b>{_fmt(m['undominated_pct'], 1)} %</b><span class="m">of reliable parcels</span></div>
 <div><span class="m">non-neural removed</span><b>{s2['n_removed']}</b><span class="m">{len(s2['rounds'])} round(s){' &middot; CAP REACHED' if s2['cap_reached'] else ''}</span></div>
 </div>
 
 <h2>Network estimates (stage 3)</h2>
-<p class="m">Choose a component: its map (loading, z over parcels), time course and spectrum (band 0.01-0.1 Hz shaded; dotted line: thermal noise level).
+<p class="m">k = components whose maps are expected to correlate at least {s3.get('fidelity_min')} with the true maps ({s3.get('k_fidelity')};
+thermal-noise threshold: {s3['k_mp']}). Choose a component: its map (loading, z over parcels), time course and spectrum (band 0.01-0.1 Hz shaded; dotted line: thermal noise level).
 Labels give the best positive overlap with Yeo-7 / Yeo-17; asymmetry = (left - right) / (left + right) of positive loadings.</p>
 <div id="comps"></div><div class="card"><h4 id="ct"></h4><p class="m" id="cm"></p><img id="ci" alt="component map">
 <div class="two"><canvas id="tcv"></canvas><canvas id="spv"></canvas></div></div>
@@ -313,7 +324,11 @@ voxels; B: reliable parcels with undominated parcels assigned to their strongest
 {img('removed_inband', 'in-band variance removed')}
 
 <h2>Physics stage</h2>
+<p class="m">Reliability = signal share of each parcel's slow BOLD-like variance. Below: the two parts it compares, on one scale: in-band signal
+amplitude (noise-corrected) and in-band thermal noise. Low coverage from high noise points to acquisition (coil, head position, motion); low
+coverage from low signal points to physiology or state (arousal, breathing, vascular reactivity).</p>
 {img('reliability', 'reliability')}
+{img('amplitude', 'signal amplitude and thermal noise')}
 {img('eigen', 'eigenvalues')}
 <p class="m">Generated by mejoint (parcel_pipeline). Input: {html.escape(res['input'])}.</p>
 </main>

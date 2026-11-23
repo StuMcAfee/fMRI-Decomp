@@ -30,7 +30,7 @@ import numpy as np
 from . import parcel_ica as pi
 
 DEFAULTS = {"k_max": 100, "max_rounds": 5, "z_min": 1.0, "n_seeds": 30, "n_null": 50, "high_share": 0.5, "eta": 0.5,
-            "high_hz": 0.12}
+            "high_hz": 0.12, "stage3_k": "fidelity", "fidelity_min": 0.7}
 
 
 # ------------------------------------------------------------------ anatomy of the icosahedral parcels
@@ -307,11 +307,27 @@ def run(input_dir, cfg: dict, out_dir, resources=None, n_jobs: int | None = None
     # ---- stage 3: networks on the cleaned signal (thermal-noise threshold)
     df3 = T - nuis - 1 - q
     dim3 = pi.dimensionality(Z, df3)
-    k3 = int(min(dim3["k_mp"], P_["k_max"]))
-    st3 = {"df": int(df3), "k_mp": int(dim3["k_mp"]), "k": k3, "k_capped": bool(dim3["k_mp"] > P_["k_max"]), "mp_edge": dim3["mp_edge"],
+    # k: components whose maps are expected to correlate >= fidelity_min with the true maps (user, 2026-11-23); the
+    # thermal-noise (Marchenko-Pastur) count is kept as the upper bound and reported
+    fid = pi.map_fidelity(dim3["eigenvalues"], Z.shape[0], df3)
+    k_fid = int(np.sum(fid >= float(P_["fidelity_min"])))
+    k_rule = int(dim3["k_mp"]) if P_["stage3_k"] == "mp" else k_fid
+    k3 = int(min(k_rule, P_["k_max"]))
+    st3 = {"df": int(df3), "k_mp": int(dim3["k_mp"]), "k_fidelity": k_fid, "fidelity_min": float(P_["fidelity_min"]),
+           "fidelity_eigenvalue": pi.fidelity_threshold(float(P_["fidelity_min"]), Z.shape[0], df3), "k_rule": P_["stage3_k"],
+           "fidelity_top": [round(float(x), 3) for x in fid[:60]],
+           "k": k3, "k_capped": bool(k_rule > P_["k_max"]), "mp_edge": dim3["mp_edge"],
            "eigenvalues_top": [round(float(x), 3) for x in dim3["eigenvalues"][:60]]}
     noise_scale = (T - nuis - q) / max(T - nuis, 1)                   # unit noise reduced by the removed dimensions
     rel = reliability(Z, tr, band)
+    # signal amplitude and thermal noise per parcel in physical units (BOLD-like dR2*, 1/s), both over the analysis
+    # band: noise SD = whitening scale x sqrt(band share of white noise); signal SD = noise-corrected in-band SD
+    from .regions import band_pass as _bp
+    Rk = np.asarray(inp["R"], float)[ok]
+    sd_b = np.sqrt(np.asarray(inp["noise_var"], float)[ok] * (1 + pr["rho"] ** 2)) / Rk[:, 0, 0] * 1000.0
+    bf = band_fraction(T, tr, band)
+    noise_sd_band = sd_b * np.sqrt(bf * noise_scale)
+    signal_sd_band = sd_b * np.sqrt(np.clip(_bp(Z, tr, band).var(1) - bf * noise_scale, 0, None))
     reliable = rel >= rmin
     res = {"input": str(input_dir), "atlas": inp["atlas"], "n_parcels_total": n_total, "n_parcels_with_voxels": int(len(ids)),
            "n_frames": int(T), "tr_s": tr, "band_hz": list(band), "nuisance_rank": nuis, "respiratory_peak_hz": resp,
@@ -349,7 +365,9 @@ def run(input_dir, cfg: dict, out_dir, resources=None, n_jobs: int | None = None
                "patches_per_component": round(nc["node_count"] / n_win, 3) if n_win else None,
                "single_parcel_patches": int(sum(1 for s in nc["patch_sizes"] if s == 1)),
                "undominated_pct": round(100.0 * float(((win_r < 0) & reliable).sum()) / max(int(reliable.sum()), 1), 2) if wta else None,
-               "n_removed_stage2": q}
+               "n_removed_stage2": q,
+               "signal_sd_band_median": round(float(np.median(signal_sd_band)), 5),
+               "noise_sd_band_median": round(float(np.median(noise_sd_band)), 5)}
     res["metrics"] = metrics
     rng = np.random.default_rng(seed_root + 31)
     min_shift = max(1, int(round(float(G.get("min_shift_s", 30.0)) / tr)))
@@ -395,6 +413,8 @@ def run(input_dir, cfg: dict, out_dir, resources=None, n_jobs: int | None = None
     io.write_tsv(out / "parcels.tsv", {"parcel": ids.tolist(), "yeo7": list(nets7) if nets7 is not None else [""] * len(ids),
                                        "yeo17": list(nets17) if nets17 is not None else [""] * len(ids),
                                        "reliability": [num(v) for v in rel], "reliable": reliable.astype(int).tolist(),
+                                       "signal_sd_band": [round(float(v), 5) for v in signal_sd_band],
+                                       "noise_sd_band": [round(float(v), 5) for v in noise_sd_band],
                                        "winner": (wta["win"].tolist() if wta else [-1] * len(ids)),
                                        "strongest": (wta["win_full"].tolist() if wta else [-1] * len(ids)),
                                        **{f"pc_{p}": [num(v) for v in pcmap[p]] for p in pcmap}})
@@ -405,6 +425,7 @@ def run(input_dir, cfg: dict, out_dir, resources=None, n_jobs: int | None = None
     try:
         from . import parcel_report
         parcel_report.build(out, res, ids=ids, rel=rel, reliable=reliable, rounds=rounds, wta=wta, sets=sets, pcmap=pcmap,
+                            amp={"signal": signal_sd_band, "noise": noise_sd_band},
                             nets7=nets7, nets17=nets17, resources=resources, tr=tr, resp=resp, dim3=dim3)
     except Exception as exc:                                           # the report never blocks the results
         import traceback
@@ -421,12 +442,14 @@ def render(res: dict) -> str:
          + (f"{res['respiratory_peak_hz']} Hz" if res['respiratory_peak_hz'] else "not found in the motion parameters (0.3 Hz assumed)"),
          f"- Stage 2 (non-neural removal): {s2['n_removed']} components removed over {len(s2['rounds'])} round(s); stopped: {s2['stop']}"
          + ("  **(cap reached: check the criteria)**" if s2["cap_reached"] else ""),
-         f"- Stage 3 (networks): k = {s3['k']} (thermal-noise threshold {s3['k_mp']}{', capped' if s3['k_capped'] else ''})",
+         f"- Stage 3 (networks): k = {s3['k']} (expected map fidelity >= {s3.get('fidelity_min')}: {s3.get('k_fidelity')}; thermal-noise threshold "
+         f"{s3['k_mp']}{'; capped' if s3['k_capped'] else ''})",
          "", "## Metrics", "",
          f"- Reliable parcels: {m['reliable_parcels']} ({m['reliable_coverage_pct']} % of {res['n_parcels_total']})",
          f"- Node count (contiguous same-winner patches): {m['node_count']}; components winning parcels: {m['components_winning']} of k = {m['k_stage3']}; "
          f"patches per component: {f(m['patches_per_component'])}; single-parcel patches: {m['single_parcel_patches']}",
-         f"- Undominated (reliable parcels with no component z >= {res['settings']['z_min']}): {f(m['undominated_pct'])} %", "",
+         f"- Undominated (reliable parcels with no component z >= {res['settings']['z_min']}): {f(m['undominated_pct'])} %",
+         f"- In-band BOLD-like amplitude, median over parcels (1/s): signal {m.get('signal_sd_band_median')}, thermal noise {m.get('noise_sd_band_median')}", "",
          "## Integration (noise-corrected in-band correlations; graph measures on positive weights clipped at 1)", "",
          "| set | parcels (with signal) | PR | PR without first (null median) | global share | PC Yeo-7 | PC Yeo-17 | PC data-driven | seg Yeo-7 | seg Yeo-17 | seg data-driven |",
          "|---|---|---|---|---|---|---|---|---|---|---|"]
