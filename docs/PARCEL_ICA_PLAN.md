@@ -102,13 +102,14 @@ Code: `mejoint.parcel_sim` (synthetic route B parcel channels), `mejoint.parcel_
 3. Large decomposition on the cleaned signal with k from the thermal-noise (Marchenko-Pastur) threshold (user: preferred
    to split-half reproducibility, because mental activity varies over a scan); a user-selectable criterion may come later.
 4. Outputs: cleaned icosahedral (ico1002) signals; integration measures; surface maps; four partitions for
-   interpretation: data-driven (stage 3 winner-take-all), Yeo-7, Yeo-17, Schaefer-200. Individual partitions are
-   treated as clinically informative. Integration at icosahedral scale: parcels below the reliability floor dropped;
-   contiguous parcels with the same winner-take-all component may be merged into one node.
+   interpretation: data-driven (stage 3 winner-take-all), Yeo-7, Yeo-17 (Schaefer-200 retracted, user 2026-11-23).
+   Individual partitions are treated as clinically informative. Integration at icosahedral scale: parcels below the
+   reliability floor dropped; merging same-component parcels into nodes retracted (user 2026-11-23: the nodes would
+   carry the network structure the measures are meant to assess); approaches to integration measurement and graph
+   visualisation at ico1002 scale to be tested; a node-count metric to be defined; a graph visualisation in the report.
 5. Report: one self-contained HTML per participant (research storage only), pre-rendered images; interactive
    network components at the top (time course, surface map, spectrum), removed noise components shown explicitly
    below with their effect, then the physics stage.
 
 Open: stage 2 stopping rule (fixed leftover-channel count, or repeat decompose-and-remove until no component meets the
-non-neural criteria); what "Schaefer-200 partition" means for the participation coefficient; how node-count
-differences between participants are handled when nodes come from the data-driven partition.
+non-neural criteria); the definition of the node-count metric; which integration measures and graph views to test.
