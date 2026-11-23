@@ -4,7 +4,8 @@ user decisions 2026-11-23). Exploratory: route B is not changed.
 Stage 1, physics: echo-averaged parcel signals split into BOLD-like and S0-like parts, thermal noise from the
          leftover channels (route B, icosahedral export); each parcel's BOLD-like signal whitened to unit noise and
          its reliability (signal share of its slow-band variance) measured.
-Stage 2, non-neural removal, repeated: spatial ICA at the leftover-channel count of the remaining data; components
+Stage 2, non-neural removal, repeated: spatial ICA at the map-fidelity count of the remaining data (user, 2026-11-23;
+         originally the leftover-channel count, too small to give breathing its own component); components
          meeting the non-neural criteria (signal share above 0.12 Hz, or S0 coupling) are projected out of the BOLD-like
          signal, both channels and the leftover (null) channels; repeat on what remains until no component qualifies
          (at most max_rounds; reaching the cap is reported). The degrees of freedom shrink by one per removed
@@ -31,7 +32,7 @@ from . import parcel_ica as pi
 
 DEFAULTS = {"k_max": 100, "max_rounds": 5, "z_min": 1.0, "n_seeds": 30, "n_null": 50, "high_share": 0.5, "eta": 0.5,
             "high_hz": 0.12, "stage3_k": "fidelity", "fidelity_min": 0.7, "edge_fdr_q": 0.05, "dominance_q": 0.95,
-            "correction_error_max": 0.15}
+            "correction_error_max": 0.15, "stage2_k": "fidelity"}
 
 
 # ------------------------------------------------------------------ anatomy of the icosahedral parcels
@@ -379,15 +380,18 @@ def run(input_dir, cfg: dict, out_dir, resources=None, n_jobs: int | None = None
         df = T - nuis - 1 - len(removed)
         dim = pi.dimensionality(Z, df, nulls or None)
         kn = dim.get("k_null")
-        if kn is None:
-            stop = "no leftover channels: stage 2 not possible"
-            break
-        k = int(min(kn, P_["k_max"]))
-        rec = {"round": rnd + 1, "df": int(df), "k_null": int(kn), "k": k, "mp_edge": dim["mp_edge"],
-               "null_threshold": dim.get("null_threshold"), "eigenvalues_top": [round(float(x), 3) for x in dim["eigenvalues"][:30]]}
+        # detection k (user, 2026-11-23): the map-fidelity count of the remaining data, as in stage 3; at the
+        # leftover-channel count (3-6 in this protocol) breathing could not get its own component and was missed
+        fid2 = pi.map_fidelity(dim["eigenvalues"], Z.shape[0], df)
+        kf = int(np.sum(fid2 >= float(P_["fidelity_min"])))
+        k = int(min(kf if P_["stage2_k"] == "fidelity" else (kn or 0), P_["k_max"]))
+        rec = {"round": rnd + 1, "df": int(df), "k_null": None if kn is None else int(kn), "k_fidelity": kf, "k": k,
+               "mp_edge": dim["mp_edge"], "null_threshold": dim.get("null_threshold"),
+               "fidelity_eigenvalue": pi.fidelity_threshold(float(P_["fidelity_min"]), Z.shape[0], df),
+               "eigenvalues_top": [round(float(x), 3) for x in dim["eigenvalues"][:60]]}
         if k < 2:
             rounds.append({**rec, "components": []})
-            stop = "fewer than 2 dimensions above the leftover-channel null"
+            stop = "fewer than 2 components with reliable maps"
             break
         ica = pi.spatial_ica(Z, k, seeds(rnd), n_jobs=n_jobs)
         sp = pi.spectral_measures(ica["tc"], tr, band, resp_hz=resp or 0.3, high_hz=P_["high_hz"], noise_var=ica["tc_noise_var"])
@@ -603,10 +607,10 @@ def render(res: dict) -> str:
         L.append(f"| {name} | {s['n_parcels']} ({s['n_with_signal']}) | {f(s['pr'])} | {f(s['pr_resid'])} ({f(s.get('pr_resid_null_median'))}) | "
                  f"{f(s['global_share'])} | {f(s.get('edge_density'))} | {f(s['pc'].get('Yeo-7'))} | {f(s['pc'].get('Yeo-17'))} | {f(s['pc'].get('data-driven'))} | "
                  f"{f(s['seg'].get('Yeo-7'))} | {f(s['seg'].get('Yeo-17'))} | {f(s['seg'].get('data-driven'))} |")
-    L += ["", "## Stage 2 rounds", "", "| round | df | k (leftover null) | removed | components (above 0.12 Hz / S0 coupling) |", "|---|---|---|---|---|"]
+    L += ["", "## Stage 2 rounds", "", "| round | df | k (map fidelity; leftover null) | removed | components (above 0.12 Hz / S0 coupling) |", "|---|---|---|---|---|"]
     for r in s2["rounds"]:
         cs = "; ".join(f"c{c['component']}{'*' if c['removed'] else ''} {c['high_share']:.2f}/{c['eta'] if c['eta'] is not None else '-'}" for c in r.get("components", []))
-        L.append(f"| {r['round']} | {r['df']} | {r['k']} | {sum(c['removed'] for c in r.get('components', []))} | {cs} |")
+        L.append(f"| {r['round']} | {r['df']} | {r['k']} ({r.get('k_null')}) | {sum(c['removed'] for c in r.get('components', []))} | {cs} |")
     dn = res.get("denoising") or {}
     if dn:
         L += ["", f"Denoising: share of BOLD-like variance removed per parcel (10th / 50th / 90th percentile): in band {dn.get('inband_removed_p10_50_90')}, "

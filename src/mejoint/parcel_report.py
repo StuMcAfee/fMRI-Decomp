@@ -235,9 +235,9 @@ def build(out, res, ids, rel, reliable, rounds, wta, sets, pcmap, nets7, nets17,
     for r in res["stage2"]["rounds"]:
         lam = np.array(r["eigenvalues_top"])
         axs[0].semilogy(np.arange(1, lam.size + 1), lam, "o-", ms=3, lw=1, label=f"round {r['round']} (k {r['k']})")
-        if r.get("null_threshold"):
-            axs[0].axhline(r["null_threshold"], color="#eb6834", ls="--", lw=0.8)
-    axs[0].set_title("stage 2: eigenvalues and leftover-channel threshold (dashed)", fontsize=8)
+        if r.get("fidelity_eigenvalue"):
+            axs[0].axhline(r["fidelity_eigenvalue"], color="#2a78d6", ls="--", lw=0.6)
+    axs[0].set_title("stage 2: eigenvalues per round; map-fidelity threshold (dashed)", fontsize=8)
     axs[0].legend(fontsize=6, frameon=False)
     lam3 = np.array(res["stage3"]["eigenvalues_top"])
     axs[1].semilogy(np.arange(1, lam3.size + 1), lam3, "o-", ms=3, lw=1, color="#2a78d6")
@@ -271,7 +271,7 @@ def _html(res, comp_js, imgs, removed_html) -> str:
         + "".join(f"<td>{_fmt(s['pc'].get(p))}</td>" for p in ("Yeo-7", "Yeo-17", "data-driven"))
         + "".join(f"<td>{_fmt(s['seg'].get(p))}</td>" for p in ("Yeo-7", "Yeo-17", "data-driven")) + "</tr>"
         for n, s in res.get("integration", {}).items())
-    rounds = "".join(f"<tr><td>{r['round']}</td><td>{r['df']}</td><td>{r['k']}</td>"
+    rounds = "".join(f"<tr><td>{r['round']}</td><td>{r['df']}</td><td>{r['k']} <span class='m'>({r.get('k_null')})</span></td>"
                      f"<td>{sum(c['removed'] for c in r.get('components', []))}</td></tr>" for r in s2["rounds"])
     dn = res.get("denoising") or {}
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -336,10 +336,10 @@ undominated parcels assigned to their strongest component.</p>
 <h4>Participation coefficient by parcel (main set)</h4>{img('participation', 'participation coefficient')}
 
 <h2>Removed non-neural components (stage 2)</h2>
-<p class="m">Repeated spatial ICA at the leftover-channel count; removed when the signal share above 0.12 Hz &gt; {res['settings']['high_share']} or the S0 coupling &gt;
+<p class="m">Repeated spatial ICA at the map-fidelity count of the remaining data (components with reliably estimated maps); removed when the signal share above 0.12 Hz &gt; {res['settings']['high_share']} or the S0 coupling &gt;
 {res['settings']['eta']}. Stopped: {html.escape(s2['stop'])}. In-band BOLD-like variance removed per parcel (10th / 50th / 90th percentile):
 {dn.get('inband_removed_p10_50_90')}; whole band {dn.get('total_removed_p10_50_90')}.</p>
-<table><tr><th>round</th><th>df</th><th>k (leftover null)</th><th>removed</th></tr>{rounds}</table>
+<table><tr><th>round</th><th>df</th><th>k (map fidelity; leftover-channel count)</th><th>removed</th></tr>{rounds}</table>
 {''.join(removed_html) or "<p class='m'>No component met the criteria.</p>"}
 {img('removed_inband', 'in-band variance removed')}
 
