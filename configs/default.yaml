@@ -321,6 +321,7 @@ parcel_pipeline:               # two-stage parcel denoising and networks (docs/P
   high_hz: 0.12
   eta: 0.5                      # non-neural criterion: S0 coupling
   stage2_k: fidelity            # stage 2 detection k: 'fidelity' (user 2026-11-23) or 'null' (leftover-channel count, the original rule)
+  stage2_removal: whole         # whole: flagged components projected out entirely; high_only: only their part above high_hz (decided by the injection test)
   stage3_k: fidelity            # stage 3 k: 'fidelity' (expected map correlation >= fidelity_min; user 2026-11-23) or 'mp' (thermal-noise edge)
   fidelity_min: 0.7
   dominance_q: 0.95             # a parcel's strongest component dominates when the confidence that it exceeds the second strongest (loading uncertainty) reaches this (user 2026-11-23)

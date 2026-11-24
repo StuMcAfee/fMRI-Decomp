@@ -32,7 +32,7 @@ from . import parcel_ica as pi
 
 DEFAULTS = {"k_max": 100, "max_rounds": 5, "z_min": 1.0, "n_seeds": 30, "n_null": 50, "high_share": 0.5, "eta": 0.5,
             "high_hz": 0.12, "stage3_k": "fidelity", "fidelity_min": 0.7, "edge_fdr_q": 0.05, "dominance_q": 0.95,
-            "correction_error_max": 0.15, "stage2_k": "fidelity"}
+            "correction_error_max": 0.15, "stage2_k": "fidelity", "stage2_removal": "whole"}
 
 
 # ------------------------------------------------------------------ anatomy of the icosahedral parcels
@@ -68,6 +68,15 @@ def ico_anatomy(resources, n_left: int = 938) -> dict:
 
 
 # ------------------------------------------------------------------ measures
+def high_pass(x: np.ndarray, tr: float, f_min: float) -> np.ndarray:
+    """FFT high-pass of each row (frequencies below f_min removed, mean removed): with stage2_removal = high_only,
+    flagged components are projected out only above f_min, leaving their in-band part in the data."""
+    x = np.asarray(x, float)
+    F = np.fft.rfft(x - x.mean(-1, keepdims=True), axis=-1)
+    F[..., np.fft.rfftfreq(x.shape[-1], tr) < f_min] = 0
+    return np.fft.irfft(F, n=x.shape[-1], axis=-1)
+
+
 def reliability_floor(T: int, tr: float, band, max_error: float = 0.15) -> float:
     """Lowest reliability r at which the noise-correction factor 1/sqrt(r) is known within max_error (relative): the
     in-band variance is estimated with about 2 x (frequency bins in the band) degrees of freedom, so its relative SE
@@ -416,6 +425,8 @@ def run(input_dir, cfg: dict, out_dir, resources=None, n_jobs: int | None = None
             stop = "no component met the non-neural criteria"
             break
         rm = ica["tc"][fl]
+        if P_["stage2_removal"] == "high_only":                        # remove only the part above high_hz (injection test)
+            rm = high_pass(rm, tr, float(P_["high_hz"]))
         removed += list(rm)
         Z = pi.remove_components(Z, rm)
         CW = np.stack([pi.remove_components(CW[:, c], rm) for c in range(CW.shape[1])], 1)

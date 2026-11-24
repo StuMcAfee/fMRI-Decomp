@@ -141,3 +141,34 @@ Decided (user, 2026-11-23):
   starting from the leftover-channel count of the data remaining (user, 2026-11-23). The user does not expect this
   physiology to differ between PFS and non-PFS patients; the pilot's different acquisition sequence (not only its echo
   number) may explain its different noise and counts.
+
+## 9. Injection test of the parcel pipeline (proposed 2026-11-24; criteria for user approval before any run)
+
+Purpose: decide whether stage 2 should remove flagged components whole or only their part above 0.12 Hz
+(`stage2_removal: whole | high_only`), and measure how much known artifact is removed and known neural-like signal kept.
+
+Design:
+- 3 patients with surfaces and 797 frames, covering slow, middle and fast breathing; 1 seed each (2nd seed if results
+  are borderline).
+- Known signals added to the RAW echoes, every voxel of the chosen icosahedral parcels (EPI labels from
+  `anatomy_surf`), then the full chain rerun: mbme_tedana (pairing, motion correction; also gives tedana's output on the
+  same injected data for the later comparison), front end, icosahedral export, parcel pipeline in both removal modes.
+- Sources:
+  - N1-N3, neural-like: three networks of about 40 icosahedral parcels each inside one Yeo-7 network (default, control,
+    somatomotor), dR2* only, band-limited 0.01-0.1 Hz, resting strength (dR2* SD 0.2 1/s, the `weak` level); N2 overlaps
+    the breathing source's parcels by about half, to expose neural loss from removing mixed components.
+  - B, breathing-like: the participant's breathing frequency with slow amplitude modulation and its first harmonic,
+    about 30 % of its power in 0.01-0.1 Hz (breathing-depth changes), dR2* plus dS0 (S0 coupling about 0.4), speckled map
+    (random 30 % of parcels, random weights).
+  - C, cardiac-alias-like: narrow band at the alias of 1.2 Hz with heart-rate jitter (0.133 Hz at TR 0.75 s), mostly
+    dS0 (S0 coupling about 0.7), sparse map (10 % of parcels).
+  - Artifacts at two strengths: equal to the networks, and twice.
+- Measures, per source and removal mode, from the injected minus the original run's parcel signals (the known
+  injected part) and the removed time courses: share of each artifact's energy removed (whole band, in band); share of
+  each network's in-band energy kept; best stage-3 map correlation with each injected network.
+
+Proposed pre-set criteria:
+- Artifact removal: at least 50 % of B's and C's whole-band energy removed at the equal strength.
+- Neural preservation: at least 90 % of each network's in-band energy kept.
+- Decision: `high_only` is adopted if whole removal keeps less than 90 % of N2's in-band energy and `high_only` keeps
+  at least 90 % while still removing at least 50 % of B's whole-band energy; otherwise `whole` stays.
