@@ -23,7 +23,7 @@ NETS7 = ("Vis", "SomMot", "DorsAttn", "SalVentAttn", "Limbic", "Cont", "Default"
 MEDIAL = np.array([0.80, 0.80, 0.78, 1.0])        # vertices without a parcel (medial wall)
 NOWIN = np.array([0.93, 0.93, 0.91, 1.0])         # parcels without a clear winner
 FLAGGED = np.array([0.33, 0.33, 0.31, 1.0])       # candidate physiological components
-VIEWS = (("L", "lateral"), ("L", "medial"), ("R", "lateral"), ("R", "medial"))
+VIEWS = (("L", "lateral"), ("L", "medial"), ("R", "medial"), ("R", "lateral"))   # user: left lateral, left medial, right medial, right lateral
 
 
 # ------------------------------------------------------------------ resources
