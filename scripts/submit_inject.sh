@@ -5,6 +5,7 @@
 # e.g.  bash scripts/submit_inject.sh <subject> <subject>
 #       bash scripts/submit_inject.sh --layout network <subject> <subject>
 #       bash scripts/submit_inject.sh --layout regions --levels weak --conditions "independent shared" <subject> <subject>   (R3)
+#       bash scripts/submit_inject.sh --layout parcels --levels "x2 x1" <subject> <subject> <subject>   (parcel pipeline test)
 # A subject number selects its run folder in OUT_keep (sub-<number>_*). The original run must already have been
 # through the whole pipeline (front end, tissue classes, sweep), as in scripts/submit_pipeline_batch.sh.
 set -euo pipefail
@@ -33,6 +34,7 @@ for r in "${RUNS[@]}"; do
     [ -n "$RD" ] && [ -f "$RD/result.json" ] || { echo "no run folder for $r in $OUTK; skipped" >&2; continue; }
     NAME="$(basename "$RD")"
     [ -f "outputs/phase2/$NAME/mc/analysis_mask.nii.gz" ] || { echo "$NAME: no front end in outputs/phase2/$NAME/mc (run the pipeline first); skipped" >&2; continue; }
+    if [ "$LAYOUT" = parcels ] && [ ! -f "outputs/anatomy_surf/$NAME/labels_ico1002_7.nii.gz" ]; then echo "$NAME: no surface anatomy (scripts/surface_labels.lsf); skipped" >&2; continue; fi
     for L in $LEVELS; do
       for C in $CONDITIONS; do
         tag="${LAYOUT}_${r}_${L}"; [ "$LAYOUT" = regions ] && tag="${LAYOUT}_${C}_${r}_${L}"
@@ -48,6 +50,12 @@ done
 [ ${#IDS[@]} -gt 0 ] || { echo "nothing submitted" >&2; exit 1; }
 DEP="$(IFS='&'; echo "${IDS[*]}" | sed 's/&/ \&\& /g')"
 PY="${MEJOINT_PY:-$HOME/miniconda3_new/envs/mejoint/bin/python}"
+if [ "$LAYOUT" = parcels ]; then
+    bsub -q standard -n 1 -R "rusage[mem=4000]" -env "all" -J inject_parcels_summary -w "$DEP" -o "logs/inject_parcels_summary_%J.log" \
+         "cd '$PWD' && PYTHONPATH='$PWD/src' '$PY' -m mejoint.cli inject-parcels-summary --root outputs/inject --out outputs/inject/parcels_summary"
+    echo "per run: outputs/inject/<run>/parcels_<level>_s$SEED/recovery_parcels.md; pooled: outputs/inject/parcels_summary/injection_parcels_summary.md"
+    exit 0
+fi
 bsub -q standard -n 1 -R "rusage[mem=8000]" -env "all" -J inject_summary -w "$DEP" -o "logs/inject_summary_%J.log" \
      "cd '$PWD' && PYTHONPATH='$PWD/src' '$PY' -m mejoint.cli inject-summary --root outputs/inject && PYTHONPATH='$PWD/src' '$PY' -m mejoint.cli inject-regions-summary --root outputs/inject"
 echo "logs: logs/inject_<job>_${LAYOUT}_<subject>_<level>.log; per run: outputs/inject/<run>/[network_]<level>_s$SEED/recovery.md; pooled: outputs/inject/inject_summary.md"

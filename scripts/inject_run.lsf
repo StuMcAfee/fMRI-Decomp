@@ -7,7 +7,10 @@
 #      correction, tedana robustica), into <injection folder>/OUT;
 #   3. mejoint front end (motion-corrected echoes, motion regression), joint ICA at inject.k (same seeds as the
 #      original run's sweep), and inject-recover (recovery.md / .json / .png in the injection folder).
-# Arguments: <OUT_keep run folder> <mbme_tedana.py> <level> [seed=N] [layout=focal|network|regions] [condition=independent|shared]
+# Arguments: <OUT_keep run folder> <mbme_tedana.py> <level> [seed=N] [layout=focal|network|regions|parcels] [condition=independent|shared]
+#   layout parcels (parcel pipeline test, docs/PARCEL_ICA_PLAN.md section 9): level x2 (primary) or x1; needs
+#   outputs/anatomy_surf/<run>; after the front end: icosahedral export and the parcel pipeline with whole and
+#   high-frequency-only removal, then inject-parcels-recover (recovery_parcels.md).
 #            [config=file.yaml] [clean]
 #   layout regions (R3, route B validation): networks of the run's own cortical parcels (needs outputs/anatomy/<run>);
 #   route B runs on the injected and on the original run instead of the joint ICA; condition: independent or shared
@@ -49,13 +52,19 @@ K="$("$PY" -c "import sys; from mejoint import io; print(io.load_config(sys.argv
 [ -n "$LAYOUT" ] || LAYOUT="$("$PY" -c "import sys; from mejoint import io; print(io.load_config(sys.argv[1] or None)['inject'].get('layout', 'focal'))" "$CONFIG")"
 case "$LAYOUT" in focal) IDIR="outputs/inject/$NAME/${LEVEL}_s${SEED}" ;; network) IDIR="outputs/inject/$NAME/network_${LEVEL}_s${SEED}" ;;
     regions) IDIR="outputs/inject/$NAME/regions_${CONDITION}_${LEVEL}_s${SEED}" ;;
-    *) fail "layout must be focal, network or regions (got $LAYOUT)" ;; esac
+    parcels) IDIR="outputs/inject/$NAME/parcels_${LEVEL}_s${SEED}" ;;
+    *) fail "layout must be focal, network, regions or parcels (got $LAYOUT)" ;; esac
 A0="outputs/anatomy/$NAME"
 ATLAS="$("$PY" -c "import sys; from mejoint import io; print(io.load_config(sys.argv[1] or None).get('regions', {}).get('atlas', '200_7'))" "$CONFIG")"
 ANATARG=()
 if [ "$LAYOUT" = regions ]; then
     [ -f "$A0/labels_$ATLAS.nii.gz" ] || fail "layout regions needs the run's region labels ($A0/labels_$ATLAS.nii.gz)"
     ANATARG=(--anat-dir "$A0" --condition "$CONDITION")
+fi
+AS0="outputs/anatomy_surf/$NAME"
+if [ "$LAYOUT" = parcels ]; then
+    [ -f "$AS0/labels_ico1002_7.nii.gz" ] && [ -f "$AS0/atlas_table_ico1002_7.json" ] || fail "layout parcels needs $AS0 (run scripts/surface_labels.lsf)"
+    ANATARG=(--anat-dir "$AS0")
 fi
 NT="${LSB_DJOB_NUMPROC:-8}"
 threads() { export OMP_NUM_THREADS="$1" MKL_NUM_THREADS="$1" OPENBLAS_NUM_THREADS="$1"; }
@@ -109,6 +118,27 @@ if [ ! -f "$FE1/c0.npy" ]; then
     [ -f "$IRUN/work/echo-1_desc-mc_bold.nii.gz" ] || fail "$IRUN has no motion-corrected echoes (work/)"
     echo; echo "== [front end] start $(date)"
     "$PY" -m mejoint.cli frontend "${CFGARG[@]}" --run-dir "$IRUN" --source mc --no-mppca --out "$FE1" || fail "front end failed"
+fi
+if [ "$LAYOUT" = parcels ]; then
+    RES="outputs/atlases_fs32k"
+    EXP="$IDIR/route_b_surf/ico1002_7"
+    if [ ! -f "$EXP/parcel_channels.npz" ]; then
+        echo; echo "== [icosahedral export, injected run] start $(date)"
+        "$PY" -m mejoint.cli export-parcels "${CFGARG[@]}" --frontend-dir "$FE1" --anat-dir "$AS0" --atlas ico1002_7 \
+            --pdconn "$RES/Nettekoven_2024_Fusion_L2.pdconn.nii" --out "$EXP" || fail "export failed"
+    fi
+    threads 1
+    for MODE in whole high_only; do
+        echo; echo "== [parcel pipeline, $MODE removal] start $(date)"
+        "$PY" -m mejoint.cli parcel-pipeline "${CFGARG[@]}" --input "$EXP" --out "$IDIR/pipeline_$MODE" --removal "$MODE" \
+            || fail "parcel pipeline ($MODE) failed"
+    done
+    threads "$NT"
+    "$PY" -m mejoint.cli inject-parcels-recover --inject-dir "$IDIR" --run "whole=$IDIR/pipeline_whole" --run "high_only=$IDIR/pipeline_high_only" \
+        || fail "recovery failed"
+    if [ "$CLEAN" = 1 ]; then echo "clean: removing $IDIR/echoes and $IRUN/work"; rm -rf "$IDIR/echoes" "$IRUN/work"; fi
+    echo; echo "== done $(date): $PWD/$IDIR/recovery_parcels.md"
+    exit 0
 fi
 if [ "$LAYOUT" = regions ]; then
     # route B on the original run (baseline, validation use only) and on the injected run, with the run's own labels

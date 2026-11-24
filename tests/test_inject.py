@@ -271,3 +271,66 @@ def test_footprint_profile_recovers_the_echo_profile():
     full = np.abs(te / 1000 * b).max()
     assert np.abs(sep["profile"][:, 0]).max() > 0.8 * full             # fitted alone: most of the profile
     assert np.abs(two["profile"][:, 0]).max() < 0.2 * full             # fitted with the truth: the truth takes it
+
+
+def test_parcels_layout_and_recovery(tmp_path):
+    """Layout parcels: networks inside Yeo networks, breathing / cardiac sources, amplitudes for the target S0
+    coupling; recovery shares from the removed time courses and the pre-set decision rule."""
+    import sys
+    sys.path.insert(0, os.path.dirname(__file__))
+    from test_frontend import make_run_folder
+    from mejoint import inject_parcels
+    cfg = io.load_config()
+    cfg = io.merge(cfg, {"simulate": {"echo_sigma_scale": cfg["frontend"]["echo_noise_ratios"]},
+                         "frontend": {"mppca": {"enabled": False}}, "nuisance": {"n_surrogates": 1}})
+    G = {"grid": [32, 32, 18], "n_volumes": 200, "spikes": {"n": 0}, "skull_base": {"enabled": False},
+         "respiration": {"enabled": False}, "sources": []}
+    sim = simulate.simulate(cfg, seed=SEED * 100 + 79, overrides=G)
+    rd = make_run_folder(sim, tmp_path)
+    frontend.run_subject(rd, cfg, tmp_path / "fe0", source="raw")
+    # synthetic surface anatomy: 2 x 2 x 2-voxel parcels, left half ids <= 938, right half > 938
+    import nibabel as nib
+    m = np.asarray(nib.load(str(tmp_path / "fe0" / "analysis_mask.nii.gz")).dataobj) > 0
+    lab = np.zeros(m.shape, int)
+    nets = ["Default", "Cont", "SomMot", "Vis"]
+    table, nid_l, nid_r = {}, 1, 939
+    for x in range(0, 32, 2):
+        for y in range(0, 32, 2):
+            for z in range(0, 18, 2):
+                blk = (slice(x, x + 2), slice(y, y + 2), slice(z, z + 2))
+                if m[blk].sum() < 4:
+                    continue
+                pid = nid_l if x < 16 else nid_r
+                lab[blk] = pid * m[blk]
+                table[str(pid)] = {"network": nets[(y // 8) % 4]}
+                if x < 16:
+                    nid_l += 1
+                else:
+                    nid_r += 1
+    A = tmp_path / "anat_surf"
+    A.mkdir()
+    nib.save(nib.Nifti1Image(lab.astype(np.int32), nib.load(str(tmp_path / "fe0" / "analysis_mask.nii.gz")).affine), str(A / "labels_ico1002_7.nii.gz"))
+    (A / "atlas_table_ico1002_7.json").write_text(json.dumps(table))
+    idir = tmp_path / "inject" / "parcels_x2_s1"
+    truth = inject.make_dir(rd, cfg, "x2", 1, idir, tmp_path / "fe0", layout="parcels", anat_dir=A)
+    S = {s["id"]: s for s in truth["sources"]}
+    assert set(S) == {"N1", "N2", "N3", "B", "C"}
+    assert S["B"]["b_sd_per_s"] == 0.4 and S["N1"]["b_sd_per_s"] == 0.2 and S["B"]["a_sd"] > 0 and S["C"]["a_sd"] > S["B"]["a_sd"]
+    assert len(set(S["N2"]["parcels"]) & set(S["B"]["parcels"])) >= len(S["N2"]["parcels"]) // 2 - 1
+    assert 0.2 < S["B"]["band_share"] < 0.45 and S["N1"]["band_share"] > 0.95
+    assert all(os.path.exists(f["file"]) for f in truth["echo_files"])
+    # recovery: a run that removed exactly B's time course, and one that removed nothing
+    U = np.genfromtxt(idir / "truth_timecourses.tsv", delimiter="\t", names=True)
+    U = np.column_stack([U[n] for n in U.dtype.names])
+    T = U.shape[0]
+    ids = sorted({p for s in truth["sources"] for p in s["parcels"]})
+    for mode, rm in (("whole", U[:, [3]].T), ("high_only", np.zeros((0, T)))):
+        d = tmp_path / f"pipe_{mode}"
+        d.mkdir()
+        np.savez(d / "denoised.npz", frames=np.arange(T), removed_tc=rm, ids=np.array(ids))
+        np.savez(d / "stage3.npz", maps=np.random.default_rng(0).standard_normal((len(ids), 3)), ids=np.array(ids))
+        (d / "pipeline.json").write_text(json.dumps({"stage2": {"n_removed": len(rm)}, "stage3": {"k": 3}}))
+    out = inject_parcels.recover(idir, {"whole": tmp_path / "pipe_whole", "high_only": tmp_path / "pipe_high_only"})
+    w = {r["source"]: r for r in out["modes"]["whole"]["sources"]}
+    assert w["B"]["removed_whole_band"] > 0.99 and w["N1"]["kept_in_band"] > 0.8
+    assert out["decision"] in ("whole", "high_only") and (idir / "recovery_parcels.md").exists()

@@ -165,8 +165,8 @@ def main(argv=None) -> int:
     im.add_argument("--out", required=True, help="injection folder (echoes/, truth.json, list.txt)")
     im.add_argument("--baseline-frontend", required=True, help="front end of the original run (analysis_mask.nii.gz)")
     im.add_argument("--tissue-dir", help="tissue classes of the original run (sources kept out of CSF and dropout)")
-    im.add_argument("--layout", choices=["focal", "network", "regions"], help="one sphere per source, networks of spheres, or networks of the run's own parcels (R3) (default: inject.layout)")
-    im.add_argument("--anat-dir", help="layout regions: the run's anatomy folder (region labels)")
+    im.add_argument("--layout", choices=["focal", "network", "regions", "parcels"], help="one sphere per source, networks of spheres, or networks of the run's own parcels (R3) (default: inject.layout)")
+    im.add_argument("--anat-dir", help="layout regions: the run's anatomy folder (region labels); layout parcels: outputs/anatomy_surf/<run>")
     im.add_argument("--condition", choices=["independent", "shared"], default="independent", help="layout regions: own or shared time courses")
     im.add_argument("--config", help="config YAML (default: configs/default.yaml)")
     ir = sub.add_parser("inject-recover", help="Phase 5 injection: find the injected sources in a decomposition")
@@ -265,7 +265,16 @@ def main(argv=None) -> int:
     pp.add_argument("--input", required=True, help="icosahedral export folder (parcel_channels.npz, export.json)")
     pp.add_argument("--out", required=True)
     pp.add_argument("--resources", default=None, help="fs_LR 32k resources (default: outputs/atlases_fs32k)")
+    pp.add_argument("--removal", choices=["whole", "high_only"], default=None, help="stage 2 removal (default: parcel_pipeline.stage2_removal)")
     pp.add_argument("--config", default=None)
+    ipr = sub.add_parser("inject-parcels-recover", help="parcel pipeline injection: share of each injected signal removed / kept")
+    ipr.add_argument("--inject-dir", required=True)
+    ipr.add_argument("--run", action="append", required=True, help="mode=folder of a parcel pipeline output on the injected run (repeatable)")
+    ipr.add_argument("--config", default=None)
+    ips = sub.add_parser("inject-parcels-summary", help="pool parcel pipeline injection recoveries")
+    ips.add_argument("--root", default="outputs/inject")
+    ips.add_argument("--out", default="outputs/inject/parcels_summary")
+    ips.add_argument("--config", default=None)
     rb = sub.add_parser("route-b", help="route B on one run: region shares, BOLD-like connectivity, integration with circular-shift nulls")
     rb.add_argument("--frontend-dir", required=True, help="front end of the run (maps, nuisance basis, echo paths in done.json)")
     rb.add_argument("--anat-dir", required=True, help="anatomy folder (labels_<atlas>.nii.gz, regions_<atlas>.json)")
@@ -520,8 +529,22 @@ def main(argv=None) -> int:
         repo = Path(__file__).resolve().parents[2]
         if repo in o.parents and (repo / "outputs") not in [o, *o.parents]:
             raise SystemExit("refusing to write participant results inside the repository (use outputs/...)")
+        if args.removal:
+            cfg = io.merge(cfg, {"parcel_pipeline": {"stage2_removal": args.removal}})
         parcel_pipeline.run(args.input, cfg, args.out, resources=args.resources)
         print(open(f"{args.out}/pipeline.md").read())
+    elif args.cmd == "inject-parcels-recover":
+        from . import inject_parcels
+        runs = dict(r.split("=", 1) for r in args.run)
+        inject_parcels.recover(args.inject_dir, runs)
+        print(open(f"{args.inject_dir}/recovery_parcels.md").read())
+    elif args.cmd == "inject-parcels-summary":
+        from pathlib import Path
+
+        from . import inject_parcels
+        paths = sorted(Path(args.root).glob("*/parcels_*/recovery_parcels.json"))
+        inject_parcels.summary(paths, args.out)
+        print(open(f"{args.out}/injection_parcels_summary.md").read())
     elif args.cmd == "route-b":
         from . import regions
         regions.run_dir(args.frontend_dir, args.anat_dir, cfg, args.out, atlas=args.atlas, common_ids_file=args.common_ids)

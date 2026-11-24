@@ -313,11 +313,17 @@ def make_dir(run_dir, cfg: dict, level: str, seed: int, out_dir, baseline_fronte
     from . import frontend, io
     run_dir, out_dir, fe = Path(run_dir), Path(out_dir), Path(baseline_frontend)
     I = cfg["inject"]
-    if level not in I["levels"]:
-        raise ValueError(f"level must be one of {list(I['levels'])}")
     layout = layout or str(I.get("layout", "focal"))
-    if layout not in ("focal", "network", "regions"):
-        raise ValueError("layout must be focal, network or regions")
+    if layout == "parcels":                                            # parcel pipeline test (inject_parcels.py)
+        from . import inject_parcels
+        if level not in inject_parcels.LEVELS:
+            raise ValueError(f"layout parcels: level must be one of {list(inject_parcels.LEVELS)}")
+        if anat_dir is None:
+            raise ValueError("layout parcels needs the run's surface anatomy folder (outputs/anatomy_surf/<run>)")
+    elif level not in I["levels"]:
+        raise ValueError(f"level must be one of {list(I['levels'])}")
+    if layout not in ("focal", "network", "regions", "parcels"):
+        raise ValueError("layout must be focal, network, regions or parcels")
     if layout == "regions" and (anat_dir is None or condition not in ("independent", "shared")):
         raise ValueError("layout regions needs the run's anatomy folder and condition independent or shared")
     params = {"run": run_dir.name, "level": level, "seed": int(seed), "inject": I, "layout": layout,
@@ -344,7 +350,8 @@ def make_dir(run_dir, cfg: dict, level: str, seed: int, out_dir, baseline_fronte
             classes3d = np.zeros(mask3d.shape, np.int8)
             classes3d[mask3d] = cl
     subj = int(info["subject"]) if str(info["subject"]).isdigit() else 0
-    key = (subj, 7, list(I["levels"]).index(level), int(seed)) + {"focal": (), "network": (1,), "regions": (2,)}[layout]
+    lev_idx = list(I["levels"]).index(level) if level in I["levels"] else 10 + ["x2", "x1"].index(level)
+    key = (subj, 7, lev_idx, int(seed)) + {"focal": (), "network": (1,), "regions": (2,), "parcels": (3,)}[layout]
     rng = np.random.default_rng(io.seed_sequence(cfg, *key))
     labels3d = None
     if layout == "regions":
@@ -358,21 +365,39 @@ def make_dir(run_dir, cfg: dict, level: str, seed: int, out_dir, baseline_fronte
             s["center"] = [int(x) for x in np.argwhere(np.isin(labels3d, s["parcels"])).mean(0).round()]
     elif layout == "network":
         src = place_networks(mask3d, mimg.affine, voxel_mm, cfg, rng, classes3d)
-    else:
+    elif layout == "focal":
         src = place_sources(mask3d, mimg.affine, voxel_mm, cfg, rng, classes3d)
-    for s in src:
-        a, b = amplitudes(s["type"], I["levels"][level], float(I["mixed_ratio_ms"]))
-        s.update({"a_sd": a, "b_sd_per_s": b})
+    resp_hz = None
+    if layout == "parcels":
+        from . import inject_parcels
+        labels3d = np.rint(np.asarray(nib.load(str(Path(anat_dir) / "labels_ico1002_7.nii.gz")).dataobj)).astype(int)
+        tab = {int(k): v for k, v in json.loads((Path(anat_dir) / "atlas_table_ico1002_7.json").read_text()).items()}
+        try:
+            fs = json.loads((fe / "summary.json").read_text())
+            resp_hz = (fs.get("nuisance", {}).get("filter", {}).get("respiratory_peak") or {}).get("freq_hz")
+        except Exception:
+            resp_hz = None
+        resp_hz = float(resp_hz or 0.3)
+        built = inject_parcels.build(labels3d, tab, T, float(cfg["acquisition"]["tr_s"]), te,
+                                     cfg.get("frontend", {}).get("echo_noise_ratios"), level, resp_hz, rng)
+        src, W3, U = built["sources"], built["W3"], built["U"]
+        for s in src:
+            s["center"] = [int(x) for x in np.argwhere(W3[..., src.index(s)] != 0).mean(0).round()]
+    else:
+        for s in src:
+            a, b = amplitudes(s["type"], I["levels"][level], float(I["mixed_ratio_ms"]))
+            s.update({"a_sd": a, "b_sd_per_s": b})
     if layout == "regions":
         from . import inject_regions
         W3 = inject_regions.weights(labels3d, src)
-    else:
+    elif layout != "parcels":
         W3 = weight_maps(mask3d.shape, [s.get("centers", s["center"]) for s in src], float(I["radius_mm"]), voxel_mm, mask3d)
-    U = time_courses(T, float(cfg["acquisition"]["tr_s"]), I["band_hz"], len(src), rng)
+    if layout != "parcels":
+        U = time_courses(T, float(cfg["acquisition"]["tr_s"]), I["band_hz"], len(src), rng)
     if layout == "regions" and condition == "shared":
         U = np.repeat(U[:, :1], len(src), axis=1)                    # one time course drives every network
     for i, s in enumerate(src):
-        s["n_voxels"] = int((W3[..., i] > 0).sum())
+        s["n_voxels"] = int((W3[..., i] != 0).sum())
         s["center_mm"] = [round(float(x), 1) for x in nib.affines.apply_affine(mimg.affine, s["center"])]
     a = [s["a_sd"] for s in src]
     b = [s["b_sd_per_s"] for s in src]
@@ -397,7 +422,7 @@ def make_dir(run_dir, cfg: dict, level: str, seed: int, out_dir, baseline_fronte
     (out_dir / "list.txt").write_text(str(e1_new) + "\n")
     truth = {"run": run_dir.name, "run_dir": str(run_dir), "level": level, "layout": layout,
              "condition": condition if layout == "regions" else None, "anat_dir": None if anat_dir is None else str(anat_dir),
-             "seed": int(seed), "params_hash": phash,
+             "seed": int(seed), "params_hash": phash, "tr_s": float(cfg["acquisition"]["tr_s"]), "resp_hz": resp_hz,
              "te_ms": te, "n_frames": int(T), "radius_mm": float(I["radius_mm"]), "voxel_mm": voxel_mm,
              "mixed_ratio_ms": float(I["mixed_ratio_ms"]), "band_hz": list(I["band_hz"]),
              "baseline_frontend": str(fe), "tissue_dir": None if tissue_dir is None else str(tissue_dir),
