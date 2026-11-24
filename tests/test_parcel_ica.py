@@ -188,3 +188,26 @@ def test_denoised_output_and_removed_overlap(tmp_path):
     assert after < 0.5 * before
     ov = pi.compare_removed([tmp_path / "k9", tmp_path / "knull"], tmp_path / "ov.json", 0.75)
     assert len(ov["pairs"]) == 2 and (tmp_path / "ov.md").exists()
+
+
+def test_spatial_coherence_and_leftover_coupling():
+    g = np.random.default_rng(6)
+    # a chain of 300 parcels: smooth map vs speckle
+    adj = np.column_stack([np.arange(299), np.arange(1, 300)])
+    smooth = np.convolve(g.standard_normal(330), np.ones(30) / 30, "same")[15:315][:, None]
+    speck = g.standard_normal((300, 1))
+    c = pi.spatial_coherence(np.hstack([smooth, speck]), adj)
+    assert c[0] > 0.8 and abs(c[1]) < 0.15
+    # a time course that appears in the leftover channels -> high leftover share; one only in the BOLD-like channel -> low
+    T, P = 400, 300
+    t1, t2 = g.standard_normal(T), g.standard_normal(T)
+    w = np.abs(g.normal(1, 0.3, P))
+    zb = np.outer(w, t2) * 0.5 + g.standard_normal((P, T))
+    cw = np.stack([zb, g.standard_normal((P, T))], 1)                  # rho = 0: zb is channel 0
+    left = [np.outer(w, t1) * 0.5 + g.standard_normal((P, T)), g.standard_normal((P, T))]
+    z = zb + np.outer(w, t1) * 0.5                                     # the data the maps are fitted on carry both
+    maps = np.column_stack([w, w * 0.9 + 0.1 * g.standard_normal(P)])
+    folds = np.arange(P) % 2
+    lo = pi.leftover_coupling(np.column_stack([w]), np.outer(w, t1) + g.standard_normal((P, T)), cw, np.zeros(P), left, folds)
+    lo2 = pi.leftover_coupling(np.column_stack([w]), np.outer(w, t2) + g.standard_normal((P, T)), cw, np.zeros(P), left, folds)
+    assert lo["share"][0] > 0.7 and lo2["share"][0] < 0.3

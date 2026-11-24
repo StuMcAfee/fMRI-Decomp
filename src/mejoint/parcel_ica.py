@@ -209,6 +209,45 @@ def s0_coupling(maps: np.ndarray, zb: np.ndarray, cw: np.ndarray, rho: np.ndarra
     return {"E_R2": Eb, "E_S0": Ea, "eta": eta}
 
 
+def leftover_coupling(maps: np.ndarray, z: np.ndarray, cw: np.ndarray, rho: np.ndarray, leftover: list, folds: np.ndarray) -> dict:
+    """Cross-fitted coupling of each component to the leftover echo channels (user, 2026-11-24): the part of the echo
+    decay a clean mono-exponential cannot produce (curvature, alternating echo pattern: motion, inflow, field shifts).
+    As in s0_coupling, the component time courses come from the other parcels (fold), and on the held-out parcels the
+    energies on the unit-norm time course are debiased by the unit noise: E_left over the whitened leftover channels,
+    E_R2 and E_S0 over the physical channels. share = E_left / (E_left + E_R2 + E_S0), clipped 0-1."""
+    folds = np.asarray(folds)
+    k = maps.shape[1]
+    El, Eb, Ea = np.zeros(k), np.zeros(k), np.zeros(k)
+    L = [np.asarray(x, float) for x in (leftover or [])]
+    for g in np.unique(folds):
+        fit, te = folds != g, folds == g
+        t = np.linalg.lstsq(maps[fit], z[fit], rcond=None)[0]
+        t = t - t.mean(1, keepdims=True)
+        t /= np.maximum(np.linalg.norm(t, axis=1, keepdims=True), 1e-12)
+        nb = int(te.sum())
+        for x in L:
+            El += ((x[te] @ t.T) ** 2).sum(0) - nb
+        m0, m1 = cw[te, 0] @ t.T, cw[te, 1] @ t.T
+        w = (1 + rho[te] ** 2)[:, None]
+        Ea += (w * (m1 ** 2 - 1)).sum(0)
+        Eb += ((m0 - rho[te, None] * m1) ** 2 - w).sum(0)
+    El, Eb, Ea = np.clip(El, 0, None), np.clip(Eb, 0, None), np.clip(Ea, 0, None)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        share = np.where(El + Eb + Ea > 0, El / (El + Eb + Ea), np.nan)
+    return {"E_left": El, "share": share if L else np.full(k, np.nan)}
+
+
+def spatial_coherence(maps: np.ndarray, adjacent: np.ndarray) -> np.ndarray:
+    """Moran's I of each map over adjacent parcels (user, 2026-11-24): about 0 for a map whose neighbouring parcels
+    are unrelated (speckle), approaching 1 for smooth, contiguous territories. adjacent: (pairs, 2) row indices."""
+    Z = (maps - maps.mean(0)) / np.maximum(maps.std(0), 1e-12)
+    a = np.asarray(adjacent, int)
+    if a.size == 0:
+        return np.full(maps.shape[1], np.nan)
+    num = (Z[a[:, 0]] * Z[a[:, 1]]).sum(0)
+    return num / a.shape[0] / np.maximum((Z ** 2).mean(0), 1e-12)
+
+
 def global_correlation(tc: np.ndarray, z: np.ndarray) -> np.ndarray:
     """Correlation of each component time course with the mean whitened BOLD-like signal over parcels."""
     g = z.mean(0)

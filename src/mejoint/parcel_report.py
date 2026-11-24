@@ -93,7 +93,7 @@ def build(out, res, ids, rel, reliable, rounds, wta, sets, pcmap, nets7, nets17,
             f, P = _spectrum(wta["tc"][j], tr)
             comp_js.append({"label": f"c{j}", "yeo7": c["yeo7"], "yeo7_r": c["yeo7_r"], "yeo17": c["yeo17"], "yeo17_r": c["yeo17_r"],
                             "asym": c["asymmetry"], "won": c["n_parcels_won"], "high": c["high_share"], "band": c["band_share"],
-                            "eta": c["eta"], "flag": c["meets_nonneural_criteria"],
+                            "eta": c["eta"], "flag": c["meets_nonneural_criteria"], "coh": c.get("coherence"), "left": c.get("leftover"),
                             "colour": "#%02x%02x%02x" % tuple(int(255 * v) for v in cols[j][:3]),
                             "img": _b64(p), "tc": [round(float(v), 3) for v in wta["tc"][j]],
                             "f": [round(float(v), 4) for v in f], "P": [float(f"{v:.4g}") for v in P],
@@ -227,7 +227,8 @@ def build(out, res, ids, rel, reliable, rounds, wta, sets, pcmap, nets7, nets17,
             removed_html.append(
                 f"<div class='card'><h4>round {r['round']}, component c{c['component']}</h4>"
                 f"<p class='m'>above 0.12 Hz {c['high_share']:.2f} &middot; at breathing frequency {c['resp_share']:.2f} &middot; "
-                f"peak {c['peak_hz']:.3f} Hz &middot; S0 coupling {c['eta'] if c['eta'] is not None else '-'} &middot; stability {c['iq']:.2f}</p>"
+                f"peak {c['peak_hz']:.3f} Hz &middot; S0 coupling {c['eta'] if c['eta'] is not None else '-'} &middot; spatial coherence {c.get('coherence', '-')} "
+                f"&middot; leftover coupling {c.get('leftover', '-')} &middot; stability {c['iq']:.2f}</p>"
                 f"<img src='data:image/png;base64,{_b64(p)}'><img src='data:image/png;base64,{_png(fig, 90)}'></div>")
 
     # ---- eigenvalue spectra
@@ -305,7 +306,9 @@ Exploratory: route B is unchanged.</p>
 <h2>Network estimates (stage 3)</h2>
 <p class="m">k = components whose maps are expected to correlate at least {s3.get('fidelity_min')} with the true maps ({s3.get('k_fidelity')};
 thermal-noise threshold: {s3['k_mp']}). Choose a component: its map (loading, z over parcels), time course and spectrum (band 0.01-0.1 Hz shaded; dotted line: thermal noise level).
-Labels give the best positive overlap with Yeo-7 / Yeo-17; asymmetry = (left - right) / (left + right) of positive loadings.</p>
+Labels give the best positive overlap with Yeo-7 / Yeo-17; asymmetry = (left - right) / (left + right) of positive loadings; spatial coherence =
+agreement of neighbouring parcels in the map (Moran's I: about 0 for speckle, towards 1 for contiguous territories); leftover coupling = share of the
+component's echo energy in the leftover echo channels, which a clean exponential decay cannot produce (motion, inflow, field shifts).</p>
 <div id="comps"></div><div class="card"><h4 id="ct"></h4><p class="m" id="cm"></p><img id="ci" alt="component map">
 <div class="two"><canvas id="tcv"></canvas><canvas id="spv"></canvas></div></div>
 
@@ -365,7 +368,7 @@ g.fillText(opt.xl,w-Rm-30,h-4);g.fillText(opt.yl,2,T+8);if(opt.floor!==undefined
 g.strokeStyle=css('--acc');g.lineWidth=1;g.beginPath();xs.forEach((x,i)=>{{const px=X(x),py=Y(ys2[i]);i?g.lineTo(px,py):g.moveTo(px,py);}});g.stroke();}}
 function show(i){{const c=C[i];document.querySelectorAll('#comps button').forEach((b,j)=>b.classList.toggle('on',j===i));
 document.getElementById('ct').textContent=c.label+': '+(c.yeo7||'-')+' (r '+c.yeo7_r+') / '+(c.yeo17||'-')+' (r '+c.yeo17_r+')';
-document.getElementById('cm').textContent='parcels won '+c.won+' · asymmetry '+c.asym+' · in band '+c.band+' · above 0.12 Hz '+c.high+' · S0 coupling '+c.eta+(c.flag?' · meets non-neural criteria (not removed)':'');
+document.getElementById('cm').textContent='parcels won '+c.won+' · asymmetry '+c.asym+' · in band '+c.band+' · above 0.12 Hz '+c.high+' · S0 coupling '+c.eta+' · spatial coherence '+c.coh+' · leftover coupling '+c.left+(c.flag?' · meets non-neural criteria (not removed)':'');
 document.getElementById('ci').src='data:image/png;base64,'+c.img;
 plot(document.getElementById('tcv'),c.tc.map((v,k)=>k*{res['tr_s']}),c.tc,{{xl:'s',yl:'time course'}});
 plot(document.getElementById('spv'),c.f,c.P,{{log:true,xl:'Hz',yl:'power',band:{json.dumps(res['band_hz'])},floor:c.noise}});}}

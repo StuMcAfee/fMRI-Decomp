@@ -362,6 +362,8 @@ def run(input_dir, cfg: dict, out_dir, resources=None, n_jobs: int | None = None
     nets17 = anat["yeo17"][ids - 1] if anat["yeo17"] is not None else None
     hemi = np.where(ids <= n_total // 2, "L", "R")
     folds = (hemi == "R").astype(int)
+    pos = {int(p): i for i, p in enumerate(ids)}                       # adjacency among the parcels with voxels (row indices)
+    adj_rows = np.array([(pos[int(p)], pos[int(q)]) for p, q in anat["adjacent_pairs"] if int(p) in pos and int(q) in pos], int).reshape(-1, 2)
     resp = None
     try:
         fs = json.loads((Path(inp["frontend_dir"]) / "summary.json").read_text())
@@ -396,12 +398,16 @@ def run(input_dir, cfg: dict, out_dir, resources=None, n_jobs: int | None = None
         ica = pi.spatial_ica(Z, k, seeds(rnd), n_jobs=n_jobs)
         sp = pi.spectral_measures(ica["tc"], tr, band, resp_hz=resp or 0.3, high_hz=P_["high_hz"], noise_var=ica["tc_noise_var"])
         s0 = pi.s0_coupling(ica["maps"], Z, CW, pr["rho"], folds)
+        lo = pi.leftover_coupling(ica["maps"], Z, CW, pr["rho"], nulls, folds)
+        coh = pi.spatial_coherence(ica["maps"], adj_rows)
         fl = rule(sp, s0)
         comps = [{"round": rnd + 1, "component": j, "removed": bool(fl[j]), "iq": round(float(ica["iq"][j]), 3),
                   "band_share": round(float(sp["band_share"][j]), 3), "high_share": round(float(sp["high_share"][j]), 3),
                   "resp_share": round(float(sp["resp_share"][j]), 3), "peak_hz": round(float(sp["peak_hz"][j]), 3),
                   "peak_ratio": round(float(sp["peak_ratio"][j]), 2),
-                  "eta": None if not np.isfinite(s0["eta"][j]) else round(float(s0["eta"][j]), 3)} for j in range(k)]
+                  "eta": None if not np.isfinite(s0["eta"][j]) else round(float(s0["eta"][j]), 3),
+                  "coherence": round(float(coh[j]), 3),
+                  "leftover": None if not np.isfinite(lo["share"][j]) else round(float(lo["share"][j]), 3)} for j in range(k)]
         rec["components"] = comps
         rec["maps_removed"] = ica["maps"][:, fl]
         rec["tc_removed"] = ica["tc"][fl]
@@ -463,6 +469,8 @@ def run(input_dir, cfg: dict, out_dir, resources=None, n_jobs: int | None = None
         ica3 = pi.spatial_ica(Z, k3, seeds(100), n_jobs=n_jobs)
         sp3 = pi.spectral_measures(ica3["tc"], tr, band, resp_hz=resp or 0.3, high_hz=P_["high_hz"], noise_var=ica3["tc_noise_var"])
         s03 = pi.s0_coupling(ica3["maps"], Z, CW, pr["rho"], folds)
+        lo3 = pi.leftover_coupling(ica3["maps"], Z, CW, pr["rho"], nulls, folds)
+        coh3 = pi.spatial_coherence(ica3["maps"], adj_rows)
         labs = component_labels(ica3["maps"], ids, nets7, nets17)
         from .surface_plot import zscore
         Zm = zscore(ica3["maps"])
@@ -482,6 +490,8 @@ def run(input_dir, cfg: dict, out_dir, resources=None, n_jobs: int | None = None
                           "peak_hz": round(float(sp3["peak_hz"][j]), 3), "peak_ratio": round(float(sp3["peak_ratio"][j]), 2),
                           "eta": None if not np.isfinite(s03["eta"][j]) else round(float(s03["eta"][j]), 3),
                           "meets_nonneural_criteria": bool(rule(sp3, s03)[j]),
+                          "coherence": round(float(coh3[j]), 3),
+                          "leftover": None if not np.isfinite(lo3["share"][j]) else round(float(lo3["share"][j]), 3),
                           "n_parcels_won": int((win == j).sum())})
         wta = {"win": win, "win_full": win_full, "zwin": zwin, "maps": ica3["maps"], "tc": ica3["tc"], "tc_noise_var": ica3["tc_noise_var"],
                "dom_pct": dom["confidence"], "margin": dom["margin"], "category": category}
@@ -607,9 +617,10 @@ def render(res: dict) -> str:
         L.append(f"| {name} | {s['n_parcels']} ({s['n_with_signal']}) | {f(s['pr'])} | {f(s['pr_resid'])} ({f(s.get('pr_resid_null_median'))}) | "
                  f"{f(s['global_share'])} | {f(s.get('edge_density'))} | {f(s['pc'].get('Yeo-7'))} | {f(s['pc'].get('Yeo-17'))} | {f(s['pc'].get('data-driven'))} | "
                  f"{f(s['seg'].get('Yeo-7'))} | {f(s['seg'].get('Yeo-17'))} | {f(s['seg'].get('data-driven'))} |")
-    L += ["", "## Stage 2 rounds", "", "| round | df | k (map fidelity; leftover null) | removed | components (above 0.12 Hz / S0 coupling) |", "|---|---|---|---|---|"]
+    L += ["", "## Stage 2 rounds", "", "| round | df | k (map fidelity; leftover null) | removed | components (above 0.12 Hz / S0 coupling / spatial coherence / leftover coupling) |", "|---|---|---|---|---|"]
     for r in s2["rounds"]:
-        cs = "; ".join(f"c{c['component']}{'*' if c['removed'] else ''} {c['high_share']:.2f}/{c['eta'] if c['eta'] is not None else '-'}" for c in r.get("components", []))
+        cs = "; ".join(f"c{c['component']}{'*' if c['removed'] else ''} {c['high_share']:.2f}/{c['eta'] if c['eta'] is not None else '-'}"
+                       f"/{c.get('coherence', '-')}/{c.get('leftover', '-')}" for c in r.get("components", []))
         L.append(f"| {r['round']} | {r['df']} | {r['k']} ({r.get('k_null')}) | {sum(c['removed'] for c in r.get('components', []))} | {cs} |")
     dn = res.get("denoising") or {}
     if dn:
